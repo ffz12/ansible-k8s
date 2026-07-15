@@ -1,0 +1,94 @@
+# 部署 Cilium (helm 方式)
+# helm 二进制: 离线从 offline 包拷, 在线从 get.helm.sh 下载
+# chart: 离线用本地 .tgz, 在线 helm repo add cilium
+# 镜像仓 cilium_image_repo: 离线->Harbor, 在线->quay.io/cilium (见 group_vars/all.yaml)
+- name: 确定 CPU 架构
+  set_fact:
+    kube_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+# ---- helm 二进制 ----
+- name: 检查 helm 是否已安装
+  stat:
+    path: "{{ kube_bin_dir }}/helm"
+  register: helm_stat
+
+- name: 安装 helm 二进制(离线, 来自离线包)
+  copy:
+    src: "{{ helm_bin_src }}/{{ kube_arch }}/helm"
+    dest: "{{ kube_bin_dir }}/helm"
+    mode: "0755"
+  when:
+    - not helm_stat.stat.exists
+    - is_offline | default(false) | bool
+
+- name: 下载并安装 helm 二进制(在线)
+  block:
+    - name: 下载 helm 压缩包
+      get_url:
+        url: "https://get.helm.sh/helm-v{{ helm_version }}-linux-{{ kube_arch }}.tar.gz"
+        dest: "/tmp/helm-v{{ helm_version }}-linux-{{ kube_arch }}.tar.gz"
+        mode: "0644"
+    - name: 解压 helm
+      unarchive:
+        src: "/tmp/helm-v{{ helm_version }}-linux-{{ kube_arch }}.tar.gz"
+        dest: /tmp
+        remote_src: yes
+    - name: 安装 helm 到 bin
+      copy:
+        src: "/tmp/linux-{{ kube_arch }}/helm"
+        dest: "{{ kube_bin_dir }}/helm"
+        remote_src: yes
+        mode: "0755"
+  when:
+    - not helm_stat.stat.exists
+    - not (is_offline | default(false) | bool)
+
+# ---- cilium 安装 ----
+- name: 渲染 cilium helm values
+  template:
+    src: cilium-values.yaml.j2
+    dest: "{{ kube_config_dir }}/cilium-values.yaml"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: 检查 cilium release 是否已存在
+  shell: |
+    helm status cilium -n kube-system >/dev/null 2>&1 && echo present || echo absent
+  args:
+    executable: /bin/bash
+  register: cilium_release
+  changed_when: false
+
+- name: 添加 cilium helm 仓库(在线)
+  shell: |
+    helm repo add cilium {{ cilium_helm_repo }}
+    helm repo update
+  args:
+    executable: /bin/bash
+  when:
+    - not (is_offline | default(false) | bool)
+    - cilium_release.stdout == 'absent'
+
+- name: 安装 cilium (在线, 从 helm 仓库)
+  shell: |
+    helm install cilium cilium/cilium \
+      --version {{ cilium_version }} \
+      --namespace kube-system \
+      -f "{{ kube_config_dir }}/cilium-values.yaml"
+  args:
+    executable: /bin/bash
+  when:
+    - not (is_offline | default(false) | bool)
+    - cilium_release.stdout == 'absent'
+
+- name: 安装 cilium (离线, 从本地 chart)
+  shell: |
+    helm install cilium "{{ cilium_chart_src }}" \
+      --namespace kube-system \
+      -f "{{ kube_config_dir }}/cilium-values.yaml"
+  args:
+    executable: /bin/bash
+  when:
+    - is_offline | default(false) | bool
+    - cilium_release.stdout == 'absent'

@@ -1,0 +1,31 @@
+# Cilium helm values (最小可用集; 更多特性按需调)
+# apiserver 入口: 有 lbvip 走 VIP:8443, 否则首 master:6443
+k8sServiceHost: "{{ lbvip | default(hostvars[groups['k8s_master'][0]].ansible_host) }}"
+k8sServicePort: {{ 8443 if lbvip is defined else 6443 }}
+
+# 保留 kube-proxy(稳妥默认); 若要 eBPF 替换 kube-proxy 改 true 并确认内核>=5.10
+kubeProxyReplacement: false
+
+# IPAM: cluster-pool, CIDR 对齐 kubeadm podSubnet
+ipam:
+  mode: cluster-pool
+  operator:
+    clusterPoolIPv4PodCIDRList:
+    - "{{ pod_subnet }}"
+    clusterPoolIPv4MaskSize: 24
+
+# 镜像仓(离线->Harbor, 在线->quay.io/cilium); operator 由 chart 自动加 -generic 后缀
+image:
+  repository: "{{ cilium_image_repo }}/cilium"
+  tag: "v{{ cilium_version }}"
+  useDigest: false
+operator:
+  replicas: 1
+  image:
+    repository: "{{ cilium_image_repo }}/operator"
+    tag: "v{{ cilium_version }}"
+    useDigest: false
+
+# 精简: 关闭 hubble 以减少离线镜像(需可视化再开)
+hubble:
+  enabled: false

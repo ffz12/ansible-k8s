@@ -9,7 +9,6 @@
     executable: /bin/bash
   register: cni_login
   failed_when: "'Login Succeeded' not in cni_login.stdout"
-  when: kube_network_plugin == 'calico'
 
 - name: "[Sync CNI] 复制 calico 镜像到本地"
   copy:
@@ -46,9 +45,69 @@
     executable: /bin/bash
   when: kube_network_plugin == 'calico'
 
-# ---------- Flannel / Cilium ----------
-# Phase 2 实现: flannel 镜像推送 + cilium 镜像/chart 推送
-- name: "[Sync CNI] flannel/cilium 离线镜像同步(Phase 2)"
-  debug:
-    msg: "flannel/cilium 离线镜像同步待 Phase 2 实现"
-  when: kube_network_plugin in ['flannel', 'cilium']
+# ---------- Flannel ----------
+- name: "[Sync CNI] 复制 flannel 镜像到本地"
+  copy:
+    src: "{{ src_flannel_images_dir }}"
+    dest: "{{ flannel_images_dir }}"
+  when: kube_network_plugin == 'flannel'
+
+- name: "[Sync CNI] 同步 flannel 镜像并建 multi-arch manifest"
+  shell: |
+    set -e
+    REGISTRY="{{ registry }}"
+    sync_one() {
+      local SRC="$1" DST="$2"    # SRC 不含 -arch 后缀, DST 目标(不含 tag)
+      docker tag "${SRC}-amd64" "${DST}-amd64"
+      docker tag "${SRC}-arm64" "${DST}-arm64"
+      docker push "${DST}-amd64"; docker push "${DST}-arm64"
+      docker manifest rm "${DST}" >/dev/null 2>&1 || true
+      docker manifest create --insecure "${DST}" "${DST}-amd64" "${DST}-arm64"
+      docker manifest annotate "${DST}" "${DST}-amd64" --os linux --arch amd64
+      docker manifest annotate "${DST}" "${DST}-arm64" --os linux --arch arm64
+      docker manifest push --insecure "${DST}"
+      docker rmi "${DST}-amd64" "${DST}-arm64" || true
+    }
+    docker load -i "{{ flannel_images_dir }}/images/amd64/flannel.tar"
+    docker load -i "{{ flannel_images_dir }}/images/arm64/flannel.tar"
+    docker load -i "{{ flannel_images_dir }}/images/amd64/flannel-cni-plugin.tar"
+    docker load -i "{{ flannel_images_dir }}/images/arm64/flannel-cni-plugin.tar"
+    sync_one "flannel/flannel:v{{ flannel_version }}"            "${REGISTRY}/flannel:v{{ flannel_version }}"
+    sync_one "flannel/flannel-cni-plugin:v1.6.2-flannel1"        "${REGISTRY}/flannel-cni-plugin:v1.6.2-flannel1"
+  args:
+    executable: /bin/bash
+  when: kube_network_plugin == 'flannel'
+
+# ---------- Cilium ----------
+- name: "[Sync CNI] 复制 cilium 镜像到本地"
+  copy:
+    src: "{{ src_cilium_images_dir }}"
+    dest: "{{ cilium_images_dir }}"
+  when: kube_network_plugin == 'cilium'
+
+- name: "[Sync CNI] 同步 cilium 镜像并建 multi-arch manifest"
+  shell: |
+    set -e
+    REGISTRY="{{ registry }}"
+    sync_one() {
+      local SRC="$1" DST="$2"
+      docker tag "${SRC}-amd64" "${DST}-amd64"
+      docker tag "${SRC}-arm64" "${DST}-arm64"
+      docker push "${DST}-amd64"; docker push "${DST}-arm64"
+      docker manifest rm "${DST}" >/dev/null 2>&1 || true
+      docker manifest create --insecure "${DST}" "${DST}-amd64" "${DST}-arm64"
+      docker manifest annotate "${DST}" "${DST}-amd64" --os linux --arch amd64
+      docker manifest annotate "${DST}" "${DST}-arm64" --os linux --arch arm64
+      docker manifest push --insecure "${DST}"
+      docker rmi "${DST}-amd64" "${DST}-arm64" || true
+    }
+    docker load -i "{{ cilium_images_dir }}/images/amd64/cilium.tar"
+    docker load -i "{{ cilium_images_dir }}/images/arm64/cilium.tar"
+    docker load -i "{{ cilium_images_dir }}/images/amd64/operator-generic.tar"
+    docker load -i "{{ cilium_images_dir }}/images/arm64/operator-generic.tar"
+    sync_one "quay.io/cilium/cilium:v{{ cilium_version }}"           "${REGISTRY}/cilium:v{{ cilium_version }}"
+    sync_one "quay.io/cilium/operator-generic:v{{ cilium_version }}" "${REGISTRY}/operator-generic:v{{ cilium_version }}"
+  args:
+    executable: /bin/bash
+  when: kube_network_plugin == 'cilium'
+

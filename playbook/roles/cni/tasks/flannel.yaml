@@ -1,0 +1,17 @@
+# 部署 Flannel (manifest 方式, kubectl apply)
+# Network 取 pod_subnet, 镜像取 flannel_images 变量(离线->Harbor, 在线->docker.io/flannel)
+- name: 渲染 flannel manifest
+  template:
+    src: kube-flannel.yml.j2
+    dest: "{{ kube_config_dir }}/kube-flannel.yml"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: apply flannel
+  shell: |
+    kubectl apply -f "{{ kube_config_dir }}/kube-flannel.yml"
+  args:
+    executable: /bin/bash
+  register: flannel_apply
+  changed_when: "'created' in flannel_apply.stdout or 'configured' in flannel_apply.stdout"
