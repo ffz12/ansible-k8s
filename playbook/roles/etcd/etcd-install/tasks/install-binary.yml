@@ -1,0 +1,75 @@
+# roles/etcd/etcd-install/tasks/install-binary.yml
+---
+- name: Check if etcd binary exists
+  stat:
+    path: "{{ etcd_bin_dir | default('/opt/etcd/bin') }}/etcd"
+  register: etcd_installed
+
+- name: Get real CPU architecture using 'uname -m'
+  command: uname -m
+  register: _real_arch
+  changed_when: false
+  when: not etcd_installed.stat.exists
+
+- name: Set etcd_arch to amd64 for x86_64 hosts
+  set_fact:
+    etcd_arch: "amd64"
+  when:
+    - not etcd_installed.stat.exists
+    - _real_arch.stdout == "x86_64"
+
+- name: Set etcd_arch to arm64 for ARM64 hosts
+  set_fact:
+    etcd_arch: "arm64"
+  when:
+    - not etcd_installed.stat.exists
+    - _real_arch.stdout in ["aarch64", "arm64"]
+
+- name: Fail on unsupported architecture
+  fail:
+    msg: "Unsupported real architecture '{{ _real_arch.stdout }}'. Supported: x86_64, aarch64."
+  when:
+    - not etcd_installed.stat.exists
+    - _real_arch.stdout not in ["x86_64", "aarch64", "arm64"]
+
+- name: Set etcd source and file paths
+  set_fact:
+    etcd_tar: "etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz"
+    etcd_dir: "etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}"
+    etcd_src_path: "{{ playbook_dir }}/../offline/binaries/etcd/v{{ etcd_version }}/{{ etcd_arch }}/etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz"
+  when: not etcd_installed.stat.exists
+
+- name: Deploy etcd binaries
+  block:
+    - name: Copy etcd tarball from local files/ to remote /tmp
+      copy:
+        src: "{{ etcd_src_path }}"
+        dest: "/tmp/{{ etcd_tar }}"
+        mode: '0755'
+
+    - name: Extract etcd tarball on remote host
+      unarchive:
+        src: "/tmp/{{ etcd_tar }}"
+        dest: /tmp/
+        remote_src: yes
+
+    - name: Install etcd and etcdctl binaries
+      copy:
+        src: "/tmp/{{ etcd_dir }}/{{ item }}"
+        dest: "{{ etcd_bin_dir }}/{{ item }}"
+        remote_src: yes
+        mode: '0755'
+        owner: root
+        group: root
+      loop:
+        - etcd
+        - etcdctl
+
+    - name: Clean up temporary files on remote host
+      file:
+        path: "/tmp/{{ item }}"
+        state: absent
+      loop:
+        - "{{ etcd_tar }}"
+        - "{{ etcd_dir }}"
+  when: not etcd_installed.stat.exists

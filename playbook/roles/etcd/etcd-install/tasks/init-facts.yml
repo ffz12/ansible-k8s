@@ -1,0 +1,5 @@
+---
+- name: Check if etcd binary exists
+  stat:
+    path: "{{ etcd_bin_dir | default('/opt/etcd/bin') }}/etcd"
+  register: etcd_installed

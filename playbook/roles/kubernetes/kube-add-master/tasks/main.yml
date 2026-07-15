@@ -1,0 +1,104 @@
+---
+# Step 1: 检查当前节点是否已加入集群
+- name: "[Add Master] 检查是否已加入集群"
+  stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf
+
+# ================================
+# 仅当未加入时才执行以下操作
+# ================================
+
+# Step 2: 确保目标节点有证书目录（必须在 copy 前创建！）
+- name: "[Add Master] 创建证书目录"
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - /etc/kubernetes/pki
+    - /etc/kubernetes/pki/etcd
+  become: yes
+  when: not kubelet_conf.stat.exists
+
+- name: "[Add Master] 从 first master 同步证书到当前节点"
+  synchronize:
+    src: "{{ item }}"
+    dest: "{{ item }}"
+    perms: yes
+    owner: yes
+    group: yes
+    rsync_opts:
+      - "--chmod=600"
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  loop:
+    - /etc/kubernetes/pki/ca.crt
+    - /etc/kubernetes/pki/ca.key
+    - /etc/kubernetes/pki/sa.key
+    - /etc/kubernetes/pki/sa.pub
+    - /etc/kubernetes/pki/front-proxy-ca.crt
+    - /etc/kubernetes/pki/front-proxy-ca.key
+  when: not kubelet_conf.stat.exists
+
+# Step 5: 获取 join 命令（从 first master），并设为全局变量
+- name: "[Add Master] 从 first master 获取 join 命令"
+  shell: kubeadm token create --print-join-command
+  register: _join_cmd_result
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  when: not kubelet_conf.stat.exists
+- name:  输出k8s 命令
+  debug:
+    var: _join_cmd_result.stdout
+
+# Step 6: 执行 join
+- name: "[Add Master] 执行 kubeadm join --control-plane"
+  command: >
+    {{ _join_cmd_result.stdout }}
+    --control-plane
+    --cri-socket {{ kube_criSocket }}
+    --ignore-preflight-errors=SystemVerification
+  become: yes
+  when: not kubelet_conf.stat.exists
+
+# Step 7: 配置 kubectl
+- name: "[Add Master] 创建 .kube 目录"
+  file:
+    path: "{{ ansible_env.HOME }}/.kube"
+    state: directory
+    mode: "0755"
+  when: not kubelet_conf.stat.exists
+
+- name: "[Add Master] 复制 admin.conf"
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ ansible_env.HOME }}/.kube/config"
+    remote_src: yes
+    owner: root
+    group: root
+    mode: "0600"
+  become: yes
+  when: not kubelet_conf.stat.exists
+- name: "[Add Master] 设置kubectl为k"
+  copy:
+    src: "{{ kube_bin_dir }}/kubectl"
+    dest: "{{ kube_bin_dir }}/k"
+    remote_src: yes
+    owner: root
+    group: root
+    mode: "0755"
+  become: yes
+  when: not kubelet_conf.stat.exists
+
+- name: "移除污点"
+  shell: |
+    kubectl taint node {{ inventory_hostname }} node-role.kubernetes.io/control-plane- --ignore-not-found
+    kubectl taint node {{ inventory_hostname }} node-role.kubernetes.io/master- --ignore-not-found
+    kubectl taint node "{{ inventory_hostname }}" node.kubernetes.io/unschedulable-
+    kubectl taint node "{{ inventory_hostname }}" node.kubernetes.io/not-ready-
+  args:
+    executable: /bin/bash
+  register: taint_result
+  failed_when: 
+    - taint_result.rc != 0 
+    - '"not found" not in taint_result.stderr'
+  when: inventory_hostname != groups['k8s_master'][0]

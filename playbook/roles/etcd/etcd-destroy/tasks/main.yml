@@ -1,0 +1,41 @@
+---
+- name: Stop etcd
+  systemd:
+    name: etcd
+    state: stopped
+    enabled: no
+  ignore_errors: yes
+
+- name: Reload systemd and enable backup timer
+  systemd:
+    name: "{{ item }}"
+    daemon_reload: yes
+    enabled: no
+    state: stopped
+  loop:
+    - backup-etcd.service
+    - backup-etcd.timer
+  ignore_errors: yes
+  
+- name: remove systemd service 
+  file: 
+    path:  "{{ item }}"
+    state: absent
+  loop:
+    - "/etc/systemd/system/etcd.service"
+    - "/etc/systemd/system/backup-etcd.service"
+    - "/etc/systemd/system/backup-etcd.timer"
+
+
+- name: Remove binaries, data, config
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ etcd_install_dir }}"
+    - "{{ etcd_data_dir }}"
+    - "{{ etcd_conf_dir }}"
+    - "/var/backups/kube_etcd" 
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes

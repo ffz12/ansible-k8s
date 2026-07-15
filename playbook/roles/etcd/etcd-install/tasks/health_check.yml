@@ -1,0 +1,68 @@
+---
+# === 健康检查（使用 {{ ansible_host }}:2381，始终输出）===
+- name: Wait for etcd metrics health endpoint
+  uri:
+    url: "http://{{ ansible_host }}:2381/health"
+    timeout: 10
+    validate_certs: no
+  delegate_to: "{{ ansible_host }}"
+  retries: 6
+  delay: 5
+  run_once: true
+  register: health_check
+  until: health_check.status == 200 
+  ignore_errors: yes
+
+- name: Verify etcd metrics endpoint is accessible
+  uri:
+    url: "http://{{ ansible_host }}:2381/metrics"
+    timeout: 5
+    validate_certs: no
+  delegate_to: "{{ ansible_host }}"
+  run_once: true
+  register: metrics_check
+  ignore_errors: yes
+
+- name: Show health check result (always displayed)
+  debug:
+    msg:
+      - "[{{ inventory_hostname }}] Health check:"
+      - "  URL: http://{{ ansible_host }}:2381/health"
+      - "  Status: {{ health_check.status | default('N/A') }}"
+      - "  Response: {{ health_check.json | default({'error': 'no response'}) }}"
+      - ""
+      - "  Metrics URL: http://{{ ansible_host }}:2381/metrics"
+      - "  Metrics Status: {{ metrics_check.status | default('N/A') }}"
+
+- name: Check etcd cluster member list via etcdctl (to determine if initialized)
+  command: >
+    {{ etcd_bin_dir }}/etcdctl
+    --endpoints=https://127.0.0.1:{{ etcd_client_port }}
+    --cacert={{ etcd_cert_dir }}/ca.pem
+    --cert={{ etcd_cert_dir }}/{{ inventory_hostname }}.pem
+    --key={{ etcd_cert_dir }}/{{ inventory_hostname }}-key.pem
+    member list --write-out=json
+  register: etcd_member_list_result
+  changed_when: false
+  ignore_errors: true
+  when: 
+  - metrics_check.status is defined
+  - metrics_check.status == 200 
+
+- name: Set fact based on actual cluster membership
+  set_fact:
+    etcd_cluster_has_members: "{{ (etcd_member_list_result is succeeded) and ('members' in etcd_member_list_result.stdout | from_json) and (etcd_member_list_result.stdout | from_json).members | length > 0 }}"
+  when:
+  - metrics_check.status is defined
+  - metrics_check.status == 200
+ 
+
+- name: DEBUG - Show cluster membership status
+  debug:
+    msg: "etcd cluster has members: {{ etcd_cluster_has_members | default('unknown') }}"
+- name: Update etcd_initial_cluster_state based on membership
+  set_fact:
+    etcd_initial_cluster_state: "{{ 'existing' if (etcd_cluster_has_members | default(false)) else 'new' }}"
+  when:
+  - metrics_check.status is defined
+  - metrics_check.status == 200

@@ -1,0 +1,21 @@
+# CNI 可插拔调度 —— 由 kube_network_plugin 决定装哪个 (kk 风格)
+# 仅在第一个 master 上执行(调用方保证 run_once 语义)
+- name: 校验 kube_network_plugin 取值
+  assert:
+    that:
+      - kube_network_plugin in ['calico', 'flannel', 'cilium']
+    fail_msg: "kube_network_plugin 必须是 calico/flannel/cilium 之一, 当前={{ kube_network_plugin }}"
+
+# 离线: 先把所选 CNI 的镜像 load 并推到自建 Harbor(在线跳过,直接从公共 mirror 拉)
+- name: "[CNI] 离线同步 {{ kube_network_plugin }} 镜像到 Harbor"
+  include_tasks: sync-cni-images.yaml
+  when: is_offline | default(false) | bool
+
+# 部署所选 CNI
+- name: "[CNI] 部署 {{ kube_network_plugin }}"
+  include_tasks: "{{ kube_network_plugin }}.yaml"
+
+# 可选: 叠加 multus 多网卡元 CNI
+- name: "[CNI] 部署 multus(可选)"
+  include_tasks: multus.yaml
+  when: enable_multus | default(false) | bool

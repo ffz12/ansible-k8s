@@ -1,0 +1,4 @@
+- hosts: node_to_delete  # 这里指定你要删除的节点组或具体的 host
+  gather_facts: yes
+  roles:
+    - kubernetes/kube-delete-node

@@ -1,0 +1,23 @@
+---
+- name: DEBUG - Using global etcd_cluster_members
+  debug:
+    var: etcd_cluster_members
+  run_once: true
+  delegate_to: localhost
+
+- name: Ensure etcd config directory exists on target nodes
+  file:
+    path: "{{ etcd_conf_dir }}"
+    state: directory
+    owner: "{{ etcd_user | default('etcd') }}"
+    group: "{{ etcd_group | default('etcd') }}"
+    mode: '0755'
+
+- name: Sync etcd configuration to all current cluster members
+  template:
+    src: "{{ playbook_dir }}/roles/etcd/etcd-install/templates/etcd.conf.yml.j2"
+    dest: "{{ etcd_conf_dir }}/etcd.conf.yml"
+    owner: "{{ etcd_user | default('etcd') }}"
+    group: "{{ etcd_group | default('etcd') }}"
+    mode: '0644'
+ 

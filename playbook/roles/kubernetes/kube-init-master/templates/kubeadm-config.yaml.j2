@@ -1,0 +1,109 @@
+# === InitConfiguration ===
+apiVersion: kubeadm.k8s.io/v1beta4
+bootstrapTokens:
+- groups:
+  - system:bootstrappers:kubeadm:default-node-token
+  token: abcdef.0123456789abcdef
+  ttl: 24h0m0s
+  usages:
+  - signing
+  - authentication
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: {{ ansible_host }}   # ← 始终设置为本机 IP
+  bindPort: 6443
+nodeRegistration:
+  criSocket: {{ kube_criSocket }}
+  imagePullPolicy: IfNotPresent
+  imagePullSerial: true
+  name: {{ inventory_hostname }}
+  taints: null
+timeouts:
+  controlPlaneComponentHealthCheck: 4m0s
+  discovery: 5m0s
+  etcdAPICall: 2m0s
+  kubeletHealthCheck: 4m0s
+  kubernetesAPICall: 1m0s
+  tlsBootstrap: 5m0s
+  upgradeManifests: 5m0s
+---
+# === ClusterConfiguration ===
+apiVersion: kubeadm.k8s.io/v1beta4
+{% if lbvip is defined %}
+controlPlaneEndpoint: "{{ lbvip }}:8443"
+{% endif %}
+caCertificateValidityPeriod: 876000h
+certificateValidityPeriod: 876000h
+certificatesDir: /etc/kubernetes/pki
+clusterName: kubernetes
+controllerManager: {}
+dns: {}
+encryptionAlgorithm: RSA-2048
+etcd:
+  external:
+    endpoints:
+{% for host in etcd_cluster_members | default([]) %}
+{%   if host in hostvars and hostvars[host].get('ansible_host') %}
+    - https://{{ hostvars[host]['ansible_host'] }}:2379
+{%   endif %}
+{% endfor %}    
+    caFile: {{ kube_config_dir }}/pki/etcd/ca.crt
+    certFile: {{ kube_config_dir }}/pki/kube-apiserver-etcd-client.crt
+    keyFile: {{ kube_config_dir }}/pki/kube-apiserver-etcd-client.key
+imageRepository: {{ kube_image_repository }}
+kind: ClusterConfiguration
+kubernetesVersion: v{{ k8s_version }}
+networking:
+  dnsDomain: cluster.local
+  serviceSubnet: {{ service_subnet }}
+  podSubnet: {{ pod_subnet }}
+---
+# === KubeProxyConfiguration ===
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: ipvs
+---
+# === KubeletConfiguration ===
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+containerRuntimeEndpoint: "{{ kube_criSocket }}"
+cpuManagerPolicy: static
+cpuManagerPolicyOptions:
+  align-by-socket: "true"
+featureGates:
+  CPUManagerPolicyAlphaOptions: true      # 启用 CPU Manager 策略选项 (Alpha/Beta 特性)
+
+#驱逐策略
+evictionSoft:
+  memory.available: 10%       # 当剩余内存低于 10% 时触发
+  nodefs.available: 10%       # 防止磁盘写满导致节点 NotReady
+  nodefs.inodesFree: 5%
+evictionSoftGracePeriod:
+  memory.available: 1m30s     # 给予 1 分半钟的宽限期
+  nodefs.available: 1m30s
+  nodefs.inodesFree: 1m30s
+  
+evictionHard:
+  memory.available: 5%
+  pid.available: 10%
+  nodefs.available: 10%
+  nodefs.inodesFree: 5%
+
+kubeReserved:
+  cpu: "1"
+  memory: "2Gi"
+
+
+systemReserved:
+  cpu: 200m
+  memory: 250Mi
+maxPods: 4096
+logging:
+  flushFrequency: 5000000000 # 5s
+  options:
+    json:
+      infoBufferSize: "0"
+  verbosity: 0
+shutdownGracePeriod: 30s     # 节点关机时给 Pod 的优雅退出时间
+shutdownGracePeriodCriticalPods: 10s

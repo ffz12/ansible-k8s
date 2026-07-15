@@ -1,0 +1,17 @@
+[Unit]
+Description=etcd - Kubernetes datastore
+Documentation=https://github.com/etcd-io/etcd
+After=network.target
+
+[Service]
+Type=notify
+User={{ etcd_user }}
+ExecStart={{ etcd_bin_dir }}/etcd --config-file={{ etcd_conf_dir }}/etcd.conf.yml
+Restart=always
+RestartSec=10
+LimitNOFILE=65536
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+

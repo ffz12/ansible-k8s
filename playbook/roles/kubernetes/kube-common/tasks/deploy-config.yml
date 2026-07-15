@@ -1,0 +1,17 @@
+# roles/kubernetes/kube-common/tasks/deploy-config.yml
+
+- name: 部署 kubelet systemd unit 文件
+  template:
+    src: kubelet.service.j2
+    dest: /etc/systemd/system/kubelet.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: 部署 kubeadm 配置片段
+  template:
+    src: 10-kubeadm.conf.j2
+    dest: "{{ kubelet_service_dir }}/10-kubeadm.conf"
+    owner: root
+    group: root
+    mode: "0644"

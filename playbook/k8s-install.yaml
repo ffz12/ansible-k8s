@@ -1,0 +1,17 @@
+# k8s 一键安装(masters): 装二进制/kubelet → 首 master(kubeadm init + CNI) → 其余 master 加入
+# 前提: 已跑 deploy-etcd.yml(外置 etcd) + 底座 containerd 已就位
+# worker 节点用 k8s-add-node.yaml
+# 在线/离线: 默认在线; 离线加 -e is_offline=true
+- name: 安装 Kubernetes 控制平面
+  hosts: "{{ lb_upstream_servers }}"
+  vars:
+    lb_upstream_servers: >-
+      {{
+        ((groups.k8s_master | default([])) + (groups.master_to_add | default([])))
+        | difference(groups.master_to_delete | default([]))
+        | unique
+      }}
+  roles:
+    - kubernetes/kube-common
+    - kubernetes/kube-init-master
+    - kubernetes/kube-add-master

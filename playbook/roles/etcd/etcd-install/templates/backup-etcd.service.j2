@@ -1,0 +1,10 @@
+[Unit]
+Description=Backup etcd snapshot
+After=etcd.service
+Requires=etcd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/etcd-backup.sh
+User={{ etcd_user }}
+Environment=ETCDCTL_API=3

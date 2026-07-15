@@ -1,0 +1,23 @@
+---
+# 动态设置 initial cluster state based on init marker ===
+
+- name: DEBUG - Show actual value of etcd_initial_cluster_state
+  debug:
+    var: etcd_initial_cluster_state
+
+# 安装二进制
+- include_tasks: install-binary.yml
+# 渲染配置
+- name: Render etcd configuration using common role
+  include_role:
+    name: etcd/etcd-common
+    tasks_from: sync-etcd-config.yml
+
+# 重载 systemd和启动etcd
+- include_tasks: reload-start.yml
+
+# 健康检查
+- include_tasks: health_check.yml
+# 更新etcd new状态
+#- include_tasks: mask_etcd.yaml 
+- include_tasks: backup.yml

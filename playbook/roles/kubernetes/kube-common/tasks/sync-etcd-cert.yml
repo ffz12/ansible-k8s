@@ -1,0 +1,20 @@
+- name: Set persistent secret directory path
+  delegate_to: localhost
+  run_once: true
+  become: false
+  set_fact:
+    _etcd_persistent_secret_dir: "{{ playbook_dir }}/roles/certs/files/etcd-{{ etcd_cluster_name | default('default') }}"
+
+- name: copy etcd client  certificates/keys
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: "{{ _etcd_persistent_secret_dir }}/ca.pem",      dest: "{{ kube_config_dir }}/pki/etcd/ca.crt",      mode: "0644" }
+    - { src: "{{ _etcd_persistent_secret_dir }}/ca-key.pem",  dest: "{{ kube_config_dir }}/pki/etcd/ca.key",  mode: "0600" }
+    - { src: "{{ _etcd_persistent_secret_dir }}/kube-apiserver-etcd-client.pem",      dest: "{{ kube_config_dir }}/pki/kube-apiserver-etcd-client.crt",  mode: "0600" }
+    - { src: "{{ _etcd_persistent_secret_dir }}/kube-apiserver-etcd-client-key.pem",  dest: "{{ kube_config_dir }}/pki/kube-apiserver-etcd-client.key",  mode: "0600" }
+

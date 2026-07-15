@@ -1,0 +1,6 @@
+# roles/kubernetes/kube-common/tasks/enable-kubelet.yml
+
+- name: 重载 systemd 并启用 kubelet
+  service:
+    name: kubelet
+    enabled: yes

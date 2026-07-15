@@ -1,0 +1,31 @@
+#!/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+
+ETCDCTL_PATH='{{ etcd_bin_dir }}/etcdctl'
+ENDPOINTS='https://{{ ansible_host }}:{{ etcd_client_port }}'
+ETCD_DATA_DIR="{{ etcd_data_dir }}"
+BACKUP_DIR="/var/backups/kube_etcd/etcd-$(date +%Y-%m-%d-%H-%M-%S)"
+KEEPBACKUPNUMBER={{ etcd_backup_keep_count | default(6) }}
+
+ETCDCTL_CERT="{{ etcd_cert_dir }}/{{ inventory_hostname }}.pem"
+ETCDCTL_KEY="{{ etcd_cert_dir }}/{{ inventory_hostname }}-key.pem"
+ETCDCTL_CA_FILE="{{ etcd_cert_dir }}/ca.pem"
+
+[ ! -d "$BACKUP_DIR" ] && mkdir -p "$BACKUP_DIR"
+
+# Use API v3 snapshot (primary method)
+export ETCDCTL_API=3
+"$ETCDCTL_PATH" \
+  --endpoints="$ENDPOINTS" \
+  --cacert="$ETCDCTL_CA_FILE" \
+  --cert="$ETCDCTL_CERT" \
+  --key="$ETCDCTL_KEY" \
+  snapshot save "$BACKUP_DIR/snapshot.db" >/dev/null
+
+sleep 2
+
+# Cleanup old backups
+cd "$(dirname "$BACKUP_DIR")" || exit 1
+ls -t | tail -n +$((KEEPBACKUPNUMBER + 1)) | xargs -r rm -rf

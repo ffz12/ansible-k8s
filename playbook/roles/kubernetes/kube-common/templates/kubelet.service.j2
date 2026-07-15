@@ -1,0 +1,19 @@
+[Unit]
+Description=kubelet: The Kubernetes Node Agent
+Documentation=https://kubernetes.io/docs/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart={{ kube_bin_dir }}/kubelet
+Restart=always
+RestartSec=10
+StartLimitInterval=0
+KillMode=process
+User=root
+CPUAccounting=true
+MemoryAccounting=true
+
+[Install]
+WantedBy=multi-user.target
+

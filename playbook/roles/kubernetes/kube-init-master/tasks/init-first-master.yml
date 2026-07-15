@@ -1,0 +1,58 @@
+- name: "[Init] 仅在第一个 k8s_master 节点执行"
+  block:
+    - name: 渲染 kubeadm 配置文件
+      template:
+        src: kubeadm-config.yaml.j2
+        dest: "{{ kube_config_dir }}/kubeadm-config.yaml"
+        mode: "0600"
+
+    - name: 执行 kubeadm init
+      command: >
+        kubeadm init
+        --config={{ kube_config_dir }}/kubeadm-config.yaml
+        --upload-certs
+        --ignore-preflight-errors=SystemVerification
+      args:
+        creates: /etc/kubernetes/admin.conf
+      register: kubeadm_init_output
+
+    - name: 为 root 用户配置 kubectl
+      block:
+        - name: 创建 .kube 目录
+          file:
+            path: "{{ ansible_env.HOME }}/.kube"
+            state: directory
+            mode: "0755"
+
+        - name: 复制 admin.conf
+          copy:
+            src: /etc/kubernetes/admin.conf
+            dest: "{{ ansible_env.HOME }}/.kube/config"
+            remote_src: yes
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: 设置 kubectl 别名 k
+          copy:
+            src: "{{ kube_bin_dir }}/kubectl"
+            dest: "{{ kube_bin_dir }}/k"
+            remote_src: yes
+            owner: root
+            group: root
+            mode: "0755"
+
+    - name: 移除污点(允许 master 调度)
+      shell: |
+        kubectl taint node "{{ inventory_hostname }}" node-role.kubernetes.io/control-plane-
+        kubectl taint node "{{ inventory_hostname }}" node-role.kubernetes.io/master-
+        kubectl taint node "{{ inventory_hostname }}" node.kubernetes.io/unschedulable-
+        kubectl taint node "{{ inventory_hostname }}" node.kubernetes.io/not-ready-
+      args:
+        executable: /bin/bash
+      ignore_errors: yes
+
+    # === CNI: 可插拔(calico/flannel/cilium),见 roles/cni ===
+    - name: 部署 CNI 网络插件
+      include_role:
+        name: cni

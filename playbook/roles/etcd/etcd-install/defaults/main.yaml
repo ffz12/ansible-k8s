@@ -1,0 +1,3 @@
+# Default to 'new' for first-time deployment.
+# This will be overridden by tasks/main.yml if cluster is already initialized.
+etcd_initial_cluster_state: "new"

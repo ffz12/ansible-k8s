@@ -153,8 +153,147 @@ offline_binaries: "{{ playbook_dir | dirname }}/offline/binaries"
 #k8s安装相关
 harbor_dns: "{{ harbor_instances[0].dns }}"
 harbor_ip: "{{ harbor_instances[0].ip }}"
-#k8s安装registry
+#k8s安装registry(自建 harbor 前缀)
 registry: "{{ harbor_dns }}/unisound"
+
+
+# ==========================================================================
+# ===============  Kubernetes 部署层 (多 CNI + 在线/离线)  ==================
+# ==========================================================================
+# 约定: is_offline 默认 false(在线). 离线部署整条链路传 -e is_offline=true
+#      (与底座 offline-init.yaml 一致)。二进制永远来自离线包,在线/离线只切镜像源。
+
+# ---- 版本(单一事实来源,改这里即可) ----
+k8s_version: "1.32.10"          # 想切版本改这一处;离线包目录需存在对应 v{{version}}
+coredns_version: "1.11.3"
+crictl_version: "1.32.0"
+etcd_version: "3.6.8"
+calico_version: "3.27.5"
+flannel_version: "0.26.7"
+cilium_version: "1.16.5"
+helm_version: "3.16.4"
+
+# ---- CNI 选择(kk 风格,三选一) ----
+# calico(manifest) / flannel(manifest) / cilium(helm)
+kube_network_plugin: calico
+# 是否额外部署 multus(多网卡元 CNI,叠加在主 CNI 之上)
+enable_multus: false
+multus_cni_version: "4.2.4"
+
+# ---- 网络 ----
+pod_subnet: 10.244.0.0/12
+service_subnet: 10.96.0.0/12
+kube_criSocket: unix:///run/containerd/containerd.sock
+#kube_criSocket: unix:///var/run/cri-dockerd.sock
+
+# ---- 在线镜像源(国内默认,官网受限时用;可随意改) ----
+# kubeadm 组件(apiserver/controller/scheduler/proxy/pause/coredns)在线 mirror
+kube_image_mirror: "registry.aliyuncs.com/google_containers"
+# calico / flannel / cilium 在线镜像仓(海外原仓,访问受限可换国内 mirror)
+calico_registry_online: "docker.io/calico"
+flannel_registry_online: "docker.io/flannel"
+cilium_registry_online: "quay.io/cilium"
+# helm chart / cilium chart 在线源
+cilium_helm_repo: "https://helm.cilium.io"
+
+# ---- 镜像仓库(离线->自建 Harbor, 在线->上面的 mirror,由 is_offline 自动切) ----
+kube_image_repository: "{{ registry if (is_offline | default(false) | bool) else kube_image_mirror }}"
+
+# calico 三个组件镜像(离线走 harbor 扁平命名 calico-<comp>, 在线走官方 calico/<comp>)
+calico_images:
+  cni:             "{{ (registry ~ '/calico-cni')             if (is_offline | default(false) | bool) else (calico_registry_online ~ '/cni') }}:v{{ calico_version }}"
+  node:            "{{ (registry ~ '/calico-node')            if (is_offline | default(false) | bool) else (calico_registry_online ~ '/node') }}:v{{ calico_version }}"
+  kube_controllers: "{{ (registry ~ '/calico-kube-controllers') if (is_offline | default(false) | bool) else (calico_registry_online ~ '/kube-controllers') }}:v{{ calico_version }}"
+
+# flannel 镜像
+flannel_images:
+  flannel:        "{{ (registry ~ '/flannel')        if (is_offline | default(false) | bool) else (flannel_registry_online ~ '/flannel') }}:v{{ flannel_version }}"
+  flannel_cni:    "{{ (registry ~ '/flannel-cni-plugin') if (is_offline | default(false) | bool) else (flannel_registry_online ~ '/flannel-cni-plugin') }}:v1.6.2-flannel1"
+
+# cilium 镜像仓(helm values 用;离线->harbor, 在线->quay)
+cilium_image_repo: "{{ registry if (is_offline | default(false) | bool) else cilium_registry_online }}"
+
+# ---- 离线包路径(多版本: kubernetes/v{{k8s_version}}/...) ----
+# 二进制
+k8s_bin_src: "{{ offline_binaries }}/kubernetes/v{{ k8s_version }}/bin"
+# 组件镜像(离线 load->推 harbor 用)
+src_k8s_images_dir: "{{ offline_binaries }}/kubernetes/v{{ k8s_version }}/images"
+k8s_images_dir: "/opt/kubernetes"
+src_calico_images_dir: "{{ offline_binaries }}/cni/calico/v{{ calico_version }}/images"
+calico_images_dir: "/opt/calico"
+src_flannel_images_dir: "{{ offline_binaries }}/cni/flannel/v{{ flannel_version }}/images"
+flannel_images_dir: "/opt/flannel"
+src_cilium_images_dir: "{{ offline_binaries }}/cni/cilium/v{{ cilium_version }}/images"
+cilium_images_dir: "/opt/cilium"
+src_multus_cni_images_dir: "{{ offline_binaries }}/cni/multus/v{{ multus_cni_version }}/images"
+multus_cni_images_dir: "/opt/multus_cni"
+# helm 二进制 + cilium chart(离线)
+helm_bin_src: "{{ offline_binaries }}/helm/v{{ helm_version }}"
+cilium_chart_src: "{{ offline_binaries }}/cni/cilium/v{{ cilium_version }}/cilium-{{ cilium_version }}.tgz"
+
+# 在线下载 mirror(官网受限时用国内)
+k8s_bin_mirror: "https://dl.k8s.io/release"          # 官方;国内可换 https://mirrors.aliyun.com/kubernetes-new/...
+crictl_bin_mirror: "https://mirrors.aliyun.com/kubernetes/pkgs"
+
+# ---- 组件清单 ----
+k8s_components:
+- kube-apiserver
+- kube-controller-manager
+- kube-scheduler
+- kube-proxy
+calico_components:
+- cni
+- node
+- kube-controllers
+multus_cni_components:
+- multus-cni
+
+# ---- 路径 ----
+kube_bin_dir: /usr/local/bin
+kube_config_dir: /etc/kubernetes
+kubelet_config_dir: /var/lib/kubelet
+kubelet_service_dir: /etc/systemd/system/kubelet.service.d
+
+# ---- crictl 离线包名 ----
+crictl_arch_map:
+  x86_64: "crictl-v{{ crictl_version }}-linux-amd64.tar.gz"
+  aarch64: "crictl-v{{ crictl_version }}-linux-arm64.tar.gz"
+
+# ==========  etcd(外置二进制集群)  ==========
+etcd_install_dir: "/opt/etcd"
+etcd_bin_dir: "{{ etcd_install_dir }}/bin"
+etcd_data_dir: "/var/lib/etcd"
+etcd_conf_dir: "/etc/etcd"
+etcd_cert_dir: "{{ etcd_conf_dir }}/ssl"
+etcd_cert_expiry: "36500"
+etcd_user: "etcd"
+etcd_group: "etcd"
+etcd_cluster_members: >-
+  {{
+    ((groups.etcd | default([])) + (groups.etcd_to_add | default([])))
+    | difference(groups.etcd_to_delete | default([]))
+    | unique
+  }}
+etcd_peer_port: 2380
+etcd_client_port: 2379
+etcd_cluster_token: "prod-etcd-cluster-01"
+etcd_config:
+  quota_backend_bytes: 8589934592
+  auto_compaction_retention: "1h"
+  auto_compaction_mode: periodic
+  heartbeat_interval: 500
+  election_timeout: 5000
+  log_level: info
+etcd_enable_metrics: true
+etcd_metrics_listen_urls: "http://{{ ansible_host }}:2381"
+
+# ==========  动态成员列表  ==========
+final_master_list: >-
+  {{
+    ((groups.k8s_master | default([])) + (groups.master_to_add | default([])))
+    | difference(groups.master_to_delete | default([]))
+    | unique
+  }}
 
 
 

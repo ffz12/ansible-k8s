@@ -1,0 +1,25 @@
+# 动态计算最终 master 列表（用于条件判断）
+- name: 计算最终 master 成员列表
+  set_fact:
+    final_master_list: >-
+      {{
+        ((groups.k8s_master | default([])) + (groups.master_to_add | default([])))
+        | difference(groups.master_to_delete | default([]))
+        | unique
+      }}
+  run_once: true
+  delegate_to: localhost
+
+# 按标签执行阶段
+  
+- name: 同步 k8s 核心镜像到 Harbor(仅离线)
+  include_tasks: sync-images-to-harbor.yml
+  when:
+    - inventory_hostname == groups['k8s_master'][0]
+    - is_offline | default(false) | bool
+
+
+
+- name: 初始化第一个 Master
+  include_tasks: init-first-master.yml
+  when: inventory_hostname == groups['k8s_master'][0]

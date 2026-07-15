@@ -31,8 +31,25 @@
 #10.2.0.13 host_ip=10.2.0.13
 
 [k8s_master]
-# k8s master 节点(nginx-ha 方案的 keepalived priority 会用到)
+# k8s master 节点(控制平面; nginx-ha keepalived priority 也会用到)
 #a800-node30 ansible_host=10.42.1.30
+
+[k8s_node]
+# k8s worker 节点
+#node001 ansible_host=10.1.0.1
+
+[etcd]
+# 外置 etcd 集群节点(建议 3/5 台奇数); 证书按 ansible_host 签发
+#cpu01 ansible_host=10.2.0.11
+#cpu02 ansible_host=10.2.0.12
+#cpu03 ansible_host=10.2.0.13
+
+# ---- 扩缩容用的临时组(平时留空; 加/删节点时才填) ----
+[master_to_add]
+[master_to_delete]
+[node_to_delete]
+[etcd_to_add]
+[etcd_to_delete]
 
 [all:vars]
 # 时钟同步 NTP 源
@@ -41,6 +58,10 @@
 #lbvip=10.2.1.251
 # VIP 掩码(默认 22),按实际网段改
 #vip_prefix=22
+# CNI 插件: calico(默认) / flannel / cilium
+#kube_network_plugin=calico
+# 离线部署置 true(在线留默认 false 或不设)
+#is_offline=false
 
 # 连接方式:
 # 【还没配 root 免密】用普通用户 + sudo:

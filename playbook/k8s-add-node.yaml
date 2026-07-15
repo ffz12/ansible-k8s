@@ -1,0 +1,7 @@
+---
+- name: 初始化并加入 Kubernetes 集群
+  hosts: k8s_node
+  roles:
+    - kubernetes/kube-common
+    - kubernetes/kube-add-node
+

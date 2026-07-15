@@ -1,0 +1,44 @@
+# roles/kubernetes/kube-common/tasks/install-binary.yml
+
+- name: 确定 CPU 架构（amd64 或 arm64）
+  set_fact:
+    kube_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+- name: 创建 kubelet 工作目录
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ kube_bin_dir }}"
+    - "{{ kube_config_dir }}"
+    - "{{ kube_config_dir }}/pki"
+    - "{{ kube_config_dir }}/pki/etcd"
+    - "{{ kube_config_dir }}/pki/manifests"
+    - "{{ kubelet_service_dir }}"
+    - "{{ kubelet_config_dir }}"
+
+- name: 拷贝 Kubernetes 二进制(离线,来自多版本目录 v{{ k8s_version }})
+  copy:
+    src: "{{ k8s_bin_src }}/{{ kube_arch }}/{{ item }}"
+    dest: "{{ kube_bin_dir }}/{{ item }}"
+    mode: "0755"
+  loop:
+    - kubeadm
+    - kubectl
+    - kubelet
+  when: is_offline | default(false) | bool
+
+- name: 下载 Kubernetes 二进制(在线,从 mirror,官网受限可改 k8s_bin_mirror)
+  get_url:
+    url: "{{ k8s_bin_mirror }}/v{{ k8s_version }}/bin/linux/{{ kube_arch }}/{{ item }}"
+    dest: "{{ kube_bin_dir }}/{{ item }}"
+    mode: "0755"
+    force: no
+  loop:
+    - kubeadm
+    - kubectl
+    - kubelet
+  when: not (is_offline | default(false) | bool)

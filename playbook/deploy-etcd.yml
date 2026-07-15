@@ -1,0 +1,8 @@
+- name: Deploy and update healthy etcd nodes
+  hosts: etcd
+  vars:
+    etcd_initial_cluster_state: new
+  roles:
+    - etcd/etcd-common
+    - certs
+    - etcd/etcd-install

@@ -1,0 +1,8 @@
+# 单独部署/切换 CNI(在已装好的集群上, 第一个 master 执行)
+# 用法: ansible-playbook playbook/k8s-cni.yaml -e kube_network_plugin=calico
+#      (calico/flannel/cilium; 离线加 -e is_offline=true)
+- name: 部署/切换 CNI 网络插件
+  hosts: "{{ groups['k8s_master'][0] }}"
+  gather_facts: yes
+  roles:
+    - cni

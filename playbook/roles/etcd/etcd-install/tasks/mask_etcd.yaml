@@ -1,0 +1,20 @@
+- name: Re-render etcd config with updated initial-cluster-state (if changed)
+  template:
+    src: etcd.conf.yml.j2
+    dest: "{{ etcd_conf_dir }}/etcd.conf.yml"
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: "0644"
+  register: config_rendered
+  when: etcd_initial_cluster_state == 'existing'
+
+- name: Restart etcd if config was updated to 'existing'
+  systemd:
+    name: etcd
+    state: restarted
+  when: config_rendered is changed
+
+- name: DEBUG - etcd_initial_cluster_state value
+  debug:
+    var: etcd_initial_cluster_state
+

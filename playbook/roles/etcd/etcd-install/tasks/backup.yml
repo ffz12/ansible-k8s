@@ -1,0 +1,36 @@
+- name: Ensure backup directory exists
+  file:
+    path: /var/backups/kube_etcd
+    state: directory
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group | default(etcd_user) }}"
+    mode: '0755'
+
+- name: Deploy etcd backup script
+  template:
+    src: etcd-backup.sh.j2
+    dest: /usr/local/bin/etcd-backup.sh
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group | default(etcd_user) }}"
+    mode: '0700'
+
+- name: Deploy systemd service and timer for backup
+  template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group | default(etcd_user) }}"
+    mode: '0644'
+  loop:
+    - backup-etcd.service
+    - backup-etcd.timer
+
+- name: Reload systemd and enable backup timer
+  systemd:
+    name: "{{ item }}"
+    daemon_reload: yes
+    enabled: yes
+    state: "{{ 'started' if item == 'backup-etcd.timer' else omit }}"
+  loop:
+    - backup-etcd.service
+    - backup-etcd.timer

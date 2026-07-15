@@ -1,0 +1,75 @@
+---
+
+- name: Determine the healthy etcd node to run removal on
+  set_fact:
+    scale_down_delegate_host: "{{ groups.etcd | difference(groups.get('etcd_to_delete', [])) | first }}"
+  delegate_to: localhost
+  run_once: true
+  when: groups.etcd_to_delete is defined and (groups.etcd_to_delete | length) > 0
+- name: Fail if no healthy node found
+  assert:
+    that: scale_down_delegate_host is defined
+    fail_msg: "No healthy etcd node available to perform scale-down!"
+  when: groups.etcd_to_delete is defined
+
+
+- name: Remove etcd members marked for deletion
+  delegate_to: "{{ groups.etcd | difference(groups.get('etcd_to_delete', [])) | first }}"
+  run_once: true
+  become: yes
+  shell: |
+    set -euo pipefail
+
+    ETCDCTL="{{ etcd_bin_dir }}/etcdctl"
+    ENDPOINTS="{{ hostvars[scale_down_delegate_host].ansible_host }}:{{ etcd_client_port }}"
+    CACERT="{{ etcd_cert_dir }}/ca.pem"
+    CERT="{{ etcd_cert_dir }}/{{ scale_down_delegate_host }}.pem"
+    KEY="{{ etcd_cert_dir }}/{{ scale_down_delegate_host }}-key.pem"
+    echo ">>> Checking etcd cluster health before removal..."
+    $ETCDCTL \
+      --endpoints="$ENDPOINTS" \
+      --cacert="$CACERT" \
+      --cert="$CERT" \
+      --key="$KEY" \
+      endpoint health
+
+    echo ">>> Cluster is healthy. Proceeding to remove members..."
+
+    {% for node in groups.etcd_to_delete | default([]) %}
+    echo ""
+    echo "Checking member ID for node: {{ node }}"
+    # Use exact match on name field (field 2 in comma-separated output)
+    PEER_URL="{{ hostvars[node].ansible_host }}:{{ etcd_peer_port | default(2380) }}"
+    MEMBER_ID=$($ETCDCTL \
+      --endpoints="$ENDPOINTS" \
+      --cacert="$CACERT" \
+      --cert="$CERT" \
+      --key="$KEY" \
+      member list |  awk -F, -v target="$PEER_URL" '$4 ~ target {print $1}')
+
+    if [ -n "$MEMBER_ID" ]; then
+      echo "Found member {{ node }} with ID: $MEMBER_ID"
+      echo "Removing etcd member {{ node }}..."
+      $ETCDCTL \
+        --endpoints="$ENDPOINTS" \
+        --cacert="$CACERT" \
+        --cert="$CERT" \
+        --key="$KEY" \
+        member remove "$MEMBER_ID"
+      echo "SUCCESS: Removed {{ node }} (ID: $MEMBER_ID)"
+    else
+      echo "INFO: etcd member '{{ node }}' not found. Skipping."
+    fi
+    {% endfor %}
+
+    echo ""
+    echo "All specified members processed."
+  args:
+    executable: /bin/bash
+  when: groups.etcd_to_delete is defined and (groups.etcd_to_delete | length) > 0
+  register: remove_result
+- name: Display removal output
+  debug:
+    msg: "{{ remove_result.stdout_lines }}"
+ # when: remove_result is succeeded
+

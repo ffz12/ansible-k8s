@@ -1,0 +1,18 @@
+# 可选: 部署 multus 多网卡元 CNI(叠加在主 CNI 之上)
+# 注: multus 镜像目前按离线 Harbor 布局(multus-daemonset.yml.j2 内引用 registry),
+#     在线场景如需 multus 请自行确认镜像可达。
+- name: 渲染 multus DaemonSet
+  template:
+    src: multus-daemonset.yml.j2
+    dest: "{{ kube_config_dir }}/multus-daemonset.yml"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: apply multus
+  shell: |
+    kubectl apply -f "{{ kube_config_dir }}/multus-daemonset.yml"
+  args:
+    executable: /bin/bash
+  register: multus_apply
+  changed_when: "'created' in multus_apply.stdout or 'configured' in multus_apply.stdout"

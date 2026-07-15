@@ -1,0 +1,58 @@
+# roles/etcd/etcd-scale-up/tasks/add-members.yml
+---
+- name: Get current etcd member list (JSON format)
+  delegate_to: "{{ groups.etcd[0] }}"
+  run_once: true
+  command: >
+    {{ etcd_bin_dir }}/etcdctl
+    --endpoints=https://{{ hostvars[groups.etcd[0]].ansible_host }}:{{ etcd_client_port }}
+    --cacert={{ etcd_cert_dir }}/ca.pem
+    --cert={{ etcd_cert_dir }}/{{ groups.etcd[0] }}.pem
+    --key={{ etcd_cert_dir }}/{{ groups.etcd[0] }}-key.pem
+    member list --write-out=json
+  register: etcd_member_list
+  changed_when: false
+
+- name: Identify nodes not already in the cluster
+  set_fact:
+    etcd_nodes_to_add: >-
+     {{
+        groups.etcd_to_add |
+        reject('in',
+          (etcd_member_list.stdout | from_json).members |
+          selectattr('name', 'defined') |
+          map(attribute='name') |
+          list
+        ) |
+        list
+      }}
+  delegate_to: localhost
+  run_once: true
+
+- name: DEBUG - Show nodes that will be added
+  debug:
+    msg: "Nodes to add: {{ etcd_nodes_to_add }}"
+  delegate_to: localhost
+  run_once: true
+  when: etcd_nodes_to_add | length > 0
+
+- name: Add new nodes to etcd cluster (metadata registration)
+  delegate_to: "{{ groups.etcd[0] }}"
+  run_once: true
+  vars:
+    etcd_endpoint: "https://{{ hostvars[groups.etcd[0]].ansible_host }}:{{ etcd_client_port }}"
+  command: >
+    {{ etcd_bin_dir }}/etcdctl
+    --endpoints={{ etcd_endpoint }}
+    --cacert={{ etcd_cert_dir }}/ca.pem
+    --cert={{ etcd_cert_dir }}/{{ groups.etcd[0] }}.pem
+    --key={{ etcd_cert_dir }}/{{ groups.etcd[0] }}-key.pem
+    member add {{ item }}
+    --peer-urls="https://{{ hostvars[item].ansible_host }}:{{ etcd_peer_port | default(2380) }}"
+  loop: "{{ etcd_nodes_to_add }}"
+  when: etcd_nodes_to_add | length > 0
+  register: add_result
+  failed_when:
+    - add_result.rc != 0
+    - "'already exists' not in add_result.stderr"
+  changed_when: "'added member' in add_result.stdout"

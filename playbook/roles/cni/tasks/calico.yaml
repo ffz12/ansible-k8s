@@ -1,0 +1,18 @@
+# 部署 Calico (manifest 方式, kubectl apply)
+# 镜像地址由 calico_images 变量提供(离线->Harbor, 在线->docker.io/calico, 见 group_vars/all.yaml)
+# pod CIDR 由 kubeadm 的 podSubnet({{ pod_subnet }}) 决定, calico 自动继承
+- name: 渲染 calico manifest
+  template:
+    src: calico.yaml.j2
+    dest: "{{ kube_config_dir }}/calico.yaml"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: apply calico
+  shell: |
+    kubectl apply -f "{{ kube_config_dir }}/calico.yaml"
+  args:
+    executable: /bin/bash
+  register: calico_apply
+  changed_when: "'created' in calico_apply.stdout or 'configured' in calico_apply.stdout"

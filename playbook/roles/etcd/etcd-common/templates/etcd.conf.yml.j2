@@ -1,0 +1,49 @@
+# Etcd member name (must be unique in cluster)
+name: '{{ inventory_hostname }}'
+
+# Data and network
+data-dir: {{ etcd_data_dir }}
+listen-peer-urls: https://{{ ansible_host }}:{{ etcd_peer_port }}
+listen-client-urls: https://{{ ansible_host }}:{{ etcd_client_port }},https://127.0.0.1:{{ etcd_client_port }}
+advertise-client-urls: https://{{ ansible_host }}:{{ etcd_client_port }}
+initial-advertise-peer-urls: https://{{ ansible_host }}:{{ etcd_peer_port }}
+
+# Cluster membership
+{% set cluster_list = [] %}
+{% for host in etcd_cluster_members | default([]) %}
+  {% set ip = hostvars[host].ansible_host | default(host) %}
+  {% if ip %}
+    {% set _ = cluster_list.append(host + '=https://' + ip + ':' + etcd_peer_port | string) %}
+  {% endif %}
+{% endfor %}
+
+initial-cluster: {{ cluster_list | join(',') }}
+
+initial-cluster-token: "{{ etcd_cluster_token | default('k8s-etcd-cluster') }}"
+initial-cluster-state: "{{ etcd_initial_cluster_state }}"
+
+# TLS Security - USE NODE-SPECIFIC CERTS
+client-transport-security:
+  cert-file: {{ etcd_cert_dir }}/{{ inventory_hostname }}.pem
+  key-file: {{ etcd_cert_dir }}/{{ inventory_hostname }}-key.pem
+  trusted-ca-file: {{ etcd_cert_dir }}/ca.pem
+  client-cert-auth: true
+
+peer-transport-security:
+  cert-file: {{ etcd_cert_dir }}/{{ inventory_hostname }}.pem
+  key-file: {{ etcd_cert_dir }}/{{ inventory_hostname }}-key.pem
+  trusted-ca-file: {{ etcd_cert_dir }}/ca.pem
+  peer-client-cert-auth: true
+
+# Performance & Maintenance
+quota-backend-bytes: {{ etcd_config.quota_backend_bytes | default(8589934592) }}  # 8GB
+auto-compaction-retention: "{{ etcd_config.auto_compaction_retention | default('1h') }}"
+auto-compaction-mode: "{{ etcd_config.auto_compaction_mode | default('periodic') }}"
+heartbeat-interval: {{ etcd_config.heartbeat_interval | default(100) }}
+election-timeout: {{ etcd_config.election_timeout | default(1000) }}
+log-level: "{{ etcd_config.log_level | default('info') }}"
+
+# Metrics (optional)
+{% if etcd_enable_metrics | default(false) %}
+listen-metrics-urls: "{{ etcd_metrics_listen_urls }}"
+{% endif %}

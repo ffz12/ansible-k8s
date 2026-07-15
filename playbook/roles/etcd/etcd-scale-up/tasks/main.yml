@@ -1,0 +1,73 @@
+# roles/etcd/etcd-scale-up/tasks/main.yml
+---
+- name: Validate etcd_to_add group is defined and non-empty
+  assert:
+    that:
+      - "'etcd_to_add' in groups"
+      - groups.etcd_to_add | length > 0
+    fail_msg: "Inventory must define [etcd_to_add] group with at least one node."
+  delegate_to: localhost
+  run_once: true
+
+- name: Ensure existing etcd cluster is not empty
+  assert:
+    that: groups.etcd | length > 0
+    fail_msg: "Existing [etcd] group is empty. Cannot scale up into empty cluster."
+  delegate_to: localhost
+  run_once: true
+
+- name: Trigger immediate etcd backup on existing cluster
+  delegate_to: "{{ groups.etcd[0] }}"
+  command: /usr/local/bin/etcd-backup.sh
+  run_once: true
+  when: etcd_backup_on_scale | default(true)
+  register: backup_result
+  failed_when: backup_result.rc != 0
+
+# --- Prepare new nodes ---
+- name: Create etcd user and directories on new nodes
+  include_role:
+    name: etcd/etcd-common
+  when: inventory_hostname in groups.etcd_to_add
+
+- name: Install etcd binary on new nodes
+  include_role:
+    name: etcd/etcd-install
+    tasks_from: install-binary.yml
+  when: inventory_hostname in groups.etcd_to_add
+
+- name: Ensure certificates exist for new nodes
+  include_role:
+    name: certs
+  when: inventory_hostname in groups.etcd_to_add
+
+- name: DEBUG - Show etcd_endpoints
+  debug:
+    msg: "Endpoints: {{ groups.etcd | map('extract', hostvars, 'ansible_host') | map('regex_replace', '^(.*)$', 'https://\\1:2379') | join(',') }}"
+  delegate_to: localhost
+  run_once: true
+- name: Add new members to etcd cluster
+  include_tasks: add-members.yml
+- name: Sync etcd config to new nodes (with state=existing)
+  when: inventory_hostname in groups.etcd_to_add
+  vars:
+    etcd_initial_cluster_state: existing
+  include_role:
+    name: etcd/etcd-common
+    tasks_from: sync-etcd-config.yml
+
+- name: Configure and validate new etcd nodes
+  when: inventory_hostname in groups.etcd_to_add
+  block:
+  - name: Start etcd service
+    include_role:
+      name: etcd/etcd-install
+      tasks_from: reload-start.yml
+  - name: Deploy backup mechanism on new node
+    include_role:
+      name: etcd/etcd-install
+      tasks_from: backup.yml
+  - name: Perform health check
+    include_role:
+      name: etcd/etcd-install
+      tasks_from: health_check.yml

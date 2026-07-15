@@ -1,0 +1,159 @@
+---
+- name: "[Sync Images] 确保 Harbor 项目存在"
+  uri:
+    url: "https://{{ harbor_dns }}/api/v2.0/projects"
+    method: POST
+    user: "{{ harbor_admin_username }}"
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: no  # 相当于 curl -k
+    body_format: json
+    body:
+      project_name: "{{ item }}"
+      public: true
+    status_code: [201, 409]  # 201=创建成功, 409=已存在
+  loop:
+    - library
+    - unisound
+  run_once: true
+  when: "'aliyuncs.com' not in harbor_dns"
+
+- name: "[Sync Images] 登录 Harbor"
+  shell: |
+    echo "{{ harbor_admin_password }}" | docker login "{{ harbor_dns }}" -u "{{ harbor_admin_username }}" --password-stdin
+  args:
+    executable: /bin/bash
+  register: login_result
+  failed_when: "'Login Succeeded' not in login_result.stdout"
+
+- name: "[Copy Images] 复制 Kubernetes 镜像到本地目录"
+  copy:
+    src: "{{ src_k8s_images_dir }}"
+    dest: "{{ k8s_images_dir }}"
+- name: "[Sync Images] 同步 pause 镜像并创建 multi-arch manifest"
+  shell: |
+    set -e
+    IMAGE_NAME="{{ item }}"
+    TAG="{{ pause_version }}"
+
+    # 加载 amd64 和 arm64 镜像
+    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar"
+    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar"
+
+    # 打标签（注意：源镜像名需匹配实际加载后的名称）
+    docker tag "registry.k8s.io/${IMAGE_NAME}-amd64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
+    docker tag "registry.k8s.io/${IMAGE_NAME}-arm64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
+
+    # 推送单架构镜像
+    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
+    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
+
+    # 创建 multi-arch manifest
+    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then
+      docker manifest rm "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1 || true
+    fi
+
+    docker manifest create --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
+
+    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" --os linux --arch amd64
+
+    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" --os linux --arch arm64
+
+    docker manifest push --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}"
+
+    # 清理本地临时镜像
+    docker rmi "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" || true
+  loop: 
+  - pause
+  args:
+    executable: /bin/bash
+ 
+- name: "[Sync Images] 同步 coredns 镜像并创建 multi-arch manifest"
+  shell: |
+    set -e
+    IMAGE_NAME="{{ item }}"
+    TAG="v{{ coredns_version }}"
+
+    # 加载 amd64 和 arm64 镜像
+    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar"
+    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar"
+
+    # 打标签（注意：源镜像名需匹配实际加载后的名称）
+    docker tag "registry.k8s.io/${IMAGE_NAME}-amd64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
+    docker tag "registry.k8s.io/${IMAGE_NAME}-arm64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
+
+    # 推送单架构镜像
+    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
+    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
+
+    # 创建 multi-arch manifest
+    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then
+      docker manifest rm "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1 || true
+    fi
+
+    docker manifest create --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
+
+    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" --os linux --arch amd64
+
+    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" --os linux --arch arm64
+
+    docker manifest push --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}"
+
+    # 清理本地临时镜像
+    docker rmi "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" || true
+  loop:
+  - coredns
+  args:
+    executable: /bin/bash
+
+
+- name: "[Sync Images] 同步 Kubernetes 镜像并创建 multi-arch manifest"
+  shell: |
+    set -e
+    IMAGE_NAME="{{ item }}"
+    TAG="v{{ k8s_version }}"
+
+    # 加载 amd64 和 arm64 镜像
+    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar"
+    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar"
+
+    # 打标签（注意：源镜像名需匹配实际加载后的名称）
+    docker tag "registry.k8s.io/${IMAGE_NAME}-amd64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
+    docker tag "registry.k8s.io/${IMAGE_NAME}-arm64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
+
+    # 推送单架构镜像
+    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
+    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
+
+    # 创建 multi-arch manifest
+    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then
+      docker manifest rm "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1 || true
+    fi
+
+    docker manifest create --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
+
+    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" --os linux --arch amd64
+
+    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
+      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" --os linux --arch arm64
+
+    docker manifest push --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}"
+
+    # 清理本地临时镜像
+    docker rmi "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" || true
+  loop: "{{ k8s_components }}"
+  args:
+    executable: /bin/bash
+# 注: calico/flannel/cilium 等 CNI 镜像同步已移至 roles/cni/tasks/sync-cni-images.yaml
+
