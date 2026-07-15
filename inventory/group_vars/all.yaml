@@ -233,8 +233,8 @@ cilium_chart_src: "{{ offline_binaries }}/cni/cilium/v{{ cilium_version }}/ciliu
 # 在线下载 mirror(官网受限时用国内)
 k8s_bin_mirror: "https://dl.k8s.io/release"          # 官方;国内可换 https://mirrors.aliyun.com/kubernetes-new/...
 crictl_bin_mirror: "https://mirrors.aliyun.com/kubernetes/pkgs"
-# etcd 二进制在线下载源(github release;国内慢可换 ghproxy 等镜像)
-etcd_bin_mirror: "https://github.com/etcd-io/etcd/releases/download"
+# etcd 二进制在线下载源(默认华为云镜像,国内稳; github 原站国内常超时)
+etcd_bin_mirror: "https://mirrors.huaweicloud.com/etcd"
 
 # ---- 组件清单 ----
 k8s_components:
