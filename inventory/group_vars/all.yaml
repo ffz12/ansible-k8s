@@ -49,14 +49,13 @@ cri_dockerd_services:
 #cri pause镜像
 pause: harbor.unisound.ai/unisound/pause:3.10
 pause_version: "3.10"
-#containerd pause镜像
-#k8s1.32.10
-#sandbox_image: harbor.local.clusters/kubesphere/pause:3.10 
-#k8s1.28
-#sandbox_image: registry.cn-beijing.aliyuncs.com/kubesphereio/pause:3.9
-#k8s1.34.3
-sandbox_image: harbor.local.clusters/kubernetes/kubernetes/pause:3.10.1 
-#sandbox_image: hub.kubesphere.com.cn/kubernetes/pause:3.10.1
+#containerd pause镜像(sandbox)
+#pause 版本与 k8s 版本绑定(查: kubeadm config images list | grep pause)
+pause_image_version: "3.10.1"
+#harbor 上 pause 的项目路径(离线用)
+harbor_pause_repo: "{{ harbor_dns }}/kubernetes/kubernetes"
+#containerd sandbox(pause)镜像: 离线->自建 Harbor, 在线->国内 mirror(随 is_offline 自动切)
+sandbox_image: "{{ (harbor_pause_repo ~ '/pause:' ~ pause_image_version) if (is_offline | default(false) | bool) else (kube_image_mirror ~ '/pause:' ~ pause_image_version) }}"
 #containerd 安装版本(单一事实来源,改这里即可,二进制路径与config格式自动对齐)
 #可选: "2.2.3"(config version=3) 或 "1.7.32"(config version=2)
 containerd_version: "1.7.32"
@@ -234,6 +233,8 @@ cilium_chart_src: "{{ offline_binaries }}/cni/cilium/v{{ cilium_version }}/ciliu
 # 在线下载 mirror(官网受限时用国内)
 k8s_bin_mirror: "https://dl.k8s.io/release"          # 官方;国内可换 https://mirrors.aliyun.com/kubernetes-new/...
 crictl_bin_mirror: "https://mirrors.aliyun.com/kubernetes/pkgs"
+# etcd 二进制在线下载源(github release;国内慢可换 ghproxy 等镜像)
+etcd_bin_mirror: "https://github.com/etcd-io/etcd/releases/download"
 
 # ---- 组件清单 ----
 k8s_components:

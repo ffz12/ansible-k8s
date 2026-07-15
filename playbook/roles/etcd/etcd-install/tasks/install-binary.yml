@@ -41,11 +41,19 @@
 
 - name: Deploy etcd binaries
   block:
-    - name: Copy etcd tarball from local files/ to remote /tmp
+    - name: Copy etcd tarball from local files/ to remote /tmp (离线)
       copy:
         src: "{{ etcd_src_path }}"
         dest: "/tmp/{{ etcd_tar }}"
         mode: '0755'
+      when: is_offline | default(false) | bool
+
+    - name: Download etcd tarball to remote /tmp (在线, 官网受限可改 etcd_bin_mirror)
+      get_url:
+        url: "{{ etcd_bin_mirror }}/v{{ etcd_version }}/{{ etcd_tar }}"
+        dest: "/tmp/{{ etcd_tar }}"
+        mode: '0755'
+      when: not (is_offline | default(false) | bool)
 
     - name: Extract etcd tarball on remote host
       unarchive:
