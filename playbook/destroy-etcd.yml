@@ -1,0 +1,6 @@
+---
+- name:  Destroy entire etcd cluster
+  hosts: etcd
+  become: yes
+  roles:
+    - etcd/etcd-destroy

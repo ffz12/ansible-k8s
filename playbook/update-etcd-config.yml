@@ -1,0 +1,12 @@
+---
+- name: Scale down etcd cluster
+  hosts: >-
+     {{ ((groups.etcd | default([])) + (groups.etcd_to_add | default([])))
+       | difference(groups.etcd_to_delete | default([]))
+       | unique }}
+  #gather_facts: false
+  become: yes
+  tasks:
+  - name: Sync etcd configuration to all cluster members
+    include_tasks: roles/etcd/etcd-common/tasks/sync-etcd-config.yml
+ 

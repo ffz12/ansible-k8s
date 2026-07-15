@@ -1,0 +1,44 @@
+---
+
+- name: Validate etcd scale-down is safe
+  hosts: localhost
+  gather_facts: no
+  run_once: true
+  tasks:
+    - name: Fail if remaining etcd nodes < 3 (unsafe)
+      assert:
+        that:
+          - (groups.etcd | length) - (groups.etcd_to_delete | default([]) | length) >= 2
+        fail_msg: |
+          Unsafe etcd scale-down!
+          Current nodes: {{ groups.etcd | length }}
+          To delete: {{ groups.etcd_to_delete | default([]) | length }}
+          Remaining: {{ (groups.etcd | length) - (groups.etcd_to_delete | default([]) | length) }} (< 2)
+          Etcd clusters must have at least 3 nodes for production safety.
+        success_msg: "Etcd scale-down is safe: {{ (groups.etcd | length) - (groups.etcd_to_delete | default([]) | length) }} nodes will remain."
+- name: Scale down etcd cluster
+  hosts: "{{ groups.etcd | difference(groups.get('etcd_to_delete', [])) }}" 
+  become: yes
+  roles:
+  - etcd/etcd-scale-down
+- name: Cleanup deleted etcd nodes
+  hosts: etcd_to_delete
+  become: yes
+  roles:
+    - name: Destroy removed etcd nodes
+      role: etcd/etcd-destroy   
+      when: groups.etcd_to_delete is defined and (groups.etcd_to_delete | length) > 0
+
+- name: update config 
+  hosts: >-
+     {{ ((groups.etcd | default([])) + (groups.etcd_to_add | default([])))
+       | difference(groups.etcd_to_delete | default([]))
+       | unique }}
+  #gather_facts: false
+  become: yes
+  vars:
+    etcd_initial_cluster_state: existing
+  tasks:
+  - name: Sync etcd configuration to all cluster members
+    include_tasks: roles/etcd/etcd-common/tasks/sync-etcd-config.yml
+
