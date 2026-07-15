@@ -1,0 +1,26 @@
+- name: 配置主机域名解析 (去重版)
+  hosts: k8s_master:k8s_node
+  become: yes
+  vars:
+    # 1. 合并两个组的列表
+    # 2. 使用 'unique' 过滤器去除重复的主机名 (例如同时在 master 和 node 组的主机)
+    # 3. 排序 (可选，为了让 /etc/hosts 内容有序)
+    unique_hosts: "{{ (groups['k8s_master'] + groups['k8s_node']) | unique | sort }}"
+
+    # 动态生成需要写入的完整文本块
+    hosts_block_content: |
+      {% for item in unique_hosts %}
+      {{ hostvars[item]['ansible_host'] }} {{ item }}
+      {% endfor %}
+  tasks:
+    - name: 更新 /etc/hosts 中的 K8s 节点信息
+      blockinfile:
+        path: /etc/hosts
+        block: "{{ hosts_block_content }}"
+        state: present
+        backup: yes
+        # 【关键】确保这里的 marker 与你文件中现有的标记完全一致
+        # 如果文件中是 "# Ansible k8s hosts BEGIN/END"，这里必须一样
+        marker: "# Ansible k8s hosts {mark}"
+        create: yes
+

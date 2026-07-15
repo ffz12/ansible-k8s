@@ -1,0 +1,34 @@
+- hosts: yum
+  tasks:
+    # 修复: 原 `mv yum.repos.d yum.repos.d.bak/` 无幂等保护,第二次运行会把目录嵌套进 bak 内部。
+    # 用 creates 守卫,确保备份只做一次。
+    - name: 备份原 yum 源目录(仅首次)
+      shell: mv /etc/yum.repos.d /etc/yum.repos.d.bak
+      args:
+        creates: /etc/yum.repos.d.bak
+
+    - name: 确保 yum.repos.d 目录存在
+      file:
+        path: /etc/yum.repos.d
+        state: directory
+        mode: '0755'
+
+    - name: 下载阿里云 CentOS-7 base 源
+      get_url:
+        url: https://mirrors.aliyun.com/repo/Centos-7.repo
+        dest: /etc/yum.repos.d/CentOS-Base.repo
+        mode: '0644'
+#    - name: change repo
+#      shell: sed -i -e '/mirrors.cloud.aliyuncs.com/d' -e '/mirrors.aliyuncs.com/d' /etc/yum.repos.d/CentOS-Base.repo
+
+    - name: 重建 yum 缓存
+      shell: yum clean all && yum makecache
+
+    - name: 查看 yum repo 列表
+      shell: "yum repolist"
+      register: shell_output
+      changed_when: false
+
+    - name: 显示 yum repo
+      debug:
+        var: shell_output.stdout

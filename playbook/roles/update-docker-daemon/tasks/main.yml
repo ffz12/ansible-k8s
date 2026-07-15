@@ -1,0 +1,32 @@
+- name: 修改daemon.json
+  block:
+  - name: 拷贝daemon.json
+    template: src=daemon.json.j2 dest=/etc/docker/daemon.json 
+  - name: 添加harbor域名解析
+    blockinfile:
+      path: /etc/hosts
+      block: |-
+        {% for item in harbor_instances %}
+        {{ item.ip }} {{ item.dns }}
+        {% endfor %}
+      state: present
+      backup: yes
+      marker: "# Ansible inventory hosts {mark}"
+  - name: 启动docker并登录harbor
+    shell: |
+      systemctl enable docker --now
+      systemctl reload docker
+      {% for item in harbor_instances %}
+      docker login {{ item.dns }} -uadmin -pHarbor12345
+      {% endfor %}
+  ignore_errors: true
+
+- name: 检查docker服务运行
+  shell: "systemctl is-active docker.service"
+  register: docker_status
+  changed_when: false
+  failed_when: false
+- name: debug
+  debug:
+    msg: "{{ docker_status.stdout }}"
+

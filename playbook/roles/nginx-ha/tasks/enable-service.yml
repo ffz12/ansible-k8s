@@ -1,0 +1,11 @@
+---
+# roles/nginx-ha/tasks/enable-service.yml
+- name: 启动并启用服务
+  systemd:
+    name: "{{ item }}"
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  loop:
+    - nginx
+    - keepalived

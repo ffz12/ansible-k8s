@@ -1,0 +1,11 @@
+[Unit]
+Description=Wait until NM actually online
+   
+   
+[Service]
+Type=forking
+Restart=always
+ExecStart=/usr/bin/nvidia-persistenced  --persistence-mode
+   
+[Install]
+WantedBy=multi-user.target

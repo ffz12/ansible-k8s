@@ -1,0 +1,87 @@
+- name: 创建ssl路径
+  # 修复: 原来路径多了前导斜杠 /{{ harbor_copy_path }},与本文件其余任务({{ harbor_copy_path }}/...)不一致
+  file:
+    path: "{{ harbor_copy_path }}/harbor/{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "ssl"
+
+# 以下证书生成全部加 creates 守卫: 证书已存在则跳过,避免重跑覆盖已签发证书导致信任链断裂
+- name: 生成ca.key
+  shell: |
+         cd {{ harbor_copy_path }}/harbor/ssl
+         openssl genrsa -out ca.key 3072
+  args:
+    creates: "{{ harbor_copy_path }}/harbor/ssl/ca.key"
+
+- name: 生成ca.crt
+  shell: |
+         cd {{ harbor_copy_path }}/harbor/ssl
+         openssl req -new -x509 -days 36500 -key ca.key -out ca.crt -subj "/C=CN/ST=Beijing/L=Beijing/O=My Company/OU=IT Department/CN=HarborCA"
+  args:
+    creates: "{{ harbor_copy_path }}/harbor/ssl/ca.crt"
+
+- name: 准备 OpenSSL 配置文件（含 SAN）
+  template:
+    src: openssl-san.conf.j2
+    dest: "{{ harbor_copy_path }}/harbor/ssl/openssl-san.conf"
+
+- name: 生成harbor.key
+  shell: |
+         cd {{ harbor_copy_path }}/harbor/ssl
+         openssl genrsa -out harbor.key 3072
+  args:
+    creates: "{{ harbor_copy_path }}/harbor/ssl/harbor.key"
+
+- name: 生成harbor.csr
+  shell: |
+         cd {{ harbor_copy_path }}/harbor/ssl
+         openssl req -new -key harbor.key   -out harbor.csr  -subj "/C=CN/ST=Beijing/L=Beijing/O=My Company/OU=IT/CN={{ harbor_dns | default('harbor.local') }}" -config openssl-san.conf
+  args:
+    creates: "{{ harbor_copy_path }}/harbor/ssl/harbor.csr"
+
+- name: 使用 CA 签发 harbor.crt 证书
+  shell: |
+    cd {{ harbor_copy_path }}/harbor/ssl
+    openssl x509 -req -in harbor.csr \
+      -CA ca.crt -CAkey ca.key -CAcreateserial \
+      -out harbor.crt -days 36500 \
+      -extfile openssl-san.conf -extensions v3_req
+  args:
+    creates: "{{ harbor_copy_path }}/harbor/ssl/harbor.crt"
+
+- name: 检查证书生成效果
+  shell: |
+         cd {{ harbor_copy_path }}/harbor/ssl
+         openssl x509 -noout -text -in harbor.crt | grep -A1 "Not Before:" | sed ':a;N;$!ba;s/\n/ /g'
+  register: ssl_status
+  changed_when: false
+- name: debug
+  debug:
+    msg: "{{ ssl_status.stdout }}"
+
+- name: 检查证书SAN
+  shell: |
+         cd {{ harbor_copy_path }}/harbor/ssl
+         openssl x509 -in harbor.crt -text -noout | grep -A2 "Subject Alternative Name"
+  register: san_status
+  changed_when: false
+- name: debug
+  debug:
+    msg: "{{ san_status.stdout }}"
+
+- name: Ensure local certs directory exists on control node
+  delegate_to: localhost
+  run_once: true
+  become: false
+  file:
+    path: "{{ offline_binaries }}/harbor/{{ harbor_dns }}/certs/"
+    state: directory
+    mode: '0700'
+
+- name: Fetch Harbor CA from remote node to control node
+  fetch:
+    src: "{{ harbor_copy_path }}/harbor/ssl/ca.crt"
+    dest: "{{ offline_binaries }}/harbor/{{ harbor_dns }}/certs/{{ harbor_ip }}-ca.crt"
+    flat: yes

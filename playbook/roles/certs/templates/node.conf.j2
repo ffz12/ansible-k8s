@@ -1,0 +1,33 @@
+{%- set hosts = [target_node_hostname, target_node_ip] -%}
+{%- if enable_localhost_access | default(true) %}
+{%-   set hosts = hosts + ["localhost", "127.0.0.1"] -%}
+{%- endif %}
+{%- set hosts = hosts + ["::1", "ip6-localhost"] -%}
+
+{%- set dns_entries = [] -%}
+{%- set ip_entries = [] -%}
+{%- for host in hosts -%}
+  {%- if host | regex_search('^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$') or host == '::1' -%}
+    {%- set _ = ip_entries.append('IP:' + host) -%}
+  {%- else -%}
+    {%- set _ = dns_entries.append('DNS:' + host) -%}
+  {%- endif -%}
+{%- endfor -%}
+
+[ req ]
+default_bits = 2048
+prompt = no
+default_md = sha256
+distinguished_name = dn
+req_extensions = v3_req
+
+[ dn ]
+O = kubernetes 
+OU = etcd 
+CN = {{ target_node_cn }}
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth, clientAuth
+subjectAltName = {{ (dns_entries + ip_entries) | join(',') }}

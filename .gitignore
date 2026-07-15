@@ -1,0 +1,11 @@
+inventory/hosts
+offline/binaries/harbor/harbor.unisound.ai/certs/
+offline/binaries/harbor/harbor.local.clusters/
+#playbook/roles/certs/files/etcd-default/
+#./tmp/hosts
+#./tmp/scale_hosts
+#./tmp/prod.yaml
+
+
+# 冗余的 harbor 镜像打包(部署用单个 harbor-*-v2.11.2.tar.gz,此文件无引用,不纳入git以省LFS配额)
+offline/binaries/harbor/x86/harbor.v2.11.2.tar.gz

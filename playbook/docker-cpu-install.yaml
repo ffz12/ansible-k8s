@@ -1,0 +1,4 @@
+- hosts: docker_cpu
+  roles:
+  - docker
+  - update-docker-daemon

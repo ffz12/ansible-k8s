@@ -1,0 +1,21 @@
+- name: 设置 hostname
+  hostname:
+    name: "{{ inventory_hostname }}"
+  when: ansible_distribution not in ['openEuler']
+- include_tasks: redhat.yaml 
+  when: ansible_distribution in ['RedHat','CentOS']
+
+- include_tasks: openEuler.yaml
+  when: ansible_distribution in ['openEuler']
+
+# 系统基础软件环境设置
+
+- include_tasks: debian.yaml
+  when: ansible_distribution in ['Debian','Ubuntu']
+
+- include_tasks: kylinsp3.yaml
+  when: ansible_distribution in ['Kylin Linux Advanced Server']
+
+# 公共系统参数设置
+- include_tasks: common.yaml
+ 

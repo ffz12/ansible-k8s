@@ -1,0 +1,19 @@
+- name: 停止服务
+  service: name={{ item }} state=stopped enabled=no
+  loop: "{{ docker_services }}"
+  ignore_errors: true
+#- name: 删除docker组
+#  group:  name=docker state=absent
+#- name: 删除目录
+#  file: path=/etc/docker state=absent
+#- name: 删除数据目录
+#  file: path={{ data_root }} state=absent
+- name: 删除docker二进制包
+  file: path=/usr/sbin/{{ item }} state=absent
+  loop: "{{ docker_softs }}"
+- name: 删除service存在
+  file: path=/usr/lib/systemd/system/{{ item }} state=absent
+  loop: "{{ docker_services }}"
+- name: 删除/usr/libexec/docker/cli-plugins
+  file: path=/usr/libexec/docker/cli-plugins state=absent
+ 

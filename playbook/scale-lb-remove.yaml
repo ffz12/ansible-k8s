@@ -1,0 +1,102 @@
+---
+# 第一步：在 localhost 上解析最终 LB 节点列表（用于 hosts）
+- name: 解析最终 LB 节点列表
+  hosts: localhost
+  gather_facts: no
+  vars:
+    lb_upstream_servers: >-
+      {{
+        (
+          (groups.k8s_master | default([])) +
+          (groups.master_to_add | default([]))
+        )
+        | difference(groups.master_to_delete | default([]))
+        | unique
+      }}
+  tasks:
+    - name: 确保至少保留 2 个 LB 节点
+      assert:
+        that: lb_upstream_servers | length >= 2
+        fail_msg: "删除后 LB 节点少于 2 个！当前: {{ lb_upstream_servers }}"
+      run_once: yes
+
+- name: 停止LB删除节点服务
+  hosts: "{{ groups['master_to_delete'] | default([]) }}" 
+  tasks:
+  - name: 停止并禁用 nginx 和 keepalived 服务
+    systemd:
+      name: "{{ item }}"
+      state: stopped
+      enabled: no
+      daemon_reload: yes
+    loop:
+    - nginx
+    - keepalived
+    ignore_errors: yes
+
+  - name: 删除 systemd 服务文件
+    file:
+      path: "{{ item }}"
+      state: absent
+    loop:
+    - /etc/systemd/system/nginx.service
+    - /etc/systemd/system/keepalived.service
+
+  - name: 重新加载 systemd 配置
+    systemd:
+      daemon_reload: yes
+
+- name: 更新剩余 LB 节点的 Nginx-HA 配置
+  hosts: "{{ lb_upstream_servers }}"
+  vars:
+    # 直接复用同一逻辑，确保完全一致
+    lb_upstream_servers: >-
+      {{
+        (
+          (groups.k8s_master | default([])) +
+          (groups.master_to_add | default([]))
+        )
+        | difference(groups.master_to_delete | default([]))
+        | unique
+      }}
+  tasks:
+  - name: 更新 nginx config 
+    include_role:
+      name: nginx-ha
+      tasks_from: config-nginx.yml
+  - name: 更新 keepalived config
+    include_role:
+      name: nginx-ha
+      tasks_from: config-keepalived.yml
+    
+- name: 清理已删除的 LB 节点
+  hosts: "{{ groups['master_to_delete'] | default([]) }}"
+  tasks:
+  - name: 删除 nginx用户
+    user:
+      name: nginx
+      state: absent
+    ignore_errors: yes
+  - name: 删除 nginx 组（如果用户删除后组仍存在）
+    group:
+      name: nginx
+      state: absent
+    ignore_errors: yes
+
+  - name: 删除 nginx 相关目录
+    file:
+      path: "{{ item }}"
+      state: absent
+    loop:
+    - "{{ nginx_dir }}"
+    - "{{ keepalived_dir }}"
+
+  - name: 清理可能残留的日志或临时文件（可选）
+    file:
+      path: /run/nginx.pid
+      state: absent
+    ignore_errors: yes
+
+  - name: 输出卸载完成信息
+    debug:
+      msg: "✅ Nginx-HA 卸载完成：服务、用户、配置、二进制均已清除"

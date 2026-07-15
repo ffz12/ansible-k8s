@@ -1,0 +1,4 @@
+- hosts: harbor
+  become: yes
+  roles:
+  - harbor

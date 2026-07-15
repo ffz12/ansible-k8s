@@ -1,0 +1,27 @@
+---
+# roles/nginx-ha/tasks/config-keepalived.yml
+- name: 获取 VIP 所在网卡（只执行一次）
+  shell: "ip a|grep '{{ ansible_host }}/'|awk '{print $NF}'"
+  register: LB_IF_TMP
+  changed_when: false
+
+#- name: 查看 LB_IF_TMP
+#  debug:
+#    msg: "{{ LB_IF_TMP.stdout }} "
+- name: 设置 LB_IF 变量
+  set_fact:
+    LB_IF: "{{ LB_IF_TMP.stdout }}"
+
+- name: 渲染 keepalived.conf
+  template:
+    src: keepalived.conf.j2
+    dest: "{{ keepalived_conf_dir }}/keepalived.conf"
+  notify: restart keepalived 
+
+- name: 部署健康检查脚本
+  template:
+    src: check_nginx.j2
+    dest: "{{ keepalived_conf_dir }}/check_nginx"
+    mode: "0755"
+
+

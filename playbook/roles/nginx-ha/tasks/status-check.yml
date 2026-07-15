@@ -1,0 +1,29 @@
+# roles/nginx-ha/tasks/status-check.yml
+- name: 等待 nginx 进入 active 状态
+  command: systemctl is-active nginx
+  register: nginx_active
+  until: nginx_active.stdout == "active"
+  retries: 3
+  delay: 2
+  changed_when: false
+
+- name: 等待 keepalived 进入 active 状态
+  command: systemctl is-active keepalived
+  register: keepalived_active
+  until: keepalived_active.stdout == "active"
+  retries: 5
+  delay: 2
+  changed_when: false
+
+- name: 验证 VIP {{ lbvip }} 是否已绑定
+  command: ip addr show
+  register: ip_addr_output
+  changed_when: false
+
+- name: 确认 VIP 已生效
+  assert:
+    that:
+      - "'{{ lbvip }}' in ip_addr_output.stdout"
+    fail_msg: "❌ VIP {{ lbvip }} 未绑定到任何网卡！"
+    success_msg: "✅ VIP {{ lbvip }} 已成功绑定"
+  ignore_errors: true

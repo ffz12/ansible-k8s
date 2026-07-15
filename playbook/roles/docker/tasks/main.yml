@@ -1,0 +1,110 @@
+#docker 二进制下载路径：https://download.docker.com/linux/static/stable/
+#docker compose插件：https://github.com/docker/compose/releases
+#docker buildx 插件：https://github.com/docker/buildx
+
+
+- name: 检查 Docker 是否已安装
+  shell: "which dockerd || ls /usr/bin/dockerd /usr/sbin/dockerd /usr/local/bin/dockerd"
+  ignore_errors: yes
+  register: docker_bin
+  changed_when: false
+
+# 检测节点上是否已有 containerd(通常是 containerd_install 装的 1.7.32)。
+# 有 → docker 复用它,不覆盖: 跳过 docker 自带的 containerd/runc/shim/ctr 及 containerd.service,
+#       并让 dockerd 通过 --containerd 连现有 socket。
+# 没有 → docker 安装自带的那套(原行为)。
+- name: 检测是否已存在 containerd(已存在则 docker 复用不覆盖)
+  shell: "test -x /usr/local/bin/containerd && /usr/local/bin/containerd --version"
+  register: ctd_exist
+  failed_when: false
+  changed_when: false
+
+- name: 设置 reuse_containerd 标记
+  set_fact:
+    reuse_containerd: "{{ ctd_exist.rc == 0 }}"
+    containerd_provided_bins: ['containerd', 'containerd-shim-runc-v2', 'ctr', 'runc']
+
+- name: 📢 [终端显示] containerd 复用判断
+  debug:
+    msg: "{{ '✅ 已有 containerd → docker 复用,不覆盖 (' + (ctd_exist.stdout_lines[0] | default('')) + ')' if reuse_containerd else '无 containerd → docker 安装自带的 containerd/runc' }}"
+
+- name: 创建 Docker 相关目录
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  loop:
+    - /etc/docker
+    - /usr/libexec/docker/cli-plugins
+
+- name: 创建 docker 组
+  group:
+    name: docker
+    gid: 3001
+    state: present
+
+- name: 安装 Docker 二进制文件 (仅在缺失时执行)
+  block:
+    - name: 解压 Docker 压缩包
+      unarchive:
+        src: "{{ offline_binaries }}/docker/{{ docker_arch_map[ansible_architecture].pkg }}"
+        dest: /tmp
+    - name: 批量移动二进制文件
+      copy:
+        src: "/tmp/docker/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        mode: '0755'
+        remote_src: yes
+      loop: "{{ (docker_softs | difference(containerd_provided_bins)) if reuse_containerd else docker_softs }}"
+  when: docker_bin.rc != 0
+
+- name: 安装 Docker 插件 (Buildx & Compose)
+  copy:
+    src: "{{ offline_binaries }}/docker/{{ item.src }}"
+    dest: "/usr/libexec/docker/cli-plugins/{{ item.dest }}"
+    mode: '0755'
+  loop:
+    - { src: "{{ docker_arch_map[ansible_architecture].buildx }}", dest: "docker-buildx" }
+    - { src: "{{ docker_arch_map[ansible_architecture].compose }}", dest: "docker-compose" }
+
+- name: 安装 Docker-Compose
+  copy:
+    src: "{{ offline_binaries }}/docker/{{ item.src }}"
+    dest: "/usr/local/bin/{{ item.dest }}"
+    mode: '0755'
+  loop:
+    - { src: "{{ docker_arch_map[ansible_architecture].compose }}", dest: "docker-compose" }    
+
+- name: 配置 Systemd 服务脚本
+  copy:
+    src: "{{ item }}"
+    # 强制加上 .service 后缀确保 systemd 正确识别
+    dest: "/usr/lib/systemd/system/"
+  loop: "{{ (docker_services | difference(['containerd.service'])) if reuse_containerd else docker_services }}"
+
+# 复用外部 containerd 时: 让 dockerd 连接现有 containerd socket(不自己起 containerd)
+- name: 复用 containerd - dockerd 连接现有 socket(drop-in)
+  block:
+    - name: 创建 docker.service drop-in 目录
+      file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+        mode: '0755'
+
+    - name: 写入 --containerd drop-in
+      copy:
+        dest: /etc/systemd/system/docker.service.d/10-external-containerd.conf
+        mode: '0644'
+        content: |
+          # docker 复用节点上已有的 containerd(如 1.7.32),不使用自带 2.x
+          [Service]
+          ExecStart=
+          ExecStart=/usr/local/bin/dockerd --default-ulimit memlock=-1:-1 --containerd /run/containerd/containerd.sock
+
+    - name: reload systemd 使 drop-in 生效
+      systemd:
+        daemon_reload: yes
+  when: reuse_containerd
+

@@ -1,0 +1,132 @@
+---
+- name: Mount data disk; containerd via config-root, kubelet via bind
+  hosts: cluster
+  become: yes
+  vars:
+    # ===== 换盘只改这里 =====
+    device_path: "/dev/nvme2n1"          # 数据盘设备(LVM卷或裸盘); 换盘改这一处
+    fstype: "xfs"
+    # container_base / containerd_root 来自 group_vars/all.yaml(与 containerd_setup 共用)
+    #   - containerd: 数据目录直接建在盘上({{ containerd_root }}),由 config.toml 的 root 指向,不 bind
+    #   - kubelet:    走 bind 挂载到标准路径(kubelet 改数据目录需动 kubeadm,bind 更省事)
+    kubelet_bind:
+      - { src: "kubelet", dest: "/var/lib/kubelet" }
+
+  tasks:
+    # 1. 物理设备检查
+    - name: Check if the data device exists
+      stat:
+        path: "{{ device_path }}"
+      register: device_stat
+
+    - name: 📢 [终端显示] 磁盘是否存在
+      debug:
+        msg: "设备 {{ device_path }} 状态: {{ '✅ 存在' if device_stat.stat.exists else '❌ 不存在' }}"
+
+    - name: 中断执行 (如果磁盘不存在)
+      fail:
+        msg: "找不到设备 {{ device_path }}，请确认硬件连接。"
+      when: not device_stat.stat.exists
+
+    # 2. 检查主挂载状态
+    - name: Get current mount information
+      setup:
+        filter: ansible_mounts
+
+    - name: Set mount flag
+      set_fact:
+        already_mounted: "{{ ansible_mounts | selectattr('mount', 'equalto', container_base) | list | length > 0 }}"
+
+    - name: 📢 [终端显示] 主挂载点检查
+      debug:
+        msg: "{{ container_base }} 当前状态: {{ '⚠️ 已挂载' if already_mounted else '🆗 未挂载 (准备执行)' }}"
+
+    # 3. 安全检测: 盘上是否已有文件系统/数据
+    - name: 检测盘上是否已有文件系统
+      command: "blkid -s TYPE -o value {{ device_path }}"
+      register: existing_fs
+      changed_when: false
+      failed_when: false
+
+    - name: 📢 [终端显示] 盘上文件系统检测
+      debug:
+        msg: "{{ device_path }} 文件系统: {{ existing_fs.stdout if existing_fs.stdout != '' else '空白(无文件系统)' }}"
+
+    # 仅当"未挂载"且"完全空白"时才格式化; 只要有任何文件系统就绝不格式化(双保险: 再叠加 force:no)
+    - name: Create filesystem on the data device (仅空白盘)
+      filesystem:
+        fstype: "{{ fstype }}"
+        dev: "{{ device_path }}"
+        force: no
+      when:
+        - not already_mounted
+        - existing_fs.stdout == ""
+
+    - name: ⚠️ [终端显示] 盘上已有数据,跳过格式化
+      debug:
+        msg: "⚠️ {{ device_path }} 已有文件系统({{ existing_fs.stdout }})，已跳过格式化，将直接挂载，数据保留。"
+      when: existing_fs.stdout != ""
+
+    # 4. 获取 UUID
+    - name: Get UUID of the device
+      command: blkid -s UUID -o value {{ device_path }}
+      register: device_uuid
+      changed_when: false
+
+    - name: 📢 [终端显示] 获取到的 UUID
+      debug:
+        msg: "设备 {{ device_path }} 的 UUID 为: {{ device_uuid.stdout }}"
+
+    # 5. 挂载数据盘到主挂载点 (用 UUID,写入 fstab)
+    - name: Mount data device to container_base by UUID
+      mount:
+        path: "{{ container_base }}"
+        src: "UUID={{ device_uuid.stdout }}"
+        fstype: "{{ fstype }}"
+        opts: defaults
+        state: mounted
+
+    # 6. containerd 数据目录: 直接建在数据盘上(不 bind,由 config.toml 的 root 指向)
+    - name: Create containerd data dir on the data disk (used via config root)
+      file:
+        path: "{{ containerd_root }}"
+        state: directory
+        mode: "0711"
+
+    # 7. kubelet: 在数据盘上建子目录 + bind 目标目录
+    - name: Create kubelet dir on disk and bind target
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0711"
+      loop:
+        - "{{ container_base }}/{{ kubelet_bind[0].src }}"
+        - "{{ kubelet_bind[0].dest }}"
+
+    # 8. kubelet bind 挂载 (带 x-systemd.requires-mounts-for 保证开机时主挂载先就绪)
+    - name: Bind mount kubelet dir to standard path
+      mount:
+        path: "{{ item.dest }}"
+        src: "{{ container_base }}/{{ item.src }}"
+        fstype: none
+        opts: "bind,x-systemd.requires-mounts-for={{ container_base }}"
+        state: mounted
+      loop: "{{ kubelet_bind }}"
+
+    # 9. 最终确认
+    - name: Final confirmation of mounts
+      command: "findmnt {{ item }}"
+      register: final_check
+      changed_when: false
+      failed_when: false
+      loop:
+        - "{{ container_base }}"
+        - "{{ kubelet_bind[0].dest }}"
+
+    - name: 📢 [终端显示] 最终挂载确认
+      debug:
+        msg: "{{ final_check.results | map(attribute='stdout') | list }}"
+
+    - name: 📢 [终端显示] containerd 数据目录提示
+      debug:
+        msg: "containerd 数据目录 = {{ containerd_root }} (已在数据盘上创建;确保 containerd_setup 的 config.toml root 指向它)"

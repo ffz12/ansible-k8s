@@ -1,0 +1,15 @@
+#!/bin/bash
+
+mv Cen* /tmp
+
+yum install epel* -y
+
+#rm -rf ./ansoft/*
+
+#yum install -y --downloadonly ansible --downloaddir=./ansoft/
+
+#清楚源文件
+rm -rf ./playbook/roles/init/files/sorfware
+
+yum install --downloadonly --downloaddir=./playbook/roles/init/files/sorfware  createrepo wget net-tools  lrzsz gcc gcc-c++ make cmake libxml2-devel openssl-devel curl curl-devel unzip sudo  libaio-devel  vim ncurses-devel autoconf automake zlib-devel   openssh-server socat  chrony ipvsadm conntrack ebtables g++    ipset  git  elfutils-libelf-devel   htop  tar tmux rsync authconfig   nss-pam-ldapd pam_ldap openldap-clients oddjob oddjob-mkhomedir htop -y
+

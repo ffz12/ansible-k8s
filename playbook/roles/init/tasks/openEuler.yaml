@@ -1,0 +1,86 @@
+# playbook/roles/init/tasks/openEuler.yaml
+
+# ==================== 1. openEuler 基础环境配置 (通用) ====================
+- name: openEuler类型环境配置
+  block:
+    - name: 设置 hostname
+      hostname:
+        name: "{{ inventory_hostname }}"
+
+# ==================== 2. 软件源策略分流与软件包安装 ====================
+
+- name: 【离线模式】openEuler 双架构离线 RPM 包本地安装
+  block:
+    - name: 检查并屏蔽官方默认软件源 (防止联网超时卡死)
+      file:
+        path: /etc/yum.repos.d/openEuler.repo
+        state: absent
+      # 相比 mv，直接 absent 更安全且支持多次重复运行（幂等）
+
+    - name: 创建离线包存放目录
+      file:
+        path: /opt/openEuler-pkgs
+        state: directory
+        mode: '0755'
+
+    - name: 动态同步对应架构的 RPM 离线安装包
+      unarchive:
+        src: "{{ offline_binaries }}/ios-offline/openEuler{{ ansible_distribution_version.split('.')[0] }}_{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}.tar.gz"
+        dest: /opt/openEuler-pkgs/
+        mode: '0644'
+        owner: root
+        group: root
+
+    - name: 批量执行本地 RPM 包安全安装
+      shell: |
+        yum localinstall /opt/openEuler-pkgs/*.rpm -y
+
+  when: is_offline | bool
+
+- name: 【在线模式】联网批量安装必要基础软件包
+  yum:
+    name:
+      - createrepo
+      - wget
+      - net-tools
+      - lrzsz
+      - gcc
+      - gcc-c++
+      - make
+      - cmake
+      - libxml2-devel
+      - openssl-devel
+      - curl
+      - curl-devel
+      - unzip
+      - sudo
+      - libaio-devel
+      - vim
+      - ncurses-devel
+      - autoconf
+      - automake
+      - zlib-devel
+      - openssh-server
+      - socat
+      - ipvsadm
+      - conntrack
+      - ebtables
+      - g++
+      - ipset
+      - git
+      - elfutils-libelf-devel
+      - htop
+      - tar
+      - tmux
+      - rsync
+      - authconfig
+      - nss-pam-ldapd
+      - pam_ldap
+      - openldap-clients
+      - oddjob
+      - oddjob-mkhomedir
+      - chrony
+      - python3
+    state: present
+    update_cache: yes
+  when: not is_offline | bool

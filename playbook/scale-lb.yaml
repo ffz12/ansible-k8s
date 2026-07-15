@@ -1,0 +1,48 @@
+---
+# 第一步：在 localhost 上解析最终 LB 节点列表（用于 hosts）
+- name: 解析最终 LB 节点列表
+  hosts: localhost
+  gather_facts: no
+  vars:
+    lb_upstream_servers: >-
+      {{
+        (
+          (groups.k8s_master | default([])) +
+          (groups.master_to_add | default([]))
+        )
+        | difference(groups.master_to_delete | default([]))
+        | unique
+      }}
+  tasks:
+    - name: 确保至少保留 2 个 LB 节点
+      assert:
+        that: lb_upstream_servers | length >= 2
+        fail_msg: "删除后 LB 节点少于 2 个！当前: {{ lb_upstream_servers }}"
+      run_once: yes
+
+
+
+## 第三步：清理被删除的节点
+#- name: 清理已删除的 LB 节点
+#  hosts: "{{ groups['master_to_delete'] | default([]) }}"
+#  roles:
+#    - remove/remove-nginx-ha
+
+
+- name: 更新剩余 LB 节点的 Nginx-HA 配置
+  hosts: "{{ lb_upstream_servers }}"
+  vars:
+    # 直接复用同一逻辑，确保完全一致
+    lb_upstream_servers: >-
+      {{
+        (
+          (groups.k8s_master | default([])) +
+          (groups.master_to_add | default([]))
+        )
+        | difference(groups.master_to_delete | default([]))
+        | unique
+      }}
+  roles:
+    - role: nginx-ha
+      tags: config
+

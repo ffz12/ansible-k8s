@@ -1,0 +1,13 @@
+- name: 拷贝镜像
+  copy: src={{ offline_binaries }}/harbor/x86/{{ item }} dest={{ harbor_copy_path }}
+  loop:  "{{ harbor_offline_images }}"
+- name: 镜像导入
+  shell: |
+      docker load -i {{ harbor_copy_path }}/{{ item }} 
+  loop: "{{ harbor_offline_images }}"
+- name: 拷贝文件
+  copy: src={{ offline_binaries }}/harbor/x86/harbor dest={{ harbor_copy_path }}  backup=no mode=0755
+- name: 拷贝docker-compose 
+  copy: src={{ offline_binaries }}/harbor/x86/docker-compose.x86  dest=/usr/local/bin/docker-compose mode=0755
+- name: 拷贝harbor.yml
+  template: src=harbor.yml.j2 dest={{ harbor_copy_path }}/harbor/harbor.yml mode=0755

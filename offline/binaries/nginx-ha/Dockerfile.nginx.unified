@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1
+
+# 构建参数：指定目标操作系统
+ARG OS=ubuntu22
+
+# 根据 OS 选择基础镜像
+FROM rockylinux:8 AS base-rocky8
+#FROM rockylinux:9 AS base-rocky9
+FROM ubuntu:22.04 AS base-ubuntu22
+FROM ubuntu:24.04 AS base-ubuntu24
+
+# 选择 builder 阶段
+FROM base-${OS} AS builder
+ARG OS
+ARG NGINX_VERSION=1.24.0
+
+# 安装依赖并验证
+RUN set -e; \
+    if [ "$OS" = "ubuntu22" ] || [ "$OS" = "ubuntu24" ]; then \
+        echo ">>> OS=ubuntu22: installing apt packages"; \
+        apt-get update && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential libpcre3-dev zlib1g-dev libssl-dev tar gzip && \
+        rm -rf /var/lib/apt/lists/*; \
+    elif [ "$OS" = "rocky8" ] || [ "$OS" = "rocky9" ]; then \
+        echo ">>> OS=$OS: installing dnf packages"; \
+        dnf install -y gcc make pcre-devel zlib-devel openssl-devel tar gzip && \
+        dnf clean all; \
+    else \
+        echo "ERROR: Unsupported OS='$OS'"; exit 1; \
+    fi
+
+#  关键：验证编译器是否真的装上了！
+RUN echo "Checking compiler..."  && gcc --version
+
+WORKDIR /src
+#COPY nginx-${NGINX_VERSION}.tar.gz .
+#RUN tar -xzf nginx-${NGINX_VERSION}.tar.gz && mv nginx-${NGINX_VERSION} nginx
+ADD nginx-${NGINX_VERSION}.tar.gz ./
+
+RUN mv nginx-${NGINX_VERSION} nginx
+
+WORKDIR /src/nginx
+
+# 配置（所有平台一致）
+RUN ./configure \
+        --prefix=/data/nginx \
+        --with-stream \
+        --with-stream_ssl_module \
+        --with-stream_realip_module \
+        --with-http_ssl_module \
+        --with-http_realip_module \
+        --with-http_stub_status_module \
+        --with-http_gzip_static_module \
+        --with-pcre \
+        --with-threads && \
+    make -j$(nproc)
+
+# 最终阶段（只用于验证，实际我们只取 builder 的二进制）
+FROM scratch AS final
+COPY --from=builder /src/nginx/objs/nginx /nginx

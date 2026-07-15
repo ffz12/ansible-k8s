@@ -1,0 +1,38 @@
+---
+- name: Copy cephadm software
+  copy:
+    src: cephadm
+    dest: /root/cephadm
+    owner: root
+    group: root
+    backup: yes
+    mode: '0755'
+
+- name: init ceph repo
+  shell: /root/cephadm add-repo --release octopus
+  args:
+    creates: /etc/yum.repos.d/ceph.repo
+
+# 用 replace 模块替代 sed -i,幂等(重复执行不会反复改写)
+- name: set aliyun ceph-repo
+  replace:
+    path: /etc/yum.repos.d/ceph.repo
+    regexp: 'download\.ceph\.com'
+    replace: 'mirrors.aliyun.com/ceph'
+
+- name: install cephadm
+  shell: /root/cephadm install
+  args:
+    creates: /usr/sbin/cephadm
+
+- name: init ceph script
+  template:
+    src: init-ceph.sh.j2
+    dest: /opt/init-ceph.sh
+    owner: root
+    group: root
+    backup: yes
+    mode: '0644'
+
+- name: init ceph cluster
+  shell: sh /opt/init-ceph.sh

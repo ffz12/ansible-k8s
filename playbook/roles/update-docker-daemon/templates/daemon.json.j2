@@ -1,0 +1,27 @@
+{
+ "exec-opts": ["native.cgroupdriver=systemd"],
+ "log-driver": "json-file",
+ "log-opts": {
+            "max-file": "3",
+            "max-size": "10m"
+             },
+ "data-root": "{{ data_root }}",
+ "insecure-registries": [
+    {% for item in harbor_instances %}
+    "{{ item.dns }}"{{ "," if not loop.last else "" }}
+    {% endfor %}
+ ],
+ "registry-mirrors":[
+     "https://docker.hlmirror.com",
+     "https://docker.1ms.run",
+     "https://proxy.1panel.live",
+     "https://docker.1ms.run",
+     "https://docker.m.daocloud.io",
+     "https://hub1.nat.tf",
+     "https://hub2.nat.tf",
+     "https://docker.ketches.cn"
+
+ ],
+ "live-restore": true
+}
+

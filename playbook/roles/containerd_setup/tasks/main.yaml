@@ -1,0 +1,124 @@
+# 1. 确保基础目录存在
+- name: Ensure containerd directories exist
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "/etc/containerd"
+    - "/etc/containerd/certs.d/docker.io"
+    - "/etc/containerd/conf.d/"
+
+# 2. 循环创建 Harbor 目录
+- name: Create certs directories for Harbor instances
+  file:
+    path: "/etc/containerd/certs.d/{{ item.dns }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ harbor_instances }}"
+
+
+# 3. 配置 Docker.io 镜像加速 (公共加速)
+- name: Configure Docker.io mirrors
+  template:
+    src: hosts.toml.j2
+    dest: /etc/containerd/certs.d/docker.io/hosts.toml
+    
+# 4. 配置私有 Harbor 仓库 (私有配置)
+- name: Configure Harbor hosts.toml with skip_verify
+  template:
+    src: harbor_hosts.toml.j2  # 这个模板里带了 skip_verify = true
+    dest: "/etc/containerd/certs.d/{{ item.dns }}/hosts.toml"
+  loop: "{{ harbor_instances }}"
+
+# 5. 添加 Harbor 域名解析到 /etc/hosts (无 DNS 时,containerd 才能按域名拉镜像)
+- name: 添加 harbor 域名解析到 /etc/hosts
+  blockinfile:
+    path: /etc/hosts
+    block: |-
+      {% for item in harbor_instances %}
+      {{ item.ip }} {{ item.dns }}
+      {% endfor %}
+    state: present
+    backup: yes
+    marker: "# Ansible inventory hosts {mark}"
+
+
+- name: 处理 NVIDIA CDI 设备映射
+  when: accelerator_type == 'nvidia'
+  block:
+    - name: Ensure CDI directory exists
+      file:
+        path: /etc/cdi
+        state: directory
+        mode: '0755'
+
+    - name:  仅生成 NVIDIA CDI 设备映射文件
+      shell: |
+        nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+      args:
+        # 幂等优化：如果文件已经存在了，就不重复执行
+        creates: /etc/cdi/nvidia.yaml
+
+    - name:  验证 CDI 设备是否识别成功
+      shell: nvidia-ctk cdi list
+      register: cdi_list_output
+      changed_when: false
+
+
+- name: 仅让 DCU 生成 CDI 硬件描述文件
+  shell: |
+    mkdir -p /etc/cdi
+    dcu-ctk cdi generate --output=/etc/cdi/dcu.yaml
+    dcu-ctk cdi list
+  args:
+    creates: /etc/cdi/dcu.yaml
+  when: accelerator_type == 'dcu'
+
+- name:  华为昇腾 NPU 运行时环境检查
+  when: "accelerator_type | default('none') == 'npu'"
+  block:
+    - name: 确认存在ascend-docker-runtime
+      stat:
+        path: /usr/local/Ascend/Ascend-Docker-Runtime/ascend-docker-runtime 
+      register: ascend_json_status
+    - name: 设置/usr/local/bin/权限
+      shell: chown root:root /usr/local/bin/ -R
+   
+    - name: 校验阻断 (如果基础包装漏了则提醒)
+      fail:
+        msg: "错误：未检测到,请先确保基础环境装好了 ascend-docker-runtime 包"
+      when: not ascend_json_status.stat.exists
+
+- name: Generate Containerd Config from Universal Template
+  template:
+    # 按 containerd 主版本选模板: 2.x(version=3) 用 config.toml.j2, 1.x(version=2) 用 config-v2.toml.j2
+    src: "{{ 'config.toml.j2' if containerd_config_version | int == 3 else 'config-v2.toml.j2' }}"
+    dest: /etc/containerd/config.toml
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart containerd
+
+- name: check containerd runtime
+  shell: containerd config dump | grep default_runtime_name
+  register: containerd_runtime
+  failed_when: false
+  changed_when: false  
+
+- name: debug containerd runtime output
+  debug:
+    msg: "当前的默认运行时为: {{ containerd_runtime.stdout }}" # ✅ 推荐使用 msg 打印带有中文描述的信息  
+
+
+- name: 🔍 校验 Registry config_path 是否生效(版本无关)
+      # config_path 在 v2/v3 配置里都有(registry → certs.d),直接 grep 它,不依赖插件路径名
+  shell: "containerd config dump | grep -A1 config_path"
+  register: containerd_dump_output
+  changed_when: false
+  failed_when: false
+
+- name: debug containerd runtime output
+  debug:
+    var: containerd_dump_output.stdout_lines 
+

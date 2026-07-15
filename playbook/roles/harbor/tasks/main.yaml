@@ -1,0 +1,29 @@
+- name: 目录创建
+  file: path={{ item }} state=directory  mode=0755
+  loop:
+  - "{{ harbor_copy_path }}"
+  - "{{ data_volume }}"
+
+- include_tasks: aarch64.yaml
+  when: 'ansible_architecture in ["aarch64"]'
+
+- include_tasks: x86.yaml
+  when: 'ansible_architecture in ["x86_64"]'  
+
+- include_tasks: ssl.yaml
+
+- name: 启动harbor脚本
+  shell: cd {{ harbor_copy_path }}/harbor/ &&  ./install.sh
+
+- name: 检查 Harbor 安装状态
+  block:
+  - name: 执行命令
+    shell: cd {{ harbor_copy_path }}/harbor/ && docker-compose ps
+    register: harbor_status
+    changed_when: false 
+  - name: debug
+    debug:
+      msg: "{{ item }}"
+    loop: "{{ harbor_status.stdout_lines }}"
+    when: item | length > 0  # 跳过空行
+

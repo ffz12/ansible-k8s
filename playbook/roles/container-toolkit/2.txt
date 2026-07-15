@@ -1,0 +1,7 @@
+    - image: ghcr.io/k8snetworkplumbingwg/plugins:v0.8.7-amd64
+      image: nvcr.io/nvidia/cloud-native/network-operator:v23.1.0
+      image: k8s.m.daocloud.io/nfd/node-feature-discovery:v0.10.1
+      image: nvcr.io/nvidia/mellanox/sriov-network-operator:network-operator-1.4.0
+      image: nvcr.io/nvidia/cloud-native/k8s-rdma-shared-dev-plugin:v1.3.2
+    - image: ghcr.io/k8snetworkplumbingwg/sriov-network-device-plugin:v3.5.1
+      image: ghcr.io/k8snetworkplumbingwg/whereabouts:v0.5.4-amd64

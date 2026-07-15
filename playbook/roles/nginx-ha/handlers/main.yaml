@@ -1,0 +1,15 @@
+---
+# roles/nginx-ha/handlers/main.yml
+- name: daemon-reload
+  systemd:
+    daemon_reload: yes
+
+- name: reload nginx
+  systemd:
+    name: nginx
+    state: reloaded 
+
+- name: restart keepalived
+  systemd:
+    name: keepalived
+    state: restarted

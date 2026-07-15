@@ -1,0 +1,35 @@
+user nginx;
+worker_processes auto;
+
+worker_rlimit_nofile 65535;
+error_log {{ nginx_logs_dir | default('/var/log/nginx') }}/error.log warn;
+pid /run/nginx.pid;
+
+events {
+    worker_connections 8192;
+    use epoll;
+    multi_accept on;
+}
+
+stream {
+    log_format main '$remote_addr [$time_local] '
+                    '$protocol $status $bytes_sent $bytes_received '
+                    '$session_time "$upstream_addr"';
+
+    access_log {{ nginx_logs_dir | default('/var/log/nginx') }}/k8s-access.log main buffer=16k;
+    open_log_file_cache max=1000 inactive=60s;
+
+    upstream k8s-apiserver {
+        least_conn;
+        {% for host in lb_upstream_servers %}
+        server {{ hostvars[host].ansible_host | default(host) }}:6443 max_fails=3 fail_timeout=30s;
+        {% endfor %}
+    }
+
+    server {
+        listen 8443 so_keepalive=on;
+        proxy_pass k8s-apiserver;
+        proxy_timeout 1h;
+        proxy_buffer_size 16k;
+    }
+}

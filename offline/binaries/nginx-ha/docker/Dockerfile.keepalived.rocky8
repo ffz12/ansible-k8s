@@ -1,0 +1,25 @@
+FROM rockylinux:8 AS builder
+
+RUN dnf install -y \
+        gcc make \
+        openssl-devel \
+        libnl3-devel \
+        tar \
+        gzip && \
+    dnf clean all
+
+WORKDIR /src
+COPY keepalived-2.3.4.tar.gz .
+RUN tar -xzf keepalived-2.3.4.tar.gz && mv keepalived-2.3.4 keepalived
+WORKDIR /src/keepalived
+
+RUN ./configure \
+        --prefix=/usr/local \
+        --sysconfdir=/etc/keepalived && \
+    make -j$(nproc)
+
+FROM rockylinux:8
+RUN dnf install -y openssl-libs libnl3 && dnf clean all
+RUN mkdir -p /usr/local/sbin
+COPY --from=builder /src/keepalived/keepalived /usr/local/sbin/keepalived
+CMD ["/usr/local/sbin/keepalived", "-n"]

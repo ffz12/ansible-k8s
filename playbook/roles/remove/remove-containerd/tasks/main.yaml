@@ -1,0 +1,47 @@
+---
+# containerd 卸载: 停服务 + 删二进制/runc + 删 service 文件
+# 默认保留 /etc/containerd 配置 和 containerd 数据目录(避免误删镜像);
+# 需彻底清理时传 -e purge_containerd_data=true
+- name: 停止并禁用 containerd 服务
+  systemd:
+    name: containerd
+    state: stopped
+    enabled: no
+    daemon_reload: yes
+  failed_when: false
+
+- name: 删除 containerd / runc 二进制
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/bin/containerd
+    - /usr/local/bin/containerd-shim-runc-v2
+    - /usr/local/bin/containerd-stress
+    - /usr/local/bin/ctr
+    - /usr/local/sbin/runc
+
+- name: 删除 containerd systemd 服务文件
+  file:
+    path: /etc/systemd/system/containerd.service
+    state: absent
+
+- name: reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: (可选) 清理 containerd 配置与数据目录
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/containerd
+    - "{{ containerd_root | default('/var/lib/containerd') }}"
+  when: purge_containerd_data | default(false) | bool
+
+- name: 卸载结果提示
+  debug:
+    msg: >-
+      containerd 已卸载(二进制 + 服务)。
+      {{ '配置与数据已一并清理。' if purge_containerd_data | default(false) | bool
+         else '配置/数据已保留(如需彻底清理: 加 -e purge_containerd_data=true)。' }}

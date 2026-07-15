@@ -1,0 +1,29 @@
+---
+# roles/nginx-ha/tasks/main.yml
+- name: 安装 Nginx 和 Keepalived 二进制
+  import_tasks: install-binary.yml
+  tags: [install, lb]
+
+- name: 部署 systemd service 文件
+  import_tasks: deploy-nginx-service.yml
+  tags: [service, nginx]
+
+- name: 部署 keepalived systemd service 文件
+  import_tasks: deploy-keepalived-service.yml
+  tags: [service, keepalived] 
+
+- name: 配置 Nginx
+  import_tasks: config-nginx.yml
+  tags: [config, nginx, lb]
+
+- name: 配置 Keepalived
+  import_tasks: config-keepalived.yml
+  tags: [config, keepalived, lb]
+
+- name: 启动并启用服务
+  import_tasks: enable-service.yml
+  tags: [service, lb]  
+
+- name: 服务状态检查
+  import_tasks: status-check.yml
+  tags: [check, lb]

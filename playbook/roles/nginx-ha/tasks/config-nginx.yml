@@ -1,0 +1,10 @@
+---
+# roles/nginx-ha/tasks/config-nginx.yml
+- name: 渲染 nginx.conf
+  template:
+    src: nginx.conf.j2
+    dest: "{{ nginx_conf_dir }}/nginx.conf"
+    owner: nginx
+    group: nginx
+  notify: reload nginx 
+

@@ -1,0 +1,192 @@
+---
+# ==============================
+# Step 0: Set certificate validity in days (support string or int)
+# ==============================
+- name: Set certificate validity in days
+  delegate_to: localhost
+  run_once: true
+  become: false
+  set_fact:
+    _cert_validity_days: >-
+      {{
+        (etcd_cert_expiry | default(3650)) | string | int
+      }}
+  # Handles: 36500 (int), "36500" (str) → 36500 (int)
+  # Default: 3650 days (10 years)
+
+# ==============================
+# Step 1: Define persistent secret path
+# ==============================
+- name: Set persistent secret directory path
+  delegate_to: localhost
+  run_once: true
+  become: false
+  set_fact:
+    _etcd_persistent_secret_dir: "{{ role_path }}/files/etcd-{{ etcd_cluster_name | default('default') }}"
+
+- name: Ensure persistent secret directory exists
+  delegate_to: localhost
+  run_once: true
+  become: false
+  file:
+    path: "{{ _etcd_persistent_secret_dir }}"
+    state: directory
+    mode: '0700'
+
+# ==============================
+# Step 2: Generate CA if missing
+# ==============================
+- name: Check if CA certificate already exists locally
+  delegate_to: localhost
+  run_once: true
+  become: false
+  stat:
+    path: "{{ _etcd_persistent_secret_dir }}/ca.pem"
+  register: ca_cert_exists
+
+- name: Generate CA private key and certificate using OpenSSL
+  delegate_to: localhost
+  run_once: true
+  become: false
+  shell: |
+    cd {{ _etcd_persistent_secret_dir }}
+    openssl genrsa -out ca-key.pem 2048
+    openssl req -x509 -new -nodes \
+      -key ca-key.pem \
+      -subj "/O=kubernetes/OU=Kubernetes CA/CN=kubernetes-ca" \
+      -days {{ _cert_validity_days }} \
+      -out ca.pem
+  args:
+    executable: /bin/bash
+  when: not ca_cert_exists.stat.exists
+
+# ==============================
+# Step 3: Identify nodes needing certificates
+# ==============================
+- name: Check existence of certificate for each etcd node
+  delegate_to: localhost
+  run_once: true
+  become: false
+  stat:
+    path: "{{ _etcd_persistent_secret_dir }}/{{ item }}.pem"
+  loop: "{{ groups.etcd }}"
+  register: node_cert_check
+
+- name: Build list of nodes missing certificates
+  delegate_to: localhost
+  run_once: true
+  become: false
+  set_fact:
+    nodes_needing_certs: >-
+      {{
+        node_cert_check.results
+        | selectattr('stat.exists', 'false')
+        | map(attribute='item')
+        | list
+      }}
+
+- name: Debug - show nodes needing certs
+  debug:
+    msg: "Nodes requiring certificate generation: {{ nodes_needing_certs | default([]) }}"
+  delegate_to: localhost
+  run_once: true
+  become: false
+  when: nodes_needing_certs | length > 0
+
+# ==============================
+# Step 4: Generate node certificates with OpenSSL
+# ==============================
+- name: Render OpenSSL config for nodes missing certs
+  delegate_to: localhost
+  become: false
+  template:
+    src: node.conf.j2
+    dest: "{{ _etcd_persistent_secret_dir }}/{{ item }}.conf"
+    mode: '0600'
+  vars:
+    target_node_cn: "{{ item }}"
+    target_node_hostname: "{{ item }}"
+    target_node_ip: "{{ hostvars[item].ansible_host | default(item) }}"
+  loop: "{{ nodes_needing_certs }}"
+  when: nodes_needing_certs | length > 0
+
+- name: Generate and sign certificates for nodes missing certs
+  delegate_to: localhost
+  become: false
+  shell: |
+    openssl genrsa -out {{ item }}-key.pem 2048
+    openssl req -new -key {{ item }}-key.pem -out {{ item }}.csr -config {{ item }}.conf
+    openssl x509 -req -in {{ item }}.csr \
+      -CA ca.pem -CAkey ca-key.pem -CAcreateserial \
+      -out {{ item }}.pem -days {{ _cert_validity_days }} -sha256 \
+      -extfile {{ item }}.conf -extensions v3_req
+  args:
+    chdir: "{{ _etcd_persistent_secret_dir }}" 
+    executable: /bin/bash
+  loop: "{{ nodes_needing_certs }}"
+  when: nodes_needing_certs | length > 0
+
+# ==============================
+# Step 4.5: Generate kube-apiserver etcd client certificate (if missing)
+# ==============================
+- name: Check if kube-apiserver etcd client cert exists
+  delegate_to: localhost
+  run_once: true
+  become: false
+  stat:
+    path: "{{ _etcd_persistent_secret_dir }}/kube-apiserver-etcd-client.pem"
+  register: apiserver_client_cert_exists
+
+- name: Render OpenSSL config for kube-apiserver etcd client
+  delegate_to: localhost
+  run_once: true
+  become: false
+  template:
+    src: kube-apiserver-etcd-client.conf.j2
+    dest: "{{ _etcd_persistent_secret_dir }}/kube-apiserver-etcd-client.conf"
+    mode: '0600'
+  when: not apiserver_client_cert_exists.stat.exists
+
+- name: Generate kube-apiserver etcd client certificate
+  delegate_to: localhost
+  run_once: true
+  become: false
+  shell: |
+    openssl genrsa -out kube-apiserver-etcd-client-key.pem 2048
+    openssl req -new -key kube-apiserver-etcd-client-key.pem \
+      -out kube-apiserver-etcd-client.csr \
+      -config kube-apiserver-etcd-client.conf
+    openssl x509 -req -in kube-apiserver-etcd-client.csr \
+      -CA ca.pem -CAkey ca-key.pem -CAcreateserial \
+      -out kube-apiserver-etcd-client.pem \
+      -days {{ _cert_validity_days }} -sha256 \
+      -extfile kube-apiserver-etcd-client.conf -extensions v3_ext
+  args:
+    chdir: "{{ _etcd_persistent_secret_dir }}"
+    executable: /bin/bash
+  when: not apiserver_client_cert_exists.stat.exists
+
+
+# ==============================
+# Step 5: Distribute certificates to remote etcd nodes
+# ==============================
+- name: Ensure remote certificate directory exists
+  file:
+    path: "{{ etcd_cert_dir | default('/etc/etcd/ssl') }}"
+    state: directory
+    owner: "{{ etcd_user | default('etcd') }}"
+    group: "{{ etcd_group | default('etcd') }}"
+    mode: '0700'
+
+- name: Distribute CA and node-specific certificates/keys
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ etcd_user | default('etcd') }}"
+    group: "{{ etcd_group | default('etcd') }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: "{{ _etcd_persistent_secret_dir }}/ca.pem",      dest: "{{ etcd_cert_dir }}/ca.pem",      mode: "0644" }
+    - { src: "{{ _etcd_persistent_secret_dir }}/ca-key.pem",  dest: "{{ etcd_cert_dir }}/ca-key.pem",  mode: "0600" }
+    - { src: "{{ _etcd_persistent_secret_dir }}/{{ inventory_hostname }}.pem",      dest: "{{ etcd_cert_dir }}/{{ inventory_hostname }}.pem",      mode: "0600" }
+    - { src: "{{ _etcd_persistent_secret_dir }}/{{ inventory_hostname }}-key.pem",  dest: "{{ etcd_cert_dir }}/{{ inventory_hostname }}-key.pem",  mode: "0600" }

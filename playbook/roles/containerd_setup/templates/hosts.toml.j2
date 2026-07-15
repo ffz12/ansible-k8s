@@ -1,0 +1,6 @@
+server = "https://docker.io"
+
+{% for mirror in docker_mirrors %}
+[host."{{ mirror }}"]
+  capabilities = ["pull", "resolve"]
+{% endfor %}

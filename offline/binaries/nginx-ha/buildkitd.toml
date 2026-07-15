@@ -1,0 +1,17 @@
+# buildkitd.toml
+[registry."docker.io"]
+  mirrors = [
+     "https://docker.m.daocloud.io",
+     "https://docker.1ms.run",
+     "https://proxy.1panel.live",
+     "https://docker.1ms.run",
+     "https://hub1.nat.tf",
+     "https://hub2.nat.tf",
+     "https://docker.ketches.cn",
+     "https://docker.hlmirror.com"
+  ]
+[registry."harbor.unisound.ai"]
+  insecure = true
+[registry."harbor.unidev.ai"]
+  insecure = true
+

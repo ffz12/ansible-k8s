@@ -1,0 +1,59 @@
+---
+- name: 停止并禁用 nginx 和 keepalived 服务
+  systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: no
+    daemon_reload: yes
+  loop:
+    - nginx
+    - keepalived
+  ignore_errors: yes
+
+- name: 删除 systemd 服务文件
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/nginx.service
+    - /etc/systemd/system/keepalived.service
+
+- name: 重新加载 systemd 配置
+  systemd:
+    daemon_reload: yes
+
+- name: 删除 nginx 用户和组
+  user:
+    name: nginx
+    state: absent
+    remove: yes  # 同时删除家目录（虽然 create_home=no，但保险起见）
+  ignore_errors: yes
+
+- name: 删除 nginx 组（如果用户删除后组仍存在）
+  group:
+    name: nginx
+    state: absent
+  ignore_errors: yes
+
+- name: 删除 nginx 相关目录
+  # 修复: 原来用 nginx_dir/keepalived_dir,但安装(install-binary.yml)从未定义这两个变量,
+  #       会因未定义而失败或删不干净。改为安装时实际创建的目录变量。
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ nginx_conf_dir }}"
+    - "{{ nginx_logs_dir }}"
+    - "{{ nginx_sbin_dir }}"
+    - "{{ keepalived_conf_dir }}"
+    - "{{ keepalived_sbin_dir }}"
+
+- name: 清理可能残留的日志或临时文件（可选）
+  file:
+    path: /run/nginx.pid
+    state: absent
+  ignore_errors: yes
+
+- name: 输出卸载完成信息
+  debug:
+    msg: "✅ Nginx-HA 卸载完成：服务、用户、配置、二进制均已清除"

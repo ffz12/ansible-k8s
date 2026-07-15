@@ -1,0 +1,56 @@
+---
+# 1. 从 Harbor 节点读取 CA 内容 (只执行一次)
+- name: Get CA content from harbor node
+  slurp:
+    src: "{{ harbor_copy_path }}/harbor/ssl/ca.crt"
+  delegate_to: "{{ groups['harbor'][0] }}" # 指向存放证书的那个 Harbor 节点
+  register: harbor_ca_raw
+  run_once: true
+
+# 2. 在目标机器上安装证书 (RHEL/CentOS/Rocky/openEuler/Kylin，均为 RHEL 系 CA 路径)
+- name: Install Harbor CA into system trust (RedHat)
+  copy:
+    content: "{{ harbor_ca_raw['content'] | b64decode }}"
+    dest: "/etc/pki/ca-trust/source/anchors/{{ harbor_dns }}-ca.crt"
+    mode: '0644'
+  # 显式带上 openEuler/Kylin: 老 ansible(2.8.8) 对它们的 os_family 识别不准,不能只判 RedHat
+  when: >
+    ansible_os_family == "RedHat"
+    or ansible_distribution in ['openEuler', 'Kylin Linux Advanced Server', 'Kylin']
+  notify: update-ca-redhat
+
+# 3. 在目标机器上安装证书 (Debian/Ubuntu)
+- name: Install Harbor CA into system trust (Debian)
+  copy:
+    content: "{{ harbor_ca_raw['content'] | b64decode }}"
+    dest: "/usr/local/share/ca-certificates/{{ harbor_dns }}-ca.crt"
+    mode: '0644'
+  when: ansible_os_family == "Debian"
+  notify: update-ca-debian
+
+# 4. (可选) 直接配置 Docker 证书目录，防止 Docker 不读系统证书
+- name: Ensure Docker certs directory exists
+  file:
+    path: "/etc/docker/certs.d/{{ harbor_dns }}"
+    state: directory
+    mode: '0755'
+
+- name: Link CA to Docker certs directory
+  copy:
+    content: "{{ harbor_ca_raw['content'] | b64decode }}"
+    dest: "/etc/docker/certs.d/{{ harbor_dns }}/ca.crt"
+    mode: '0644'
+
+# 5. 验证 (由于是新安装，建议在执行完 update-ca 后再验证)
+- name: Flush handlers to apply CA changes
+  meta: flush_handlers
+
+- name: Verify CA trust
+  shell: "openssl s_client -connect {{ harbor_dns }}:443 -servername {{ harbor_dns }} </dev/null 2>&1 | grep 'Verify return code: 0'"
+  register: verify_result
+  ignore_errors: yes
+  changed_when: false
+
+- name: Debug result
+  debug:
+    msg: "TLS verification for {{ harbor_dns }} -> {{ 'SUCCESS' if verify_result.rc == 0 else 'FAILED' }}"

@@ -1,0 +1,30 @@
+---
+- name: Directly modify Docker systemd service file
+  hosts: docker
+  become: true
+  tasks:
+    - name: Modify ExecStart in /lib/systemd/system/docker.service
+      lineinfile:
+        path: /lib/systemd/system/docker.service
+        regexp: '^ExecStart=/usr/bin/dockerd'
+        line: 'ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock --default-ulimit memlock=-1:-1'
+        backup: yes
+      notify:
+        - Reload systemd
+        - Restart docker
+
+    - name: Ensure Docker is enabled and running
+      systemd:
+        name: docker
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Reload systemd
+      systemd:
+        daemon_reload: true
+
+    - name: Restart docker
+      systemd:
+        name: docker
+        state: restarted

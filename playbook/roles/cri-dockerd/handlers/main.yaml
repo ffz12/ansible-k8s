@@ -1,0 +1,3 @@
+- name: restart cri-docker
+  service: name=cri-docker state=restarted
+

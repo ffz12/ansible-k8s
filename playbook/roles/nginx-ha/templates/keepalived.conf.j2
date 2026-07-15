@@ -1,0 +1,51 @@
+global_defs { 
+   # 性能优化参数
+   vrrp_garp_master_refresh 60  # 主节点定期发送GARP包刷新ARP缓存
+   vrrp_garp_master_repeat 2    # 每次发送的GARP包数量
+   script_security script       #只允许执行脚本文件
+   enable_script_security       #显式启用（某些版本需要）
+   
+} 
+vrrp_script check_nginx {
+    script  "{{ keepalived_conf_dir }}/check_nginx"  #执行nginx检测脚本
+    interval 3              # 检测间隔缩短至3秒（更快故障转移）
+    timeout 2               # 脚本超时时间（避免卡死）
+    rise 2                  # 连续成功2次才认为服务恢复
+    fall 2                  # 连续失败2次才认为服务宕机
+    weight -20              # 失败时优先级降低值（更敏感触发切换)
+}
+vrrp_instance VI_1 { 
+    # 基础配置
+    state MASTER 
+    interface {{ LB_IF_TMP.stdout }}  # 修改为实际网卡名
+    
+    #基于VIP哈希生成唯一ID (1-255)
+    virtual_router_id {{ (lbvip | regex_replace('\.', '') | int) % 254 + 1 }}
+
+    # 动态优先级：第一个节点 100，第二个 90，第三个 80...
+    # 修复: 原用 groups['k8s_master']，扩容时新增节点(master_to_add)不在该组会抛 ValueError；
+    #       改用本次实际 LB 节点集合 lb_upstream_servers，与 nginx.conf.j2 一致。
+    priority {{ 100 - (lb_upstream_servers.index(inventory_hostname) * 10) }}
+    
+    advert_int 1    # 指定VRRP 心跳包通告间隔时间，默认1秒
+    nopreempt       # 禁止备节点抢占（避免频繁切换）
+    #虚拟IP配置（支持多VIP）
+    authentication { 
+        auth_type PASS      
+        #基于VIP生成
+        auth_pass {{ 'K8S_VIP_' ~ lbvip | regex_replace('\.', '_') }}
+    }  
+    # 虚拟IP
+    virtual_ipaddress { 
+        {{ lbvip }}/24
+    } 
+    # 健康检查绑定
+    track_script {
+        check_nginx
+    }
+    # 附加跟踪接口（网卡故障时触发切换）
+    track_interface {
+       {{ LB_IF_TMP.stdout }}   # 监控网卡状态
+    }
+     
+}

@@ -1,0 +1,260 @@
+---
+# playbook/roles/init/tasks/debian.yaml
+
+# ==================== 1. 软件源策略分流 ====================
+
+- name: 【离线模式】配置本地双架构离线 APT 源
+  block:
+    - name: 清理历史离线目录并重新创建
+      file:
+        path: /opt/ubuntu-offline-pkgs
+        state: "{{ item }}"
+      loop: [absent, directory]
+
+    - name: 动态拷贝对应版本和架构的 DEB 离线包到目标机
+      unarchive: 
+        src: "{{ offline_binaries }}/ios-offline/ubuntu{{ ansible_distribution_version.split('.')[0] }}_{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}.tar.gz"
+        dest: /opt/ubuntu-offline-pkgs/
+        mode: '0644'
+        owner: root
+        group: root
+
+    - name: 【Ubuntu 22.04 离线】覆写传统 sources.list
+      copy:
+        dest: /etc/apt/sources.list
+        content: "deb [trusted=yes] file:///opt/ubuntu-offline-pkgs ./\n"
+      when: ansible_distribution_version == "22.04"
+
+    - name: 【Ubuntu 24.04 离线】屏蔽官方默认源并添加离线源
+      shell: |
+        echo "" > /etc/apt/sources.list.d/ubuntu.sources
+        echo "deb [trusted=yes] file:///opt/ubuntu-offline-pkgs ./" > /etc/apt/sources.list
+      when: ansible_distribution_version == "24.04"
+  when: is_offline | bool
+
+- name: 【在线模式】配置官方/国内镜像软件源
+  block:
+    - name: 【Ubuntu 22.04 在线】拷贝常规 sources.list
+      copy:
+        src: u-22.04-sources.list
+        dest: /etc/apt/sources.list
+        backup: yes
+      when: ansible_distribution_version == "22.04" and ansible_architecture == "x86_64"
+
+    - name: 【Ubuntu 24.04 在线】拷贝新版标准源
+      copy:
+        src: u-24.04-sources.list
+        dest: /etc/apt/sources.list.d/ubuntu.sources
+        backup: yes
+      when: ansible_distribution_version == "24.04" and ansible_architecture == "x86_64"
+  when: not is_offline | bool
+
+
+# ==================== 2. 环境健壮性优化与防卡死 (通用) ====================
+
+- name: 强行重写 70debconf 配置，彻底废除底层蓝底灰框交互弹窗
+  copy:
+    dest: /etc/apt/apt.conf.d/70debconf
+    content: |
+      // Pre-configure packages before they are installed.
+      // Modified by Ansible to prevent interactive dialogs.
+      DPkg::Pre-Install-Pkgs { "/usr/sbin/dpkg-preconfigure --apt || true"; };
+      Debconf::Frontend "Noninteractive";
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: 在系统全局环境变量中注入双重静默保险
+  lineinfile:
+    path: /etc/profile
+    line: 'export DEBIAN_FRONTEND=noninteractive'
+    state: present
+
+- name: 移除 99needrestart 防止升级组件后卡在服务重启确认界面
+  file:
+    path: /etc/apt/apt.conf.d/99needrestart
+    state: absent
+
+- name: 彻底关闭系统自带的无感后台自动更新（防止抢占锁死 apt）
+  copy:
+    dest: "{{ item.dest }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - { dest: '/etc/apt/apt.conf.d/20auto-upgrades', content: "APT::Periodic::Update-Package-Lists \"0\";\nAPT::Periodic::Download-Upgradeable-Packages \"0\";\nAPT::Periodic::AutocleanInterval \"0\";\nAPT::Periodic::Unattended-Upgrade \"0\";\n" }
+    - { dest: '/etc/apt/apt.conf.d/10periodic', content: "APT::Periodic::Update-Package-Lists \"0\";\nAPT::Periodic::Download-Upgradeable-Packages \"0\";\n" }
+
+- name: 停止并禁用无人值守更新服务
+  systemd:
+    name: unattended-upgrades
+    state: stopped
+    enabled: no
+  ignore_errors: yes
+
+- name: 禁用 cloud-init 网络配置管理 (防止其覆盖手动/静态网络设置)
+  block:
+    - name: 确保 cloud-init 配置目录存在
+      file:
+        path: /etc/cloud/cloud.cfg.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: 写入 99-disable-network-config.cfg
+      copy:
+        dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+        content: |
+          # 由 Ansible 写入: 禁用 cloud-init 网络配置管理,防止重启后覆盖静态网络
+          network: {config: disabled}
+        owner: root
+        group: root
+        mode: '0644'
+
+- name: 精准锁定当前正在使用的内核版本防止误升级
+  shell: |
+    # 提取当前内核的核心版本号（例如：6.8.0-117）
+    CURRENT_VERSION=$(uname -r | cut -d'-' -f1,2)
+    
+    # 精准查找已安装、且属于当前版本号的底层核心组件进行 hold
+    TARGET_PKGS=$(dpkg --get-selections | awk '$2 == "install" {print $1}' | grep -E "^linux-(headers|image|modules|modules-extra)-${CURRENT_VERSION}")
+    
+    if [ -n "$TARGET_PKGS" ]; then
+      apt-mark hold $TARGET_PKGS
+    else
+      echo "未找到匹配当前内核版本的组件包"
+    fi
+  register: kernel_hold_result
+  ignore_errors: yes
+
+- name: 查看hold内核状态
+  shell: apt-mark showhold
+  register: hold_status
+  changed_when: false
+
+- name: debug 内核锁定状态
+  debug:
+    msg: "{{ hold_status.stdout_lines }}"
+
+- name: 优化基础环境参数 (Pager, Vim, Locale, Firewall)
+  block:
+    - name: 禁用防火墙 ufw
+      service:
+        name: ufw
+        state: stopped
+        enabled: no
+      ignore_errors: yes
+
+    - name: 判断 ufw 是否安装并输出状态
+      shell: |
+        systemctl status ufw | awk -F: '/Active:/{print $2}'
+      register: ufw_status
+      changed_when: false
+
+    - name: 输出 ufw 状态
+      debug:
+        var: ufw_status.stdout
+
+    - name: 取消 systemctl status 查看时的分页显示
+      lineinfile:
+        path: /etc/profile
+        line: 'export SYSTEMD_PAGER=""'
+        state: present
+
+    - name: 设置 vim 环境
+      copy:
+        src: .vimrc
+        dest: /root
+        backup: yes
+      ignore_errors: yes
+
+    - name: 设置时间格式
+      lineinfile:
+        path: /etc/default/locale
+        line: 'LC_TIME=en_DK.UTF-8'
+        state: present
+
+    - name: 设置系统默认编辑器为 vim
+      shell: |
+        if update-alternatives --list editor | grep -q 'vim.basic'; then
+          update-alternatives --set editor /usr/bin/vim.basic
+        else
+          grep -q "export EDITOR=" /etc/profile || echo 'export EDITOR="/usr/bin/vim"' >> /etc/profile
+          grep -q "alias vi=" /etc/profile || echo 'alias vi="vim"' >> /etc/profile
+        fi
+      ignore_errors: yes
+
+
+# ==================== 3. 故障修复与基础依赖包安装 ====================
+
+- name: 【仅在线环境】执行 APT 残留修复与多余包清理
+  block:
+    - name: 强制尝试修复损坏的依赖
+      command: apt-get install -f -y
+    - name: 尝试配置所有未完成的包
+      command: dpkg --configure -a
+      ignore_errors: yes
+    - name: 清理多余包和缓存
+      apt:
+        autoremove: yes
+        autoclean: yes
+  when: not is_offline | bool
+
+- name: 更新缓存并批量安装必要软件包 (动态合并线上/线下包清单)
+  apt:
+    name: "{{ debian_online_pkgs if not is_offline | bool else debian_offline_pkgs }}"
+    state: present
+    update_cache: yes
+    allow_unauthenticated: "{{ 'yes' if is_offline | bool else 'no' }}"
+  vars:
+    # 纯在线环境安装的包清单
+    debian_online_pkgs:
+      - socat
+      - ipset
+      - conntrack
+      - ipvsadm
+      - ebtables
+      - libseccomp2
+      - netcat-openbsd
+      - ca-certificates
+      - nfs-common
+      - nfs-kernel-server
+      - bash-completion
+      - apt-transport-https
+      - software-properties-common
+      - bzip2
+      - unzip
+      - chrony
+      - libssl3
+      - zlib1g
+      - "{{ 'libpcre2-8-0' if ansible_distribution_version.split('.')[0] | int >= 24 else 'libpcre3' }}"
+    # 纯离线环境安装的包清单（补充了 nfs 相关组件及底层安全库）
+    debian_offline_pkgs:
+      - socat
+      - conntrack
+      - ipset
+      - ipvsadm
+      - ebtables
+      - libseccomp2
+      - netcat-openbsd
+      - nfs-common
+      - nfs-kernel-server
+      - ca-certificates
+      - bzip2
+      - unzip
+      - chrony
+      - libssl3
+      - zlib1g
+      - "{{ 'libpcre2-8-0' if ansible_distribution_version.split('.')[0] | int >= 24 else 'libpcre3' }}"
+
+#- name: 配置dns
+#  block:
+#  - name: 拷贝resolved.conf
+#    template: src=debian-resolved.conf.j2 dest=/etc/systemd/resolved.conf backup=yes
+#  - name: 备份源dns 及生成链接文件
+#    shell: |
+#      mv /etc/resolv.conf /etc/resolv.conf.bak
+#      ln  -s   /run/systemd/resolve/resolv.conf    /etc/
+#      systemctl restart systemd-resolved

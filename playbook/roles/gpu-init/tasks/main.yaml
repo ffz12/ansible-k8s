@@ -1,0 +1,49 @@
+- name: 拷贝 blacklist配置
+  copy: src=blacklist.conf dest=/etc/modprobe.d/ backup=yes
+
+- name: ubuntu系列
+  block: 
+  - name: 更新initramfs
+    shell: |
+       update-initramfs -u
+  when: ansible_distribution in ['Debian','Ubuntu']
+
+- name: rhel系列
+  block:
+  - name: 更新内核
+    shell: |
+       yum install gcc kernel-devel kernel-headers kernel-tools pciutils  tar unzip -y
+       yum update kernel -y
+  - name: 备份当前镜像
+    # 幂等保护: 只有 nouveau 备份不存在时才备份+重建,避免重跑把已屏蔽nouveau的新initramfs误存成备份
+    shell: |
+       if [ ! -f /boot/initramfs-$(uname -r)-nouveau.img ]; then
+         mv /boot/initramfs-$(uname -r).img /boot/initramfs-$(uname -r)-nouveau.img
+         dracut /boot/initramfs-$(uname -r).img
+       fi
+  when: ansible_distribution in [ 'RedHat','CentOS']
+
+- name: openEuler系列
+  block: 
+  - name: 拷贝内核包
+    copy: src=openEuler-kernel-pkg dest=/opt
+  - name: 安装内核包
+    shell: |
+        yum localinstall /opt/openEuler-kernel-pkg/*rpm -y --skip-broken
+        if [ ! -f /boot/initramfs-$(uname -r)-nouveau.img ]; then
+          mv /boot/initramfs-$(uname -r).img /boot/initramfs-$(uname -r)-nouveau.img
+          dracut /boot/initramfs-$(uname -r).img
+        fi
+  when: ansible_distribution in ['openEuler']
+
+- name: copy gpu-persistent-mode.service
+  copy: src=gpu-persistent-mode.service dest=/etc/systemd/system/
+- name: gpu persistent mode设置开机启动
+  systemd:
+    name: gpu-persistent-mode.service
+    enabled: yes
+    daemon_reload: yes
+- name: 提示消息
+  debug:
+    msg: "请重启服务器 然后检查lsmod | grep nouveau"
+

@@ -1,0 +1,35 @@
+#!/bin/bash
+# 名称: check_nginx_keepalived.sh
+# 功能: 高可用环境下Nginx状态检测脚本（配合Keepalived）
+# 作者: ffz12
+# 日期: $(date +%Y-%m-%d)
+# 版本: v2.0
+
+# 配置区（可根据实际环境修改）
+NGINX_SERVICE="nginx"          # Nginx服务名
+KEEPALIVED_SERVICE="keepalived" # Keepalived服务名
+MAX_RETRIES=3                  # 最大重试次数
+SLEEP_INTERVAL=2               # 检测间隔(秒)
+
+
+# 尝试启动Nginx
+start_nginx() {
+    for ((i=1; i<=$MAX_RETRIES; i++)); do
+         #尝试启动nginx
+        if systemctl start "$NGINX_SERVICE"; then
+            return 0
+        fi
+        sleep "$SLEEP_INTERVAL"
+    done
+    return 1
+}
+
+# 主逻辑
+counter=$(pgrep -fc "nginx: worker") # 更精确的进程计数方式
+
+if [ "$counter" -eq 0 ]; then
+    # 尝试启动Nginx
+    if ! start_nginx; then
+        systemctl stop "$KEEPALIVED_SERVICE" 
+    fi
+fi

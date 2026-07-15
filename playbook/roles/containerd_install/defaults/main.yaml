@@ -1,0 +1,8 @@
+---
+# containerd_version / runc_version 在 inventory/group_vars/all.yaml 统一定义(单一事实来源)。
+# 这里仅作为 role 独立运行时的兜底默认值(group_vars 存在时以 group_vars 为准)。
+containerd_version: "2.2.3"
+runc_version: "1.1.12"
+
+# 架构映射: x86_64 -> amd64, aarch64 -> arm64
+containerd_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"

@@ -1,0 +1,6 @@
+# playbook/roles/trust-harbor-ca/handlers/main.yml
+- name: update-ca-redhat
+  command: update-ca-trust
+
+- name: update-ca-debian
+  command: update-ca-certificates

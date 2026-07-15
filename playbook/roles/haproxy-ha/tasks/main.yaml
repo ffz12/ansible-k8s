@@ -1,0 +1,89 @@
+- name: yum安装haproxy/keepalived
+  yum:
+    name:
+      - haproxy
+      - keepalived
+    state: present
+  when: ansible_distribution in ['RedHat', 'openEuler', 'CentOS']
+
+# 修复: 原来 state/update_cache/allow_unauthenticated 缩进在 task 层级(非法关键字),
+#       现已全部移到 apt: 模块下。
+- name: apt安装haproxy/keepalived
+  apt:
+    name:
+      - haproxy
+      - keepalived
+    state: present
+    update_cache: yes
+    allow_unauthenticated: true
+  when: ansible_distribution in ['Debian', 'Ubuntu']
+
+- name: 自动设置keepalived变量
+  shell: "ip a|grep '{{ host_ip }}/'|awk '{print $NF}'"
+  register: LB_IF_TMP
+  changed_when: false
+
+- name: 查看 LB_IF_TMP
+  debug:
+    msg: "{{ LB_IF_TMP.stdout }} "
+
+- name: 设置变量 LB_IF
+  debug:
+    var: LB_IF_TMP.stdout
+
+- name: 拷贝keepalived配置文件
+  template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+  #notify: restart keepalived
+
+# 学习 nginx-ha: 把健康检查脚本真正部署到节点(原来 keepalived 引用了它却从没拷贝过去)
+- name: 部署 haproxy 健康检查脚本
+  template:
+    src: check_haproxy.sh
+    dest: /etc/keepalived/check_haproxy.sh
+    owner: root
+    group: root
+    mode: "0755"
+  #notify: restart keepalived
+
+- name: copy haproxy.cfg
+  template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: haproxy
+    group: haproxy
+  #notify: restart haproxy
+
+- name: daemon-reload
+  systemd:
+    daemon_reload: yes
+
+- name: 设置服务开机自启动
+  service:
+    name: "{{ item }}"
+    state: restarted
+    enabled: true
+  ignore_errors: true
+  loop:
+    - haproxy
+    - keepalived
+
+- name: 检查haproxy状态
+  shell: "systemctl status haproxy |grep 'Active:'"
+  register: haproxy_status
+  changed_when: false
+
+- name: 输出haproxy状态
+  debug:
+    msg: "{{ haproxy_status.stdout }}"
+
+# 修复: 原来这里也写的 status haproxy(复制粘贴漏改),应为 keepalived
+- name: 检查keepalived状态
+  shell: "systemctl status keepalived |grep 'Active:'"
+  register: keepalived_status
+  changed_when: false
+
+- name: 输出keepalived_status状态
+  debug:
+    msg: "{{ keepalived_status.stdout }}"

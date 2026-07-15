@@ -1,0 +1,112 @@
+---
+# ==========================================
+# 1. 硬件类型与状态检查
+# ==========================================
+- name: 检查 NVIDIA 环境是否已安装
+  shell: "rpm -q nvidia-container-toolkit || dpkg -l nvidia-container-toolkit"
+  register: nvidia_installed
+  ignore_errors: true
+  changed_when: false
+  when: accelerator_type == 'nvidia'
+
+- name: 检查 DCU 环境是否已安装
+  shell: "rpm -q dcu-container-toolkit || dpkg -l dcu-container-toolkit"
+  register: dcu_installed
+  ignore_errors: true
+  changed_when: false
+  when: accelerator_type == 'dcu'
+
+- name: 检查华为昇腾 NPU 运行时是否已安装
+  stat:
+    path: /usr/local/Ascend/Ascend-Docker-Runtime/ascend-docker-runtime
+  register: npu_installed
+  when: accelerator_type == 'npu'
+
+# ==========================================
+# 2. NVIDIA GPU 离线安装
+# 
+# ==========================================
+- name: 安装 NVIDIA GPU 软件 (RPM 格式)
+  block:
+    - name: 拷贝 NVIDIA RPM 安装包
+      copy:
+        src: "{{ offline_binaries }}/nvidia-gpu/rhel-gpu/"
+        dest: /tmp/nvidia-gpu-rpm/
+    - name: 本地 YUM 安装 NVIDIA 组件
+      yum:
+        name: "/tmp/nvidia-gpu-rpm/*.rpm"
+        state: present
+        disable_gpg_check: yes
+  when: 
+    - accelerator_type == 'nvidia'
+    - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server']
+    - nvidia_installed.rc != 0
+
+- name: 安装 NVIDIA GPU 软件 (DEB 格式)
+  block:
+    - name: 拷贝 NVIDIA DEB 安装包
+      copy:
+        src: "{{ offline_binaries }}/nvidia-gpu/debian-gpu/"
+        dest: /tmp/nvidia-gpu-deb/
+    - name: Dpkg 安装 NVIDIA 组件
+      shell: "dpkg -i /tmp/nvidia-gpu-deb/*.deb || apt-get --fix-broken install -y"
+  when: 
+    - accelerator_type == 'nvidia'
+    - ansible_distribution in ['Debian', 'Ubuntu']
+    - nvidia_installed.rc != 0
+
+# ==========================================
+# 3. 曙光 DCU 离线安装
+# https://download.sourcefind.cn:65024/5/main/dcu-container-toolkit
+# https://developer.sourcefind.cn/document/5fca5126-16a8-11f1-a49f-0242ac150003?id=a1dc131f-16a8-11f1-a49f-0242ac150003&title=1+DCU-Container-Toolkit%E7%AE%80%E4%BB%8B%E5%8F%8A%E5%AE%89%E8%A3%85
+# ==========================================
+- name: 安装 DCU 软件 (RPM 格式)
+  block:
+    - name: 拷贝 DCU RPM 安装包
+      copy:
+        src: "{{ offline_binaries }}/dcu/rhel-dcu/"
+        dest: /opt/dcu-rpm/
+    - name: 本地 YUM 安装 DCU 组件
+      yum:
+        name: "/opt/dcu-rpm/*.rpm"
+        state: present
+        disable_gpg_check: yes
+  when: 
+    - accelerator_type == 'dcu'
+    - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server']
+    - dcu_installed.rc != 0
+
+- name: 安装 DCU 软件 (DEB 格式)
+  block:
+    - name: 拷贝 DCU DEB 安装包（已修正原脚本 src 路径错误）
+      copy:
+        src: "{{ offline_binaries }}/dcu/debian-dcu/"
+        dest: /opt/dcu-deb/
+    - name: Dpkg 安装 DCU 组件
+      shell: "dpkg -i /opt/dcu-deb/*.deb || apt-get --fix-broken install -y"
+  when: 
+    - accelerator_type == 'dcu'
+    - ansible_distribution in ['Debian', 'Ubuntu']
+    - dcu_installed.rc != 0
+
+# ==========================================
+# 4. 华为昇腾 NPU 离线安装 
+# ==========================================
+- name: 📦 安装华为昇腾 NPU 运行时
+  when:
+    - accelerator_type == 'npu'     # 修复: 原为 'ascend',与上面检查任务(== 'npu')不一致,会导致永不安装或 npu_installed.stat 未定义而报错
+    - not npu_installed.stat.exists     # 📌 只有上面 stat 找不到文件（exists 为 false）时，才会走进这个安装块
+  block:
+    - name: 🌐 识别当前节点系统架构并设置包名
+      set_fact:
+        ascend_run_file: "Ascend-docker-runtime_7.3.2_linux-{{ ansible_architecture }}.run"
+
+    - name: 🚚 拷贝对应架构的 NPU .run 安装包到节点
+      copy:
+        src: "{{ offline_binaries }}/npu/{{ ascend_run_file }}"
+        dest: "/opt/{{ ascend_run_file }}"
+        mode: '0755'
+    
+    - name: 🚀 执行安装 (仅安装二进制文件)
+      shell: "/opt/{{ ascend_run_file }} --install"
+  

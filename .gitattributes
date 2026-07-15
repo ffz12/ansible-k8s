@@ -1,0 +1,4 @@
+*.tar.gz filter=lfs diff=lfs merge=lfs -text
+*.zip filter=lfs diff=lfs merge=lfs -text
+runc.amd64 filter=lfs diff=lfs merge=lfs -text
+runc.arm64 filter=lfs diff=lfs merge=lfs -text

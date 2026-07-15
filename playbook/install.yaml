@@ -1,0 +1,10 @@
+- name: 01环境初始化
+  import_playbook: euler-init.yaml
+- name: 02安装httpd
+  import_playbook: httpd-install.yaml
+- name: 03配置yaml源安装必要软件包
+  import_playbook: repo.yaml
+- name: 04安装docker
+  import_playbook: docker-install.yaml
+- name: 05安装harbor
+  import_playbook: harbor-install.yaml

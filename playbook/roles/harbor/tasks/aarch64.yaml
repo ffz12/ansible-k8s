@@ -1,0 +1,15 @@
+- name: docker-compose拷贝
+  copy: src={{ offline_binaries }}/harbor/aarch64/docker-compose.aarch64  dest=/usr/local/bin/docker-compose mode=0755
+
+- name: 拷贝镜像
+  copy:  src={{ offline_binaries }}/harbor/aarch64/{{ item }} dest={{ harbor_copy_path }}
+  loop: "{{ harbor_images_aarch64 }}"
+- name: 拷贝文件
+  copy: src={{ offline_binaries }}/harbor/aarch64/harbor dest={{ harbor_copy_path }}  backup=no mode=0755
+
+- name: 镜像导入
+  shell: |
+      docker load -i {{ harbor_copy_path }}/{{ item }} 
+  loop: "{{ harbor_images_aarch64 }}"
+- name: 拷贝harbor.yml
+  template: src=harbor.yml.aarch.j2 dest={{ harbor_copy_path }}/harbor/harbor.yml mode=0755

@@ -1,0 +1,62 @@
+---
+- name: 检查是否已安装 nvidia-container-toolkit
+  shell: "rpm -q nvidia-container-toolkit || dpkg -l nvidia-container-toolkit"
+  register: toolkit_installed
+  ignore_errors: true
+  changed_when: false
+
+- name: 安装gpu软件-rpm格式
+  block:
+    - name: 拷贝rpm gpu runtime
+      copy: src=rhel-gpu dest=/opt
+    - name: rpm gpu 安装
+      shell: "yum localinstall /opt/rhel-gpu/*rpm -y"
+  when: 
+    - ansible_distribution in ['RedHat','openEuler','CentOS','Kylin Linux Advanced Server']
+    - toolkit_installed.rc != 0
+
+- name: 安装gpu软件-deb格式
+  block:
+    - name: 拷贝deb gpu runtime
+      copy: src=debian-gpu dest=/opt
+    - name: deb gpu 安装
+      shell: |
+        dpkg -i /opt/debian-gpu/*deb
+        apt --fix-broken install -y
+  when: 
+    - ansible_distribution in ['Debian','Ubuntu']
+    - toolkit_installed.rc != 0
+
+- name: 添加harbor域名解析
+  blockinfile:
+    path: /etc/hosts
+    block: |-
+      {% for item in harbor_instances %}
+      {{ item.ip }} {{ item.dns }}
+      {% endfor %}
+    state: present
+    backup: yes
+    marker: "# Ansible inventory hosts {mark}"
+
+- name: 修改daemon.json并配置Docker
+  block:
+    - name: 拷贝daemon.json
+      template: src=daemon-gpu.json.j2 dest=/etc/docker/daemon.json
+    - name: 刷新并登录Harbor
+      shell: |
+        systemctl daemon-reload
+        systemctl enable docker --now 
+        systemctl restart docker 
+        {% for item in harbor_instances %}
+        docker login {{ item.dns }} -uadmin -pHarbor12345
+        {% endfor %}
+  ignore_errors: true
+
+- name: 检查docker服务运行
+  shell: "systemctl is-active docker.service"
+  register: docker_status
+  changed_when: false
+
+- name: debug
+  debug:
+    msg: "{{ docker_status.stdout }}"

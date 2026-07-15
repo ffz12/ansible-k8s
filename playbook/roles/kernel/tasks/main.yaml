@@ -1,0 +1,38 @@
+---
+# 安装编译依赖。原写法 with_items 套了一层列表(item 变成整个数组),是错误的;
+# yum 模块本身支持列表,直接传 name 即可,无需循环。
+- name: install build dependencies
+  yum:
+    name:
+      - gcc
+      - make
+      - gcc-c++
+      - epel-release
+    state: present
+
+# update_kernel 是目录,递归拷贝到 /opt 下,无需 with_items 循环。
+- name: Copy kernel software
+  copy:
+    src: update_kernel
+    dest: /opt
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: remove old kernel header
+  shell: rpm -e `rpm -qa | grep kernel-headers` --nodeps
+  register: rm_kheader
+  # 旧 header 可能不存在,失败属正常;用 failed_when 精确放行而不是一刀切 ignore_errors
+  failed_when: rm_kheader.rc != 0 and 'is not installed' not in rm_kheader.stderr
+  changed_when: rm_kheader.rc == 0
+
+- name: update kernel
+  shell: yum localinstall -y /opt/update_kernel/*.rpm
+
+# ⚠️ 注意: 这里的内核版本是写死的,必须与上面 update_kernel 里实际安装的内核版本一致,
+#    换内核包时记得同步修改(建议改成变量 {{ default_kernel_version }} 放到 defaults/main.yaml)。
+- name: set default kernel
+  shell: grub2-set-default 5.4.272-1.el7.elrepo.x86_64
+
+- name: update boot
+  shell: grub2-mkconfig -o /boot/grub2/grub.cfg

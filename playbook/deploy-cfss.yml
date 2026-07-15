@@ -1,0 +1,25 @@
+# playbook/deploy-etcd.yml
+---
+- name: Deploy and update healthy etcd nodes
+  hosts: >-
+    {{
+      groups.etcd
+      | difference(groups.get('etcd_to_delete', []))
+      | default(groups.etcd)
+    }}
+  become: yes
+  gather_facts: yes
+  serial: 1
+  pre_tasks:
+    - name: Compute final etcd membership
+      include_tasks: tasks/compute-etcd-members.yml
+      run_once: true
+
+    # === 新增：标记是否为第一个节点 ===
+    - name: Set etcd_is_first_node fact
+      set_fact:
+        etcd_is_first_node: "{{ inventory_hostname == (final_etcd_hosts | first) }}"
+  roles:
+    - etcd/etcd-common
+    - certs
+    - etcd/etcd-install

@@ -1,0 +1,4 @@
+- name: 卸载 Nginx-HA 高可用组件
+  hosts: k8s_master 
+  roles:
+    - remove/remove-nginx-ha

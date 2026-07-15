@@ -1,0 +1,160 @@
+#docker安装相关
+#docker二进制文件
+
+harbor_instances:
+  - { dns: "harbor.local.clusters", ip: "172.171.0.206" }
+
+docker_arch_map:
+  x86_64:
+    pkg: "amd-docker-29.4.2.tgz"
+    buildx: "buildx-v0.32.1.linux-amd64"
+    compose: "docker-compose-linux-x86_64"
+  aarch64:
+    pkg: "arm-docker-29.4.2.tgz"
+    buildx: "buildx-v0.32.1.linux-arm64"
+    compose: "docker-compose-linux-aarch64"
+
+
+#cri-dockerd软件包
+cri_dockerd_x86: cri-dockerd-0.3.16.amd64.tgz
+cri_dockerd_aarch64: cri-dockerd-0.3.16.arm64.tgz 
+
+#containerd镜像加速
+docker_mirrors:
+  - "https://docker.hlmirror.com"
+  - "https://docker.1ms.run"
+  - "https://docker.m.daocloud.io"
+  - "https://proxy.1panel.live"
+  
+#docker服务脚本
+docker_services:
+- containerd.service
+- docker.service
+- docker.socket
+docker_softs:
+- containerd
+- containerd-shim-runc-v2
+- ctr
+- docker
+- dockerd
+- docker-init
+- docker-proxy
+- runc
+#docker数据目录
+data_root: /var/lib/docker
+
+#cri-dockerd启动脚本
+cri_dockerd_services:
+- cri-docker.socket
+#cri pause镜像
+pause: harbor.unisound.ai/unisound/pause:3.10
+pause_version: "3.10"
+#containerd pause镜像
+#k8s1.32.10
+#sandbox_image: harbor.local.clusters/kubesphere/pause:3.10 
+#k8s1.28
+#sandbox_image: registry.cn-beijing.aliyuncs.com/kubesphereio/pause:3.9
+#k8s1.34.3
+sandbox_image: harbor.local.clusters/kubernetes/kubernetes/pause:3.10.1 
+#sandbox_image: hub.kubesphere.com.cn/kubernetes/pause:3.10.1
+#containerd 安装版本(单一事实来源,改这里即可,二进制路径与config格式自动对齐)
+#可选: "2.2.3"(config version=3) 或 "1.7.32"(config version=2)
+containerd_version: "1.7.32"
+runc_version: "1.1.12"
+#config 格式版本自动推导: 1.x -> 2, 2.x+ -> 3 (勿手改)
+containerd_config_version: "{{ 3 if (containerd_version.split('.')[0] | int) >= 2 else 2 }}"
+#containerd 数据目录(等同 docker 的 data-root)。containerd 通过 config 的 root 直接读写该目录,无需 bind。
+#数据盘主挂载点 + containerd 数据子目录(mount_nvme.yaml 与 containerd_setup 共用这两个变量)
+container_base: "/var/lib/container"
+containerd_root: "{{ container_base }}/containerd"
+#harbor相关
+#harbor文件拷贝位置
+harbor_copy_path: /data/harbor-install
+#harbor密码
+harbor_admin_username: admin
+harbor_admin_password: Harbor12345
+
+#harbor数据库密码
+password: root123
+#harbor数据目录
+data_volume: /data/harbor-data
+#harbor打包镜像
+harbor_offline_images:
+- harbor-exporter-v2.11.2.tar.gz
+- redis-photon-v2.11.2.tar.gz
+- trivy-adapter-photon-v2.11.2.tar.gz
+- harbor-registryctl-v2.11.2.tar.gz
+- registry-photon-v2.11.2.tar.gz
+- nginx-photon-v2.11.2.tar.gz
+- harbor-log-v2.11.2.tar.gz
+- harbor-jobservice-v2.11.2.tar.gz
+- harbor-core-v2.11.2.tar.gz
+- harbor-portal-v2.11.2.tar.gz
+- harbor-db-v2.11.2.tar.gz
+- prepare-v2.11.2.tar.gz
+#harbor镜像
+harbor_images:
+- goharbor/redis-photon:v2.11.2
+- goharbor/harbor-registryctl:v2.11.2
+- goharbor/registry-photon:v2.11.2
+- goharbor/nginx-photon:v2.11.2
+- goharbor/harbor-log:v2.11.2
+- goharbor/harbor-jobservice:v2.11.2
+- goharbor/harbor-core:v2.11.2
+- goharbor/harbor-portal:v2.11.2
+- goharbor/harbor-db:v2.11.2
+- goharbor/prepare:v2.11.2
+- goharbor/harbor-exporter:v2.11.2
+- goharbor/trivy-adapter-photon:v2.11.2
+
+#harbor镜像aarch64
+harbor_images_aarch64:
+- harbor-core-v2.13.0-aarch64.tar.gz
+- harbor-db-v2.13.0-aarch64.tar.gz
+- harbor-exporter-v2.13.0-aarch64.tar.gz
+- harbor-jobservice-v2.13.0-aarch64.tar.gz
+- harbor-log-v2.13.0-aarch64.tar.gz
+- harbor-portal-v2.13.0-aarch64.tar.gz
+- harbor-registryctl-v2.13.0-aarch64.tar.gz
+- nginx-photon-v2.13.0-aarch64.tar.gz
+- prepare-v2.13.0-aarch64.tar.gz
+- redis-photon-v2.13.0-aarch64.tar.gz
+- registry-photon-v2.13.0-aarch64.tar.gz
+
+#nginx 配置路径
+nginx_dir: /data/nginx
+
+nginx_conf_dir: "{{ nginx_dir }}/conf"
+
+#nginx 日志路径
+nginx_logs_dir: "{{ nginx_dir }}/logs"
+
+nginx_sbin_dir: "{{ nginx_dir }}/sbin"
+
+
+#keepalvied配置路径
+keepalived_dir: /data/keepalived
+
+keepalived_conf_dir: "{{ keepalived_dir }}/etc"
+
+keepalived_sbin_dir: "{{ keepalived_dir }}/sbin"
+
+
+#debian系列 dns相关
+dns: 
+- 114.114.114.114
+- 223.5.5.5 
+domains: "local.clusters"
+
+
+
+offline_binaries: "{{ playbook_dir | dirname }}/offline/binaries"
+
+#k8s安装相关
+harbor_dns: "{{ harbor_instances[0].dns }}"
+harbor_ip: "{{ harbor_instances[0].ip }}"
+#k8s安装registry
+registry: "{{ harbor_dns }}/unisound"
+
+
+

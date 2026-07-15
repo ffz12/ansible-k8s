@@ -1,0 +1,103 @@
+---
+# roles/nginx-ha/tasks/install-binary.yml
+- name: 安装运行时依赖 (Debian/Ubuntu)
+  apt:
+    name:
+      - libssl3
+      - libpcre3
+      - zlib1g
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: 安装运行时依赖 (RHEL/Rocky/openEuler)
+  yum:
+    name:
+      - openssl-libs
+      - pcre
+      - zlib
+    state: present
+  # 显式带上 openEuler/Kylin: 老 ansible 对它们 os_family 识别不准
+  when: >
+    ansible_os_family == "RedHat"
+    or ansible_distribution in ['openEuler', 'Kylin Linux Advanced Server', 'Kylin']
+
+- name: 创建 nginx 组
+  group:
+    name: nginx
+    system: yes
+
+- name: 创建 nginx 用户
+  user:
+    name: nginx
+    group: nginx
+    shell: /sbin/nologin
+    create_home: no
+    system: yes
+
+- name: 创建 Nginx 目录
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: nginx
+    group: nginx
+  loop:
+    - "{{ nginx_conf_dir }}"
+    - "{{ nginx_logs_dir }}"
+    - "{{ nginx_sbin_dir }}"
+
+- name: 创建 Keepalived 目录
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  loop:
+    - "{{ keepalived_conf_dir }}"
+    - "{{ keepalived_sbin_dir }}"
+
+- name: 设置二进制源目录（openEuler 22 → rocky8，openEuler 24 → ubuntu24）
+  set_fact:
+    _bin_os_dir: >-
+      {{
+        'rocky' + ansible_distribution_major_version
+        if ansible_distribution == 'Rocky'
+        else
+        'ubuntu' + ansible_distribution_major_version
+        if ansible_distribution == 'Ubuntu'
+        else
+        'rocky8'
+        if ansible_distribution == 'openEuler' and ansible_distribution_major_version == '22'
+        else
+        'ubuntu24'
+        if ansible_distribution == 'openEuler' and ansible_distribution_major_version == '24'
+        else
+        'unsupported'
+      }}
+    _bin_arch_dir: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+
+- name: 校验二进制目录是否受支持
+  assert:
+    that:
+      - _bin_os_dir in ['rocky8', 'ubuntu22', 'ubuntu24']
+      - _bin_arch_dir in ['amd64', 'arm64']
+    fail_msg: "不支持的系统组合: {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_architecture }})"
+    success_msg: "使用二进制路径: {{ _bin_os_dir }}/{{ _bin_arch_dir }}"
+
+- name: 拷贝 Keepalived 二进制
+  copy:
+    src: "{{ offline_binaries }}/nginx-ha/bin/{{ _bin_os_dir }}/{{ _bin_arch_dir }}/keepalived"
+    dest: "{{ keepalived_sbin_dir }}/keepalived"
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: 拷贝 Nginx 二进制
+  copy:
+    src: "{{ offline_binaries }}/nginx-ha/bin/{{ _bin_os_dir }}/{{ _bin_arch_dir }}/nginx"
+    dest: "{{ nginx_sbin_dir }}/nginx"
+    mode: "0755"
+    owner: nginx
+    group: nginx

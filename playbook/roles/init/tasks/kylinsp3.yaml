@@ -1,0 +1,74 @@
+---
+# playbook/roles/init/tasks/kylinsp3.yaml
+
+- name: RedHat类型环境基础安全配置
+  block:
+    - name: 关闭并禁用 firewalld 防火墙
+      service:
+        name: firewalld
+        state: stopped
+        enabled: no
+      ignore_errors: yes
+
+    - name: 检查当前 SELinux 显式状态
+      shell: cat /etc/selinux/config | grep '^SELINUX=' | grep -v "#"
+      register: selinux_check
+      failed_when: false
+      changed_when: false
+
+    - name: 输出 SELinux 检查结果
+      debug:
+        var: selinux_check.stdout
+
+    - name: 永久并临时关闭 SELinux
+      shell: |
+        sed -i 's/^SELINUX=.*/SELINUX=disabled/' /etc/selinux/config
+        setenforce 0
+      when: selinux_check.stdout is defined and "SELINUX=disabled" not in selinux_check.stdout
+      ignore_errors: yes
+
+
+
+# ==================== 2. 软件源策略分流与软件包安装 ====================
+
+- name: 【离线模式】银河麒麟双架构离线 RPM 包本地安装
+  block:
+    - name: 创建目标服务器离线包存放目录
+      file:
+        path: /opt/kylin-pkgs
+        state: directory
+        mode: '0755'
+
+    - name: 动态同步对应架构的 RPM 离线安装包
+      unarchive: 
+        src: "{{ offline_binaries }}/ios-offline/kylin_{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}.tar.gz" 
+        dest: /opt/kylin-pkgs/
+        mode: '0644'
+        owner: root
+        group: root
+
+    - name: 离线批量本地安装基础软件包
+      shell: |
+          yum localinstall -y /opt/kylin-pkgs/*.rpm
+      # 使用官方 yum 模块平替 shell localinstall，能更好地跟踪任务的 changed 状态
+
+  when: is_offline | bool
+
+- name: 【在线模式】银河麒麟联网批量安装必要基础软件包
+  yum:
+    name:
+      - socat
+      - ipset
+      - conntrack
+      - ipvsadm
+      - ebtables
+      - chrony
+      - rsync
+      - tar
+      - unzip
+      - vim
+      - net-tools
+      - wget
+    state: present
+    update_cache: yes
+  when: not is_offline | bool

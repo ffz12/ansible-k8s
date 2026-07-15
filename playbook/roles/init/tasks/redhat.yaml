@@ -1,0 +1,124 @@
+---
+# playbook/roles/init/tasks/redhat.yaml
+
+# ==================== 1. RedHat 基础安全与环境配置 (通用) ====================
+- name: RedHat类型环境基础安全配置
+  block:
+    - name: 关闭并禁用 firewalld 防火墙
+      service:
+        name: firewalld
+        state: stopped
+        enabled: no
+      ignore_errors: yes
+
+    - name: 检查当前 SELinux 显式状态
+      shell: cat /etc/selinux/config | grep '^SELINUX=' | grep -v "#"
+      register: selinux_check
+      failed_when: false
+      changed_when: false
+
+    - name: 输出 SELinux 检查结果
+      debug:
+        var: selinux_check.stdout
+
+    - name: 永久并临时关闭 SELinux
+      shell: |
+        sed -i 's/^SELINUX=.*/SELINUX=disabled/' /etc/selinux/config
+        setenforce 0
+      when: selinux_check.stdout is defined and "SELINUX=disabled" not in selinux_check.stdout
+      ignore_errors: yes
+
+    - name: 配置 hosts 主机名映射
+      template:
+        src: redhat-hosts.j2
+        dest: /etc/hosts
+        owner: root
+        group: root
+        mode: '0644'
+
+
+# ==================== 2. 软件源策略分流与软件包安装 ====================
+
+- name: 【离线模式】配置红帽本地 RPM 包并进行本地安装
+  block:
+    - name: 检查并创建红帽历史 repo 备份目录
+      file:
+        path: /etc/yum.repos.d/bak
+        state: directory
+        mode: '0755'
+
+    - name: 临时屏蔽所有官方互联网 repo 源 (移至备份目录)
+      shell: |
+        mv /etc/yum.repos.d/*.repo /etc/yum.repos.d/bak/
+      failed_when: false
+      ignore_errors: yes
+      # 避免在纯内网环境因残留互联网配置导致 yum 校验超时
+
+    - name: 拷贝红帽离线软件包目录到目标机
+      copy:
+        src: redhat-pkg  # 如果你控制端有准备好的红帽rpm包目录，会自动匹配；如果没有会跳过
+        dest: /opt/
+        mode: '0755'
+      ignore_errors: yes
+
+    - name: 批量执行本地红帽 RPM 包安全安装
+      shell: |
+        if [ -d /opt/redhat-pkg ]; then
+          yum localinstall /opt/redhat-pkg/*rpm -y
+        elif [ -d /opt/openEuler-pkg ]; then
+          yum localinstall /opt/openEuler-pkg/*rpm -y
+        else
+          echo "未发现本地离线 RPM 目录，跳过 localinstall"
+        fi
+      ignore_errors: yes
+
+  when: is_offline | bool
+
+- name: 【在线模式】联网批量安装红帽全量必要基础软件包
+  yum:
+    name:
+      - createrepo
+      - wget
+      - net-tools
+      - lrzsz
+      - gcc
+      - gcc-c++
+      - make
+      - cmake
+      - libxml2-devel
+      - openssl-devel
+      - curl
+      - curl-devel
+      - unzip
+      - sudo
+      - libaio-devel
+      - vim
+      - ncurses-devel
+      - autoconf
+      - automake
+      - zlib-devel
+      - openssh-server
+      - socat
+      - ipvsadm
+      - conntrack
+      - ebtables
+      - g++
+      - ipset
+      - git
+      - elfutils-libelf-devel
+      - htop
+      - tar
+      - tmux
+      - rsync
+      - authconfig
+      - nss-pam-ldapd
+      - pam_ldap
+      - openldap-clients
+      - oddjob
+      - oddjob-mkhomedir
+      - chrony
+      - python3
+    state: present
+    update_cache: yes
+  when: not is_offline | bool
+

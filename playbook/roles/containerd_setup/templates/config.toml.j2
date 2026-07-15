@@ -1,0 +1,65 @@
+# /root/ansible-ai/playbook/roles/containerd_setup/templates/config.toml.j2
+version = 3
+root = '{{ containerd_root | default("/var/lib/containerd") }}'
+state = '/run/containerd'
+imports = ['/etc/containerd/conf.d/*.toml']
+
+[grpc]
+  address = '/run/containerd/containerd.sock'
+  max_recv_message_size = 16777216
+  max_send_message_size = 16777216
+
+[plugins]
+  # 1. 核心镜像层：定义存储和你的私有凭证目录 certs.d
+  [plugins.'io.containerd.cri.v1.images']
+    snapshotter = 'overlayfs'
+    [plugins.'io.containerd.cri.v1.images'.pinned_images]
+      sandbox = "{{ sandbox_image }}"
+    [plugins.'io.containerd.cri.v1.images'.registry]
+      config_path = '/etc/containerd/certs.d'
+
+  # 2. 核心运行时层：开启 CDI 硬件识别并接管运行时大树
+  [plugins.'io.containerd.cri.v1.runtime']
+    enable_cdi = true
+    cdi_spec_dirs = ['/etc/cdi', '/var/run/cdi']
+
+    [plugins.'io.containerd.cri.v1.runtime'.containerd]
+      # 🎯 动态决定默认运行时：
+      # NVIDIA 节点由于全盘走 CDI 设备映射，默认继续走核心 runc 即可（走 CDI 注入）；
+      # DCU 和 昇腾 目前强依赖特定的 runtime 包装器，所以默认切到各自对应的名称。
+      default_runtime_name = '{% if accelerator_type | default("none") == "nvidia" %}nvidia{% elif accelerator_type | default("none") == "dcu" %}dcu{% elif accelerator_type | default("none") == "npu" %}ascend{% else %}runc{% endif %}'
+
+      [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes]
+        # 基础运行标准 runc 运行时（所有节点必备）
+        [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc]
+          runtime_type = 'io.containerd.runc.v2'
+          [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]
+            SystemdCgroup = true
+
+{% if accelerator_type == 'nvidia' %}
+        # 🚀 只有在 NVIDIA 节点下发时才会拼接进去的运行时（兼容非 CDI 传统调用方案）
+        [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia]
+          runtime_type = 'io.containerd.runc.v2'
+          [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia.options]
+            BinaryName = '/usr/bin/nvidia-container-runtime'
+            SystemdCgroup = true
+{% elif accelerator_type == 'dcu' %}
+        # 🚀 只有在海光 DCU 节点下发时才会拼接进去的运行时
+        [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.dcu]
+          runtime_type = 'io.containerd.runc.v2'
+          [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.dcu.options]
+            BinaryName = '/usr/bin/dcu-container-runtime'
+            SystemdCgroup = true
+{% elif accelerator_type == 'npu' %}
+        # 🚀 只有在华为升腾（Ascend）节点下发时才会拼接进去的运行时
+        [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.ascend]
+          runtime_type = 'io.containerd.runc.v2'
+          [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.ascend.options]
+            BinaryName = '/usr/local/Ascend/Ascend-Docker-Runtime/ascend-docker-runtime'
+            SystemdCgroup = true
+{% endif %}
+
+    # 3. 核心 CNI 网络层
+    [plugins.'io.containerd.cri.v1.runtime'.cni]
+      bin_dirs = ['/opt/cni/bin']
+      conf_dir = '/etc/cni/net.d'

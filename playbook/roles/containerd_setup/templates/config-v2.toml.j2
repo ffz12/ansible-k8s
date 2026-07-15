@@ -1,0 +1,62 @@
+# config-v2.toml.j2  —  containerd 1.7.x 专用 (config version 2)
+# 与 config.toml.j2(version=3) 功能一一对应,只是 plugin 路径用 1.x 的 io.containerd.grpc.v1.cri 语法
+version = 2
+root = "{{ containerd_root | default('/var/lib/containerd') }}"
+state = "/run/containerd"
+imports = ["/etc/containerd/conf.d/*.toml"]
+
+[grpc]
+  address = "/run/containerd/containerd.sock"
+  max_recv_message_size = 16777216
+  max_send_message_size = 16777216
+
+[plugins]
+  [plugins."io.containerd.grpc.v1.cri"]
+    # pause 镜像
+    sandbox_image = "{{ sandbox_image }}"
+    # CDI 硬件设备识别(containerd 1.7 支持)
+    enable_cdi = true
+    cdi_spec_dirs = ["/etc/cdi", "/var/run/cdi"]
+
+    # 私有仓库凭证目录 certs.d
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"
+
+    [plugins."io.containerd.grpc.v1.cri".containerd]
+      snapshotter = "overlayfs"
+      # 动态默认运行时(与 v3 模板逻辑一致)
+      default_runtime_name = "{% if accelerator_type | default('none') == 'nvidia' %}nvidia{% elif accelerator_type | default('none') == 'dcu' %}dcu{% elif accelerator_type | default('none') == 'npu' %}ascend{% else %}runc{% endif %}"
+
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
+        # 标准 runc(所有节点必备)
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+          runtime_type = "io.containerd.runc.v2"
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+            SystemdCgroup = true
+{% if accelerator_type == 'nvidia' %}
+        # NVIDIA 运行时(传统非 CDI 调用兼容)
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.nvidia]
+          runtime_type = "io.containerd.runc.v2"
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.nvidia.options]
+            BinaryName = "/usr/bin/nvidia-container-runtime"
+            SystemdCgroup = true
+{% elif accelerator_type == 'dcu' %}
+        # 海光 DCU 运行时
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.dcu]
+          runtime_type = "io.containerd.runc.v2"
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.dcu.options]
+            BinaryName = "/usr/bin/dcu-container-runtime"
+            SystemdCgroup = true
+{% elif accelerator_type == 'npu' %}
+        # 华为昇腾 Ascend 运行时
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.ascend]
+          runtime_type = "io.containerd.runc.v2"
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.ascend.options]
+            BinaryName = "/usr/local/Ascend/Ascend-Docker-Runtime/ascend-docker-runtime"
+            SystemdCgroup = true
+{% endif %}
+
+    # CNI 网络
+    [plugins."io.containerd.grpc.v1.cri".cni]
+      bin_dir = "/opt/cni/bin"
+      conf_dir = "/etc/cni/net.d"

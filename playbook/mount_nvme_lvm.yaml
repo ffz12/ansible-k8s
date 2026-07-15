@@ -1,0 +1,173 @@
+---
+# 自动识别空闲 NVMe 盘(2或4块) -> 组 LVM -> 挂载,供 containerd(config root) 和 kubelet(bind) 使用
+# 安全策略: 只选"无文件系统/无分区/未挂载/非PV"的整盘; 数量必须为 2 或 4,否则中止
+- name: Auto-detect free NVMe disks, build LVM, mount for containerd & kubelet
+  hosts: cluster
+  become: yes
+  vars:
+    vg_name: "vg_container"
+    lv_name: "lv_container"
+    fstype: "xfs"
+    expected_disk_counts: [2, 4]   # 只接受识别到 2 或 4 块空盘
+    lvm_striped: true              # true=条带化(跨盘并发,吞吐高); 盘大小不一致时可设 false 走线性
+    stripe_size_kb: 64
+    # container_base / containerd_root 来自 group_vars/all.yaml(与 containerd_setup 共用)
+    kubelet_bind:
+      - { src: "kubelet", dest: "/var/lib/kubelet" }
+
+  tasks:
+    # ---------- 前置 ----------
+    - name: 确保 lvm2 已安装
+      package:
+        name: lvm2
+        state: present
+      failed_when: false
+
+    # ---------- 幂等判断 ----------
+    - name: 获取挂载信息
+      setup:
+        filter: ansible_mounts
+
+    - name: 判断 container_base 是否已挂载
+      set_fact:
+        already_mounted: "{{ ansible_mounts | selectattr('mount', 'equalto', container_base) | list | length > 0 }}"
+
+    - name: 检查卷组是否已存在
+      command: "vgs --noheadings -o vg_name {{ vg_name }}"
+      register: vg_check
+      changed_when: false
+      failed_when: false
+
+    - name: 判断 VG 是否已存在
+      set_fact:
+        vg_exists: "{{ vg_check.rc == 0 }}"
+
+    - name: 📢 [终端显示] 当前状态
+      debug:
+        msg: "{{ container_base }} 已挂载: {{ already_mounted }} | 卷组 {{ vg_name }} 已存在: {{ vg_exists }}"
+
+    # ---------- 识别空闲 NVMe 盘(仅当需要新建时) ----------
+    - name: 识别未使用的 NVMe 整盘 (多重校验,确保完全空白才选中)
+      shell: |
+        set -o pipefail
+        for d in $(lsblk -dpno NAME,TYPE | awk '$2=="disk" && $1 ~ /nvme/ {print $1}'); do
+          base=$(basename "$d")
+          # 1) 有分区/children -> 跳过(系统盘通常有分区)
+          [ "$(lsblk -no NAME "$d" | tail -n +2 | wc -l)" -ne 0 ] && continue
+          # 2) 被 dm/raid/crypt 等占用(holders 非空) -> 跳过
+          [ -n "$(ls -A /sys/block/$base/holders/ 2>/dev/null)" ] && continue
+          # 3) blkid 检测到任何签名(fs/分区表/raid成员等) -> 跳过(保护已有数据)
+          blkid "$d" >/dev/null 2>&1 && continue
+          # 4) wipefs 检测到任何残留签名(更全,能抓 ceph/raid/旧fs) -> 跳过
+          [ -n "$(wipefs --noheadings "$d" 2>/dev/null)" ] && continue
+          # 5) 已是 LVM PV -> 跳过
+          pvs --noheadings -o pv_name 2>/dev/null | tr -d ' ' | grep -qx "$d" && continue
+          # 6) 整盘直接挂载(罕见) -> 跳过
+          [ -n "$(lsblk -no MOUNTPOINT "$d" | tr -d ' ')" ] && continue
+          # 全部通过 = 完全空白盘,输出: 设备 人类可读容量 字节数
+          echo "$d $(lsblk -dpno SIZE "$d" | tr -d ' ') $(lsblk -bdno SIZE "$d" | tr -d ' ')"
+        done
+      args:
+        executable: /bin/bash
+      register: free_nvme
+      changed_when: false
+      when: not already_mounted and not vg_exists
+
+    - name: 整理空闲盘列表 (设备名 + 容量种类)
+      set_fact:
+        nvme_lines: "{{ free_nvme.stdout_lines | default([]) }}"
+        nvme_disks: "{{ free_nvme.stdout_lines | default([]) | map('regex_replace', '\\s.*$', '') | list }}"
+        nvme_size_bytes: "{{ free_nvme.stdout_lines | default([]) | map('regex_replace', '^\\S+\\s+\\S+\\s+', '') | list | unique | list }}"
+      when: not already_mounted and not vg_exists
+
+    - name: 📢 [终端显示] 识别到的空闲 NVMe 盘
+      debug:
+        msg: "识别到空闲盘 {{ nvme_disks | length }} 块, 容量种类 {{ nvme_size_bytes | length }} 种, 明细: {{ nvme_lines }}"
+      when: not already_mounted and not vg_exists
+
+    # ---------- 安全校验: 数量必须 2 或 4 ----------
+    - name: 安全校验 - 数量为2或4 且 所有盘容量一致
+      assert:
+        that:
+          - nvme_disks | length in expected_disk_counts
+          - nvme_size_bytes | length == 1
+        fail_msg: >-
+          校验失败: 识别到 {{ nvme_disks | length }} 块空盘, 容量种类 {{ nvme_size_bytes | length }} 种。
+          要求 [数量=2或4] 且 [所有盘容量必须一致(如全 3.5T 或全 7.68T)]。
+          明细: {{ nvme_lines }}。为防误操作已中止。
+        success_msg: "校验通过: {{ nvme_disks | length }} 块同容量空盘 -> {{ nvme_lines }}"
+      when: not already_mounted and not vg_exists
+
+    # ---------- 创建 LVM ----------
+    - name: 创建卷组 (pvcreate + vgcreate)
+      lvg:
+        vg: "{{ vg_name }}"
+        pvs: "{{ nvme_disks }}"
+      when: not already_mounted and not vg_exists
+
+    - name: 创建逻辑卷 (用满 VG, {{ '条带化' if lvm_striped else '线性' }})
+      lvol:
+        vg: "{{ vg_name }}"
+        lv: "{{ lv_name }}"
+        size: "100%FREE"
+        opts: "{{ ('-i ' ~ (nvme_disks | length) ~ ' -I ' ~ stripe_size_kb) if lvm_striped else '' }}"
+      when: not already_mounted and not vg_exists
+
+    - name: 在 LV 上创建 xfs (仅新建VG时; force:no 防误格式化)
+      filesystem:
+        fstype: "{{ fstype }}"
+        dev: "/dev/{{ vg_name }}/{{ lv_name }}"
+        force: no
+      when: not already_mounted and not vg_exists
+
+    # ---------- 挂载 ----------
+    - name: 挂载 LV 到 container_base (写入 fstab)
+      mount:
+        path: "{{ container_base }}"
+        src: "/dev/{{ vg_name }}/{{ lv_name }}"
+        fstype: "{{ fstype }}"
+        opts: defaults
+        state: mounted
+
+    # ---------- containerd: config root (不 bind) ----------
+    - name: 创建 containerd 数据目录 (config.toml root 指向它)
+      file:
+        path: "{{ containerd_root }}"
+        state: directory
+        mode: "0711"
+
+    # ---------- kubelet: bind ----------
+    - name: 创建 kubelet 目录 (盘上 + 标准路径)
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0711"
+      loop:
+        - "{{ container_base }}/{{ kubelet_bind[0].src }}"
+        - "{{ kubelet_bind[0].dest }}"
+
+    - name: bind 挂载 kubelet 到标准路径
+      mount:
+        path: "{{ item.dest }}"
+        src: "{{ container_base }}/{{ item.src }}"
+        fstype: none
+        opts: "bind,x-systemd.requires-mounts-for={{ container_base }}"
+        state: mounted
+      loop: "{{ kubelet_bind }}"
+
+    # ---------- 确认 ----------
+    - name: 最终确认挂载
+      command: "findmnt {{ item }}"
+      register: final_check
+      changed_when: false
+      failed_when: false
+      loop:
+        - "{{ container_base }}"
+        - "{{ kubelet_bind[0].dest }}"
+
+    - name: 📢 [终端显示] 结果
+      debug:
+        msg:
+          - "挂载: {{ final_check.results | map(attribute='stdout') | select() | list }}"
+          - "containerd 数据目录 = {{ containerd_root }} (确保 containerd_setup 的 config root 指向它)"
+          - "卷组 {{ vg_name }} / 逻辑卷 {{ lv_name }}"

@@ -1,0 +1,100 @@
+---
+# ============================================================
+# containerd 离线安装 role (版本感知)
+# 职责: 安装/切换 containerd 二进制 + runc + systemd 服务
+# 配置(config.toml / certs.d / CDI)由 containerd_setup role 负责
+# ============================================================
+
+# 1. 检测已装版本,与目标 containerd_version 不符才(重新)安装
+- name: 检测已安装的 containerd 版本
+  command: /usr/local/bin/containerd --version
+  register: ctd_installed
+  changed_when: false
+  failed_when: false
+
+- name: 判断是否需要(重新)安装 containerd
+  set_fact:
+    containerd_need_install: "{{ ctd_installed.rc != 0 or containerd_version not in ctd_installed.stdout }}"
+
+- name: 📢 [终端显示] 版本判断
+  debug:
+    msg: "已装: {{ (ctd_installed.stdout | trim) if ctd_installed.rc == 0 else '无' }} | 目标: v{{ containerd_version }} | 需要安装: {{ containerd_need_install }}"
+
+# 2. 版本不符时先停 containerd,避免替换运行中的二进制
+- name: 停止 containerd (版本切换前)
+  systemd:
+    name: containerd
+    state: stopped
+  when: containerd_need_install | bool
+  failed_when: false      # 服务可能尚未存在
+
+- name: 解压 containerd 二进制到 /usr/local (版本不符时覆盖安装)
+  unarchive:
+    src: "{{ offline_binaries }}/containerd/v{{ containerd_version }}/{{ containerd_arch }}/containerd-{{ containerd_version }}-linux-{{ containerd_arch }}.tar.gz"
+    dest: /usr/local
+    remote_src: no
+  when: containerd_need_install | bool
+  # 官方 tar 包结构: bin/containerd、bin/ctr、bin/containerd-shim-runc-v2 ... 解压到 /usr/local 落到 /usr/local/bin/
+
+# 3. runc (官方 containerd 包不含 runc,单独装)
+- name: 安装 runc 到 /usr/local/sbin/runc
+  copy:
+    src: "{{ offline_binaries }}/runc/v{{ runc_version }}/{{ containerd_arch }}/runc.{{ containerd_arch }}"
+    dest: /usr/local/sbin/runc
+    owner: root
+    group: root
+    mode: "0755"
+
+# 4. systemd 服务
+- name: 部署 containerd systemd 服务文件
+  copy:
+    src: containerd.service
+    dest: /etc/systemd/system/containerd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart containerd
+
+- name: 确保 /etc/containerd 目录存在
+  file:
+    path: /etc/containerd
+    state: directory
+    mode: "0755"
+
+- name: 加载内核模块 overlay 和 br_netfilter
+  shell: "modprobe {{ item }}"
+  loop:
+    - overlay
+    - br_netfilter
+  changed_when: false
+  ignore_errors: true     # 部分内核已内置/无该模块时不阻断
+
+# 5. daemon-reload + 开机自启(总是执行)
+- name: daemon-reload 并设置开机自启
+  systemd:
+    name: containerd
+    enabled: yes
+    daemon_reload: yes
+
+# 6. 尝试启动; 若因旧配置(如残留的 version=3)启动失败,不阻断——
+#    后续 containerd_setup 会写对 config(version 由 containerd_version 决定)并重启
+- name: 尝试启动 containerd
+  systemd:
+    name: containerd
+    state: started
+  register: ctd_start
+  failed_when: false
+
+- name: 📢 [终端显示] 启动状态
+  debug:
+    msg: "{{ '✅ containerd 已启动' if ctd_start.state | default('') == 'started' else '⚠️ 暂未启动(可能等 containerd_setup 写对配置后由其重启),不影响继续' }}"
+
+# 7. 验证二进制版本(读 binary,不依赖服务在跑)
+- name: 验证 containerd 版本
+  command: /usr/local/bin/containerd --version
+  register: containerd_ver
+  changed_when: false
+
+- name: 📢 [终端显示] 安装后 containerd 版本
+  debug:
+    msg: "{{ containerd_ver.stdout }}  (目标 v{{ containerd_version }})"

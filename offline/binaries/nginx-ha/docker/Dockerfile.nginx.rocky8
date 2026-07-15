@@ -1,0 +1,34 @@
+FROM rockylinux:8 AS builder
+
+RUN dnf install -y \
+        gcc make \
+        pcre-devel \
+        zlib-devel \
+        openssl-devel \
+        tar \
+        gzip && \
+    dnf clean all
+
+WORKDIR /src
+COPY nginx-1.24.0.tar.gz .
+RUN tar -xzf nginx-1.24.0.tar.gz && mv nginx-1.24.0 nginx
+WORKDIR /src/nginx
+
+RUN ./configure \
+        --prefix=/data/nginx \
+        --with-stream \
+        --with-stream_ssl_module \
+        --with-stream_realip_module \
+        --with-http_ssl_module \
+        --with-http_realip_module \
+        --with-http_stub_status_module \
+        --with-http_gzip_static_module \
+        --with-pcre \
+        --with-threads && \
+    make -j$(nproc)
+
+FROM rockylinux:8
+RUN dnf install -y pcre zlib openssl-libs && dnf clean all
+RUN mkdir -p /data/nginx/sbin
+COPY --from=builder /src/nginx/objs/nginx /data/nginx/sbin/nginx
+CMD ["/data/nginx/sbin/nginx", "-g", "daemon off;"]

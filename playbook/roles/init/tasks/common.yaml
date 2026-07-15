@@ -1,0 +1,85 @@
+- name: 检查默认时区是否为上海
+  shell: timedatectl | grep 'Time zone' | awk '{print $3}'
+  register: current_timezone
+  changed_when: false
+
+- name: debug
+  debug:
+    var: current_timezone.stdout
+
+- name: 如果时区不是上海则设置为上海
+  command: timedatectl set-timezone Asia/Shanghai
+  when: current_timezone.stdout != "Asia/Shanghai"
+
+- name: modprobe br_netfilter
+  shell: modprobe br_netfilter
+  changed_when: false
+
+# 删掉原来单独的 state=touch 任务(每次都报 changed,不幂等);
+# 改由 blockinfile 的 create=yes 在文件不存在时自动创建。
+- name: 永久加载br_netfilter
+  blockinfile:
+    path: /etc/modules-load.d/br_netfilter.conf
+    create: yes
+    owner: root
+    group: root
+    mode: '0644'
+    block: |-
+       br_netfilter
+    state: present
+    backup: yes
+    marker: "# Ansible inventory  {mark}"
+- name: 内核参数调优
+  copy: src=sysctl.conf dest=/etc/sysctl.conf owner=root group=root mode=0644
+- name: 执行sysctl
+  shell: | 
+      sysctl -p
+- name: 调整文件描述符限制
+  blockinfile:
+    path: /etc/security/limits.conf 
+    block: |-
+       root soft memlock unlimited
+       root hard memlock unlimited
+       root soft stack unlimited
+       root hard stack unlimited
+       root soft nofile  1000001
+       root hard nofile  1000001
+       * soft memlock unlimited
+       * hard memlock unlimited
+       * soft stack unlimited
+       * hard stack unlimited
+       * soft nofile 1000001
+       * hard nofile 1000001
+
+       
+
+    state: present
+    backup: yes
+    marker: "# Ansible inventory  {mark}"
+
+- name: 禁用系统 swap
+  shell: "swapoff -a && sysctl -w vm.swappiness=0"
+  ignore_errors: true
+- name: 删除 fstab swap 相关配置
+  lineinfile:
+    path: /etc/fstab
+    regexp: 'swap'
+    state: absent
+    backup: yes
+
+- name: 统一配置时间同步 chrony.conf 配置文件
+  template:
+    src: chrony.conf.j2
+    dest: "{{ '/etc/chrony/chrony.conf' if ansible_os_family == 'Debian' else '/etc/chrony.conf' }}"
+    owner: root
+    group: root
+    mode: '0644'
+  ignore_errors: yes
+
+- name: 统一启动并设置 chronyd 服务开机自启
+  service:
+    # 修复: Debian/Ubuntu 上服务名是 chrony,不是 chronyd;原来固定 chronyd 在 Debian 上被 ignore_errors 掩盖,导致时间同步服务实际没启动
+    name: "{{ 'chrony' if ansible_os_family == 'Debian' else 'chronyd' }}"
+    state: restarted
+    enabled: yes
+  ignore_errors: yes

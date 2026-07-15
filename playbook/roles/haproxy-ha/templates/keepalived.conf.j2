@@ -1,0 +1,54 @@
+global_defs {
+   # 性能优化参数(学习 nginx-ha)
+   vrrp_garp_master_refresh 60  # 主节点定期发送 GARP 包刷新 ARP 缓存
+   vrrp_garp_master_repeat 2    # 每次发送的 GARP 包数量
+   script_security              # 允许执行脚本
+   enable_script_security       # 显式启用脚本安全(某些版本需要)
+   script_user root             # 指定执行脚本的用户
+}
+
+vrrp_script chk_haproxy {
+    script "/etc/keepalived/check_haproxy.sh"
+    interval 2              # 检测间隔
+    timeout 2              # 脚本超时(避免卡死)
+    rise 2                 # 连续成功 2 次才认为恢复
+    fall 2                 # 连续失败 2 次才认为宕机
+    weight -30             # 失败时优先级降低值(触发切换)
+}
+
+vrrp_instance VI_1 {
+    # 基础配置
+    state MASTER
+    interface {{ LB_IF_TMP.stdout }}  # 实际网卡名(自动探测)
+
+    # 基于 VIP 哈希生成唯一 router_id (1-254)，避免同网段多套 LB 冲突
+    virtual_router_id {{ (lbvip | regex_replace('\.', '') | int) % 254 + 1 }}
+
+    # 动态优先级：k8slb 组第一个节点 100，第二个 90，第三个 80...
+    # (学习 nginx-ha，替代原来所有节点写死 250 导致无法正常选主)
+    priority {{ 100 - (groups['k8slb'].index(inventory_hostname) * 10) }}
+
+    advert_int 1    # VRRP 心跳间隔，默认 1 秒
+    nopreempt       # 禁止备节点抢占(避免主恢复后频繁切换)
+
+    authentication {
+        auth_type PASS
+        # 基于 VIP 生成认证密码，避免多套 LB 冲突
+        auth_pass {{ 'LB_VIP_' ~ lbvip | regex_replace('\.', '_') }}
+    }
+
+    # 虚拟 IP: 掩码用 vip_prefix(默认 22,可在 inventory 覆盖)，绑到自动探测的网卡并打 label 便于识别
+    virtual_ipaddress {
+        {{ lbvip }}/{{ vip_prefix | default('22') }} dev {{ LB_IF_TMP.stdout }} label {{ LB_IF_TMP.stdout }}:0
+    }
+
+    # 健康检查绑定
+    track_script {
+        chk_haproxy
+    }
+
+    # 附加跟踪接口(网卡故障时触发切换)
+    track_interface {
+       {{ LB_IF_TMP.stdout }}
+    }
+}

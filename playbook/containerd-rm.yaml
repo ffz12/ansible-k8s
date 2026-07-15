@@ -1,0 +1,4 @@
+- hosts: containerd
+  become: yes
+  roles:
+    - remove/remove-containerd

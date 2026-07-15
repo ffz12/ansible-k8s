@@ -1,0 +1,16 @@
+[ req ]
+default_bits = 2048
+prompt = no
+default_md = sha256
+distinguished_name = dn
+req_extensions = v3_ext
+
+[ dn ]
+O = system:masters
+OU = kubernetes
+CN = kube-apiserver-etcd-client
+
+[ v3_ext ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth

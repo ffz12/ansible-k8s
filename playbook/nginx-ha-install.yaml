@@ -1,0 +1,11 @@
+- name: 部署 LB
+  hosts: "{{ lb_upstream_servers }}"
+  vars:
+    lb_upstream_servers: >-
+      {{
+        ((groups.k8s_master | default([])) + (groups.master_to_add | default([])))
+        | difference(groups.master_to_delete | default([]))
+        | unique
+      }}
+  roles:
+    - nginx-ha

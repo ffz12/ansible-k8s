@@ -1,0 +1,26 @@
+[ req ]
+default_bits = 3072
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[ req_distinguished_name ]
+C = CN
+ST = Beijing
+L = Beijing
+O = My Company
+OU = IT
+CN = {{ harbor_dns | default('harbor.local') }}
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+subjectAltName = @alt_names
+
+[ alt_names ]
+{% if harbor_dns %}
+DNS.1 = {{ harbor_dns }}
+{% endif %}
+{% if harbor_ip %}
+IP.1 = {{ harbor_ip }}
+{% endif %}

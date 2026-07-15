@@ -1,0 +1,6 @@
+# deploy-trust-harbor.yml
+- name: Trust Harbor CA on all build and worker nodes
+  hosts: cluster
+  become: yes
+  roles:
+    - trust-harbor-ca

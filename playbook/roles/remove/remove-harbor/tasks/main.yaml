@@ -1,0 +1,16 @@
+- name: 停止harbor
+  shell: cd {{ harbor_copy_path }}/harbor/ &&  docker-compose down
+  ignore_errors: true
+- name: 镜像删除
+  shell: |
+      docker rmi {{ item }}
+  ignore_errors: true
+  loop: "{{ harbor_images }}"
+- name: 删除拷贝harbor镜像包
+  file: path={{ harbor_copy_path }}/{{ item }} state=absent
+  loop: "{{ harbor_offline_images }}"
+- name: 删除harbor目录
+  file: path={{ harbor_copy_path }}/harbor/  state=absent
+- name: 删除数据存储目录
+  file: path={{ data_volume }}  state=absent
+
