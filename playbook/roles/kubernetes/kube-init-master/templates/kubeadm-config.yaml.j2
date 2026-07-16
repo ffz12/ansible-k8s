@@ -68,11 +68,13 @@ apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 cgroupDriver: systemd
 containerRuntimeEndpoint: "{{ kube_criSocket }}"
-cpuManagerPolicy: static
+cpuManagerPolicy: {{ kubelet_cpu_manager_policy }}
+{% if kubelet_cpu_manager_policy == 'static' and (kubelet_cpu_align_by_socket | default(false) | bool) %}
 cpuManagerPolicyOptions:
-  align-by-socket: "true"
+  align-by-socket: "true"          # 要求 sockets<=NUMA 节点数,否则 kubelet 起不来
 featureGates:
-  CPUManagerPolicyAlphaOptions: true      # 启用 CPU Manager 策略选项 (Alpha/Beta 特性)
+  CPUManagerPolicyAlphaOptions: true
+{% endif %}
 
 #驱逐策略
 evictionSoft:
@@ -83,7 +85,7 @@ evictionSoftGracePeriod:
   memory.available: 1m30s     # 给予 1 分半钟的宽限期
   nodefs.available: 1m30s
   nodefs.inodesFree: 1m30s
-  
+
 evictionHard:
   memory.available: 5%
   pid.available: 10%
@@ -91,14 +93,14 @@ evictionHard:
   nodefs.inodesFree: 5%
 
 kubeReserved:
-  cpu: "1"
-  memory: "2Gi"
+  cpu: "{{ kubelet_kube_reserved_cpu }}"
+  memory: "{{ kubelet_kube_reserved_mem }}"
 
 
 systemReserved:
-  cpu: 200m
-  memory: 250Mi
-maxPods: 4096
+  cpu: "{{ kubelet_system_reserved_cpu }}"
+  memory: "{{ kubelet_system_reserved_mem }}"
+maxPods: {{ kubelet_max_pods }}
 logging:
   flushFrequency: 5000000000 # 5s
   options:

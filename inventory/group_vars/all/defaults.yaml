@@ -177,6 +177,11 @@ kube_bin_dir: /usr/local/bin
 kube_config_dir: /etc/kubernetes
 kubelet_config_dir: /var/lib/kubelet
 kubelet_service_dir: /etc/systemd/system/kubelet.service.d
+# kubelet 资源预留(通用默认; AI 大节点可调大, 或在 env.yaml 覆盖)
+kubelet_kube_reserved_cpu: "200m"
+kubelet_kube_reserved_mem: "512Mi"
+kubelet_system_reserved_cpu: "200m"
+kubelet_system_reserved_mem: "256Mi"
 crictl_arch_map:
   x86_64: "crictl-v{{ crictl_version }}-linux-amd64.tar.gz"
   aarch64: "crictl-v{{ crictl_version }}-linux-arm64.tar.gz"
