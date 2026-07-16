@@ -152,7 +152,11 @@ cilium_chart_src: "{{ offline_binaries }}/cni/cilium/v{{ cilium_version }}/ciliu
 
 # ================= 在线下载 mirror(官网受限时换国内) =================
 k8s_bin_mirror: "https://dl.k8s.io/release"          # 国内可换 https://mirrors.aliyun.com/kubernetes-new/...
-crictl_bin_mirror: "https://mirrors.aliyun.com/kubernetes/pkgs"
+# containerd/runc/crictl 走 github, 国内用代理(ghfast.top 等,可换);离线不用管
+gh_proxy: "https://ghfast.top/https://github.com"
+containerd_bin_mirror: "{{ gh_proxy }}/containerd/containerd/releases/download"
+runc_bin_mirror: "{{ gh_proxy }}/opencontainers/runc/releases/download"
+crictl_bin_mirror: "{{ gh_proxy }}/kubernetes-sigs/cri-tools/releases/download"
 etcd_bin_mirror: "https://mirrors.huaweicloud.com/etcd"   # 华为云,国内稳
 
 # ================= 组件清单 =================
