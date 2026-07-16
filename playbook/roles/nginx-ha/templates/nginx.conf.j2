@@ -22,12 +22,12 @@ stream {
     upstream k8s-apiserver {
         least_conn;
         {% for host in lb_upstream_servers %}
-        server {{ hostvars[host].ansible_host | default(host) }}:6443 max_fails=3 fail_timeout=30s;
+        server {{ hostvars[host].ansible_host | default(host) }}:{{ apiserver_port }} max_fails=3 fail_timeout=30s;
         {% endfor %}
     }
 
     server {
-        listen 8443 so_keepalive=on;
+        listen {{ apiserver_lb_port }} so_keepalive=on;
         proxy_pass k8s-apiserver;
         proxy_timeout 1h;
         proxy_buffer_size 16k;

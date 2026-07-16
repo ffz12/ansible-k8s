@@ -11,7 +11,7 @@ bootstrapTokens:
 kind: InitConfiguration
 localAPIEndpoint:
   advertiseAddress: {{ ansible_host }}   # ← 始终设置为本机 IP
-  bindPort: 6443
+  bindPort: {{ apiserver_port }}
 nodeRegistration:
   criSocket: {{ kube_criSocket }}
   imagePullPolicy: IfNotPresent
@@ -30,7 +30,7 @@ timeouts:
 # === ClusterConfiguration ===
 apiVersion: kubeadm.k8s.io/v1beta4
 {% if lbvip is defined %}
-controlPlaneEndpoint: "{{ lbvip }}:8443"
+controlPlaneEndpoint: "{{ lbvip }}:{{ apiserver_lb_port }}"
 {% endif %}
 caCertificateValidityPeriod: 876000h
 certificateValidityPeriod: 876000h

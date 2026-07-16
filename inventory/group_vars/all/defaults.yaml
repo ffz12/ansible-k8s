@@ -1,9 +1,9 @@
-#docker安装相关
-#docker二进制文件
+# ============================================================================
+#  defaults.yaml —— 默认变量,一般不用动(要改的在 env.yaml)
+#  与 env.yaml 同属 group_vars/all,同优先级、自动合并;-e 仍可临时覆盖任意变量
+# ============================================================================
 
-harbor_instances:
-  - { dns: "harbor.local.clusters", ip: "172.171.0.206" }
-
+# ================= Docker =================
 docker_arch_map:
   x86_64:
     pkg: "amd-docker-29.4.2.tgz"
@@ -13,20 +13,13 @@ docker_arch_map:
     pkg: "arm-docker-29.4.2.tgz"
     buildx: "buildx-v0.32.1.linux-arm64"
     compose: "docker-compose-linux-aarch64"
-
-
-#cri-dockerd软件包
 cri_dockerd_x86: cri-dockerd-0.3.16.amd64.tgz
-cri_dockerd_aarch64: cri-dockerd-0.3.16.arm64.tgz 
-
-#containerd镜像加速
+cri_dockerd_aarch64: cri-dockerd-0.3.16.arm64.tgz
 docker_mirrors:
   - "https://docker.hlmirror.com"
   - "https://docker.1ms.run"
   - "https://docker.m.daocloud.io"
   - "https://proxy.1panel.live"
-  
-#docker服务脚本
 docker_services:
 - containerd.service
 - docker.service
@@ -40,43 +33,22 @@ docker_softs:
 - docker-init
 - docker-proxy
 - runc
-#docker数据目录
-data_root: /var/lib/docker
-
-#cri-dockerd启动脚本
 cri_dockerd_services:
 - cri-docker.socket
-#cri pause镜像
+
+# ================= Containerd =================
+#legacy pause(旧变量,保留兼容)
 pause: harbor.unisound.ai/unisound/pause:3.10
 pause_version: "3.10"
-#containerd pause镜像(sandbox)
-#harbor 上 pause 的项目路径(离线用)
-harbor_pause_repo: "{{ harbor_dns }}/kubernetes/kubernetes"
 #containerd sandbox(pause)镜像: 离线->自建 Harbor, 在线->国内 mirror(随 is_offline 自动切)
-#pause_image_version 由下方 k8s_compat 按 k8s_version 自动取,无需手改
+harbor_pause_repo: "{{ harbor_dns }}/kubernetes/kubernetes"
 sandbox_image: "{{ (harbor_pause_repo ~ '/pause:' ~ pause_image_version) if (is_offline | default(false) | bool) else (kube_image_mirror ~ '/pause:' ~ pause_image_version) }}"
-#containerd 安装版本(单一事实来源,改这里即可,二进制路径与config格式自动对齐)
-#可选: "2.2.3"(config version=3) 或 "1.7.32"(config version=2)
-containerd_version: "1.7.32"
-runc_version: "1.1.12"
 #config 格式版本自动推导: 1.x -> 2, 2.x+ -> 3 (勿手改)
 containerd_config_version: "{{ 3 if (containerd_version.split('.')[0] | int) >= 2 else 2 }}"
-#containerd 数据目录(等同 docker 的 data-root)。containerd 通过 config 的 root 直接读写该目录,无需 bind。
-#数据盘主挂载点 + containerd 数据子目录(mount_nvme.yaml 与 containerd_setup 共用这两个变量)
-container_base: "/var/lib/container"
+#containerd 数据目录(等同 docker data-root),随 container_base
 containerd_root: "{{ container_base }}/containerd"
-#harbor相关
-#harbor文件拷贝位置
-harbor_copy_path: /data/harbor-install
-#harbor密码
-harbor_admin_username: admin
-harbor_admin_password: Harbor12345
 
-#harbor数据库密码
-password: root123
-#harbor数据目录
-data_volume: /data/harbor-data
-#harbor打包镜像
+# ================= Harbor 镜像清单 =================
 harbor_offline_images:
 - harbor-exporter-v2.11.2.tar.gz
 - redis-photon-v2.11.2.tar.gz
@@ -90,7 +62,6 @@ harbor_offline_images:
 - harbor-portal-v2.11.2.tar.gz
 - harbor-db-v2.11.2.tar.gz
 - prepare-v2.11.2.tar.gz
-#harbor镜像
 harbor_images:
 - goharbor/redis-photon:v2.11.2
 - goharbor/harbor-registryctl:v2.11.2
@@ -104,8 +75,6 @@ harbor_images:
 - goharbor/prepare:v2.11.2
 - goharbor/harbor-exporter:v2.11.2
 - goharbor/trivy-adapter-photon:v2.11.2
-
-#harbor镜像aarch64
 harbor_images_aarch64:
 - harbor-core-v2.13.0-aarch64.tar.gz
 - harbor-db-v2.13.0-aarch64.tar.gz
@@ -119,115 +88,55 @@ harbor_images_aarch64:
 - redis-photon-v2.13.0-aarch64.tar.gz
 - registry-photon-v2.13.0-aarch64.tar.gz
 
-#nginx 配置路径
+# ================= Nginx / Keepalived 路径 =================
 nginx_dir: /data/nginx
-
 nginx_conf_dir: "{{ nginx_dir }}/conf"
-
-#nginx 日志路径
 nginx_logs_dir: "{{ nginx_dir }}/logs"
-
 nginx_sbin_dir: "{{ nginx_dir }}/sbin"
-
-
-#keepalvied配置路径
 keepalived_dir: /data/keepalived
-
 keepalived_conf_dir: "{{ keepalived_dir }}/etc"
-
 keepalived_sbin_dir: "{{ keepalived_dir }}/sbin"
 
-
-#debian系列 dns相关
-dns: 
-- 114.114.114.114
-- 223.5.5.5 
-domains: "local.clusters"
-
-
-
+# ================= 派生: 离线路径 / Harbor 地址 =================
 offline_binaries: "{{ playbook_dir | dirname }}/offline/binaries"
-
-#k8s安装相关
 harbor_dns: "{{ harbor_instances[0].dns }}"
 harbor_ip: "{{ harbor_instances[0].ip }}"
-#k8s安装registry(自建 harbor 前缀)
-registry: "{{ harbor_dns }}/unisound"
+registry: "{{ harbor_dns }}/unisound"           # 自建 harbor 前缀
 
-
-# ==========================================================================
-# ===============  Kubernetes 部署层 (多 CNI + 在线/离线)  ==================
-# ==========================================================================
-# 约定: is_offline 默认 false(在线). 离线部署整条链路传 -e is_offline=true
-#      (与底座 offline-init.yaml 一致)。二进制永远来自离线包,在线/离线只切镜像源。
-
-# ---- 版本 ----
-# 【A 组: 跟 k8s 版本走】—— 只改 k8s_version 这一处, coredns/pause/crictl 从 k8s_compat 自动取
-k8s_version: "1.34.3"           # 当前用 1.34.3; 另一支持版本 1.28.8。想切版本改这一处
+# ================= k8s 版本配套(A 组自动派生) =================
 k8s_minor: "{{ k8s_version.split('.')[0] ~ '.' ~ k8s_version.split('.')[1] }}"
-# k8s 小版本 -> 配套组件(兜底默认). 真正权威值在装 k8s 时由 `kubeadm config images list`
-# 自动查询并覆盖(见 roles/kubernetes/kube-init-master/tasks/sync-images-to-harbor.yml),
-# 所以一般不用手维护此表;此表仅用于 containerd sandbox 的 pause(k8s 装之前就要用)+ 离线兜底。
-# 只列在用的版本; 起新版本(如 1.35)时装的时候会自动查, 若 pause 变号再照下面格式加一行。
+# k8s 小版本 -> 配套组件(兜底默认). 权威值在装 k8s 时由 `kubeadm config images list` 自动查询覆盖
+# (见 roles/kubernetes/kube-init-master/tasks/sync-images-to-harbor.yml),一般不用手维护此表。
+# 仅用于 containerd sandbox 的 pause(k8s 装之前就要用)+ 离线兜底。只列在用版本,新版本自动查,pause 变号再加行。
 k8s_compat:
   "1.28": { coredns: "1.10.1", pause: "3.9",    crictl: "1.28.0" }
   "1.34": { coredns: "1.12.1", pause: "3.10.1", crictl: "1.34.0" }
-# 查不到的版本给稳妥默认(pause 近几年 3.10 系),不硬报错
 coredns_version:     "{{ (k8s_compat[k8s_minor] | default({})).coredns | default('1.12.1') }}"
 pause_image_version: "{{ (k8s_compat[k8s_minor] | default({})).pause   | default('3.10.1') }}"
 crictl_version:      "{{ (k8s_compat[k8s_minor] | default({})).crictl  | default(k8s_version) }}"
 
-# 【B 组: 独立组件】—— 跟 k8s 版本无关, 按各自的 k8s 兼容矩阵挑(在这里改)
-etcd_version: "3.6.8"           # 外置 etcd, 3.5.x/3.6.x 通用
-calico_version: "3.27.5"        # calico 有自己的 k8s 支持矩阵
-flannel_version: "0.26.7"
-cilium_version: "1.16.5"        # cilium 有自己的 k8s 支持矩阵
-helm_version: "3.16.4"          # cilium 用
-
-# ---- CNI 选择(kk 风格,三选一) ----
-# calico(manifest) / flannel(manifest) / cilium(helm)
-kube_network_plugin: calico
-# 是否额外部署 multus(多网卡元 CNI,叠加在主 CNI 之上)
-enable_multus: false
-multus_cni_version: "4.2.4"
-
-# ---- 网络 ----
-pod_subnet: 10.244.0.0/12
-service_subnet: 10.96.0.0/12
+# ================= CRI / 在线镜像仓 =================
 kube_criSocket: unix:///run/containerd/containerd.sock
 #kube_criSocket: unix:///var/run/cri-dockerd.sock
-
-# ---- 在线镜像源(国内默认,官网受限时用;可随意改) ----
-# kubeadm 组件(apiserver/controller/scheduler/proxy/pause/coredns)在线 mirror
-kube_image_mirror: "registry.aliyuncs.com/google_containers"
-# calico / flannel / cilium 在线镜像仓(海外原仓,访问受限可换国内 mirror)
+# CNI 在线镜像仓(海外原仓,访问受限可换国内 mirror)
 calico_registry_online: "docker.io/calico"
 flannel_registry_online: "docker.io/flannel"
 cilium_registry_online: "quay.io/cilium"
-# helm chart / cilium chart 在线源
 cilium_helm_repo: "https://helm.cilium.io"
 
-# ---- 镜像仓库(离线->自建 Harbor, 在线->上面的 mirror,由 is_offline 自动切) ----
+# ================= 派生: 镜像仓库(离线 Harbor / 在线 mirror) =================
 kube_image_repository: "{{ registry if (is_offline | default(false) | bool) else kube_image_mirror }}"
-
-# calico 三个组件镜像(离线走 harbor 扁平命名 calico-<comp>, 在线走官方 calico/<comp>)
 calico_images:
   cni:             "{{ (registry ~ '/calico-cni')             if (is_offline | default(false) | bool) else (calico_registry_online ~ '/cni') }}:v{{ calico_version }}"
   node:            "{{ (registry ~ '/calico-node')            if (is_offline | default(false) | bool) else (calico_registry_online ~ '/node') }}:v{{ calico_version }}"
   kube_controllers: "{{ (registry ~ '/calico-kube-controllers') if (is_offline | default(false) | bool) else (calico_registry_online ~ '/kube-controllers') }}:v{{ calico_version }}"
-
-# flannel 镜像
 flannel_images:
   flannel:        "{{ (registry ~ '/flannel')        if (is_offline | default(false) | bool) else (flannel_registry_online ~ '/flannel') }}:v{{ flannel_version }}"
   flannel_cni:    "{{ (registry ~ '/flannel-cni-plugin') if (is_offline | default(false) | bool) else (flannel_registry_online ~ '/flannel-cni-plugin') }}:v1.6.2-flannel1"
-
-# cilium 镜像仓(helm values 用;离线->harbor, 在线->quay)
 cilium_image_repo: "{{ registry if (is_offline | default(false) | bool) else cilium_registry_online }}"
 
-# ---- 离线包路径(多版本: kubernetes/v{{k8s_version}}/...) ----
-# 二进制
+# ================= 离线包路径(多版本 v{{k8s_version}}) =================
 k8s_bin_src: "{{ offline_binaries }}/kubernetes/v{{ k8s_version }}/bin"
-# 组件镜像(离线 load->推 harbor 用)
 src_k8s_images_dir: "{{ offline_binaries }}/kubernetes/v{{ k8s_version }}/images"
 k8s_images_dir: "/opt/kubernetes"
 src_calico_images_dir: "{{ offline_binaries }}/cni/calico/v{{ calico_version }}/images"
@@ -238,17 +147,15 @@ src_cilium_images_dir: "{{ offline_binaries }}/cni/cilium/v{{ cilium_version }}/
 cilium_images_dir: "/opt/cilium"
 src_multus_cni_images_dir: "{{ offline_binaries }}/cni/multus/v{{ multus_cni_version }}/images"
 multus_cni_images_dir: "/opt/multus_cni"
-# helm 二进制 + cilium chart(离线)
 helm_bin_src: "{{ offline_binaries }}/helm/v{{ helm_version }}"
 cilium_chart_src: "{{ offline_binaries }}/cni/cilium/v{{ cilium_version }}/cilium-{{ cilium_version }}.tgz"
 
-# 在线下载 mirror(官网受限时用国内)
-k8s_bin_mirror: "https://dl.k8s.io/release"          # 官方;国内可换 https://mirrors.aliyun.com/kubernetes-new/...
+# ================= 在线下载 mirror(官网受限时换国内) =================
+k8s_bin_mirror: "https://dl.k8s.io/release"          # 国内可换 https://mirrors.aliyun.com/kubernetes-new/...
 crictl_bin_mirror: "https://mirrors.aliyun.com/kubernetes/pkgs"
-# etcd 二进制在线下载源(默认华为云镜像,国内稳; github 原站国内常超时)
-etcd_bin_mirror: "https://mirrors.huaweicloud.com/etcd"
+etcd_bin_mirror: "https://mirrors.huaweicloud.com/etcd"   # 华为云,国内稳
 
-# ---- 组件清单 ----
+# ================= 组件清单 =================
 k8s_components:
 - kube-apiserver
 - kube-controller-manager
@@ -261,18 +168,16 @@ calico_components:
 multus_cni_components:
 - multus-cni
 
-# ---- 路径 ----
+# ================= k8s 路径 =================
 kube_bin_dir: /usr/local/bin
 kube_config_dir: /etc/kubernetes
 kubelet_config_dir: /var/lib/kubelet
 kubelet_service_dir: /etc/systemd/system/kubelet.service.d
-
-# ---- crictl 离线包名 ----
 crictl_arch_map:
   x86_64: "crictl-v{{ crictl_version }}-linux-amd64.tar.gz"
   aarch64: "crictl-v{{ crictl_version }}-linux-arm64.tar.gz"
 
-# ==========  etcd(外置二进制集群)  ==========
+# ================= etcd(外置二进制集群) =================
 etcd_install_dir: "/opt/etcd"
 etcd_bin_dir: "{{ etcd_install_dir }}/bin"
 etcd_data_dir: "/var/lib/etcd"
@@ -300,13 +205,10 @@ etcd_config:
 etcd_enable_metrics: true
 etcd_metrics_listen_urls: "http://{{ ansible_host }}:2381"
 
-# ==========  动态成员列表  ==========
+# ================= 动态成员列表 =================
 final_master_list: >-
   {{
     ((groups.k8s_master | default([])) + (groups.master_to_add | default([])))
     | difference(groups.master_to_delete | default([]))
     | unique
   }}
-
-
-
