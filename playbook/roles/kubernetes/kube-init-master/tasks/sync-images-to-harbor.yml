@@ -1,4 +1,20 @@
 ---
+# 自动向 kubeadm 查询本 k8s 版本的权威配套镜像版本(免手维护 k8s_compat)
+- name: "[Sync Images] 查询 kubeadm 本版本配套镜像清单"
+  command: "kubeadm config images list --kubernetes-version v{{ k8s_version }}"
+  register: kubeadm_img_list
+  changed_when: false
+
+- name: "[Sync Images] 用 kubeadm 权威值覆盖 coredns/pause 版本"
+  set_fact:
+    coredns_version: "{{ (kubeadm_img_list.stdout_lines | select('search', 'coredns') | list | first).split(':')[-1] | regex_replace('^v', '') }}"
+    pause_image_version: "{{ (kubeadm_img_list.stdout_lines | select('search', '/pause:') | list | first).split(':')[-1] }}"
+  when: kubeadm_img_list.stdout is search('coredns')
+
+- name: "[Sync Images] 确认解析到的版本"
+  debug:
+    msg: "coredns=v{{ coredns_version }}  pause={{ pause_image_version }}  (kubeadm 权威值)"
+
 - name: "[Sync Images] 确保 Harbor 项目存在"
   uri:
     url: "https://{{ harbor_dns }}/api/v2.0/projects"

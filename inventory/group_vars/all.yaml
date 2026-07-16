@@ -165,8 +165,9 @@ registry: "{{ harbor_dns }}/unisound"
 # 【A 组: 跟 k8s 版本走】—— 只改 k8s_version 这一处, coredns/pause/crictl 从 k8s_compat 自动取
 k8s_version: "1.32.10"          # 想切版本改这一处;离线包目录需存在对应 v{{version}}
 k8s_minor: "{{ k8s_version.split('.')[0] ~ '.' ~ k8s_version.split('.')[1] }}"
-# k8s 小版本 -> 配套组件. 值来自 `kubeadm config images list --kubernetes-version vX.Y.Z`
-# 用新版本前, 先跑该命令核对/在此加一行(缺对应行会直接报错, 故意不静默兜底)
+# k8s 小版本 -> 配套组件(兜底默认). 真正权威值在装 k8s 时由 `kubeadm config images list`
+# 自动查询并覆盖(见 roles/kubernetes/kube-init-master/tasks/sync-images-to-harbor.yml),
+# 所以一般不用手维护此表;此表仅用于 containerd sandbox 的 pause(k8s 装之前就要用)+ 离线兜底。
 k8s_compat:
   "1.28": { coredns: "1.10.1", pause: "3.9",    crictl: "1.28.0" }
   "1.29": { coredns: "1.11.1", pause: "3.9",    crictl: "1.29.0" }
@@ -175,9 +176,10 @@ k8s_compat:
   "1.32": { coredns: "1.11.3", pause: "3.10",   crictl: "1.32.0" }
   "1.33": { coredns: "1.12.0", pause: "3.10",   crictl: "1.33.0" }
   "1.34": { coredns: "1.12.1", pause: "3.10.1", crictl: "1.34.0" }
-coredns_version:     "{{ k8s_compat[k8s_minor].coredns }}"
-pause_image_version: "{{ k8s_compat[k8s_minor].pause }}"
-crictl_version:      "{{ k8s_compat[k8s_minor].crictl }}"
+# 查不到的版本给稳妥默认(pause 近几年都是 3.10),不硬报错
+coredns_version:     "{{ (k8s_compat[k8s_minor] | default({})).coredns | default('1.11.3') }}"
+pause_image_version: "{{ (k8s_compat[k8s_minor] | default({})).pause   | default('3.10') }}"
+crictl_version:      "{{ (k8s_compat[k8s_minor] | default({})).crictl  | default(k8s_version) }}"
 
 # 【B 组: 独立组件】—— 跟 k8s 版本无关, 按各自的 k8s 兼容矩阵挑(在这里改)
 etcd_version: "3.6.8"           # 外置 etcd, 3.5.x/3.6.x 通用
