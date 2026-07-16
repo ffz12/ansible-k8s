@@ -50,11 +50,10 @@ cri_dockerd_services:
 pause: harbor.unisound.ai/unisound/pause:3.10
 pause_version: "3.10"
 #containerd pause镜像(sandbox)
-#pause 版本与 k8s 版本绑定(查: kubeadm config images list | grep pause)
-pause_image_version: "3.10.1"
 #harbor 上 pause 的项目路径(离线用)
 harbor_pause_repo: "{{ harbor_dns }}/kubernetes/kubernetes"
 #containerd sandbox(pause)镜像: 离线->自建 Harbor, 在线->国内 mirror(随 is_offline 自动切)
+#pause_image_version 由下方 k8s_compat 按 k8s_version 自动取,无需手改
 sandbox_image: "{{ (harbor_pause_repo ~ '/pause:' ~ pause_image_version) if (is_offline | default(false) | bool) else (kube_image_mirror ~ '/pause:' ~ pause_image_version) }}"
 #containerd 安装版本(单一事实来源,改这里即可,二进制路径与config格式自动对齐)
 #可选: "2.2.3"(config version=3) 或 "1.7.32"(config version=2)
@@ -162,15 +161,30 @@ registry: "{{ harbor_dns }}/unisound"
 # 约定: is_offline 默认 false(在线). 离线部署整条链路传 -e is_offline=true
 #      (与底座 offline-init.yaml 一致)。二进制永远来自离线包,在线/离线只切镜像源。
 
-# ---- 版本(单一事实来源,改这里即可) ----
+# ---- 版本 ----
+# 【A 组: 跟 k8s 版本走】—— 只改 k8s_version 这一处, coredns/pause/crictl 从 k8s_compat 自动取
 k8s_version: "1.32.10"          # 想切版本改这一处;离线包目录需存在对应 v{{version}}
-coredns_version: "1.11.3"
-crictl_version: "1.32.0"
-etcd_version: "3.6.8"
-calico_version: "3.27.5"
+k8s_minor: "{{ k8s_version.split('.')[0] ~ '.' ~ k8s_version.split('.')[1] }}"
+# k8s 小版本 -> 配套组件. 值来自 `kubeadm config images list --kubernetes-version vX.Y.Z`
+# 用新版本前, 先跑该命令核对/在此加一行(缺对应行会直接报错, 故意不静默兜底)
+k8s_compat:
+  "1.28": { coredns: "1.10.1", pause: "3.9",    crictl: "1.28.0" }
+  "1.29": { coredns: "1.11.1", pause: "3.9",    crictl: "1.29.0" }
+  "1.30": { coredns: "1.11.3", pause: "3.9",    crictl: "1.30.0" }
+  "1.31": { coredns: "1.11.3", pause: "3.10",   crictl: "1.31.0" }
+  "1.32": { coredns: "1.11.3", pause: "3.10",   crictl: "1.32.0" }
+  "1.33": { coredns: "1.12.0", pause: "3.10",   crictl: "1.33.0" }
+  "1.34": { coredns: "1.12.1", pause: "3.10.1", crictl: "1.34.0" }
+coredns_version:     "{{ k8s_compat[k8s_minor].coredns }}"
+pause_image_version: "{{ k8s_compat[k8s_minor].pause }}"
+crictl_version:      "{{ k8s_compat[k8s_minor].crictl }}"
+
+# 【B 组: 独立组件】—— 跟 k8s 版本无关, 按各自的 k8s 兼容矩阵挑(在这里改)
+etcd_version: "3.6.8"           # 外置 etcd, 3.5.x/3.6.x 通用
+calico_version: "3.27.5"        # calico 有自己的 k8s 支持矩阵
 flannel_version: "0.26.7"
-cilium_version: "1.16.5"
-helm_version: "3.16.4"
+cilium_version: "1.16.5"        # cilium 有自己的 k8s 支持矩阵
+helm_version: "3.16.4"          # cilium 用
 
 # ---- CNI 选择(kk 风格,三选一) ----
 # calico(manifest) / flannel(manifest) / cilium(helm)
