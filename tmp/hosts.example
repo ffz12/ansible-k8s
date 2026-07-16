@@ -54,7 +54,7 @@
 [all:vars]
 # 时钟同步 NTP 源
 #chrony_ip=10.5.0.6
-# k8slb 虚拟 IP(VIP)
+# k8slb 虚拟 IP(VIP); 单 master 可不设(不配 LB), 多 master 高可用才需要
 #lbvip=10.2.1.251
 # VIP 掩码(默认 22),按实际网段改
 #vip_prefix=22

@@ -10,8 +10,21 @@
   run_once: true
   delegate_to: localhost
 
+# 预检: 多 master 高可用必须有稳定入口(lbvip), 否则 kubeadm 无法 join 额外 master
+- name: 预检 —— 多 master 必须先配 LB(lbvip)
+  assert:
+    that:
+      - (final_master_list | length) < 2 or (lbvip is defined)
+    fail_msg: >-
+      检测到 {{ final_master_list | length }} 个 master 但未设置 lbvip。
+      多 master 高可用需要负载均衡 VIP: 请在 inventory [all:vars] 配 lbvip
+      并先跑 haproxy-ha/nginx-ha; 或改为单 master 部署(只放 1 台 [k8s_master])。
+    success_msg: "master/LB 预检通过 (master={{ final_master_list | length }}, lbvip={{ lbvip | default('未设置(单 master)') }})"
+  run_once: true
+  delegate_to: localhost
+
 # 按标签执行阶段
-  
+
 - name: 同步 k8s 核心镜像到 Harbor(仅离线)
   include_tasks: sync-images-to-harbor.yml
   when:
