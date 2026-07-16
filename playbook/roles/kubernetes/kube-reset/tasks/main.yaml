@@ -1,0 +1,50 @@
+---
+# 重置单个 k8s 节点(kubeadm reset + 清理),由 k8s-reset.yaml 对全体节点调用
+- name: "[Reset] kubeadm reset"
+  command: "kubeadm reset -f --cri-socket {{ kube_criSocket }}"
+  register: _reset
+  failed_when: false
+  changed_when: "'reset' in _reset.stdout | default('')"
+
+- name: "[Reset] 停止并禁用 kubelet"
+  systemd:
+    name: kubelet
+    state: stopped
+    enabled: no
+  failed_when: false
+
+- name: "[Reset] 清理残留目录/配置"
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/kubernetes
+    - /var/lib/kubelet
+    - /etc/cni/net.d
+    - /var/lib/cni
+    - /run/flannel
+    - /opt/cni/bin/flannel
+    - "{{ ansible_env.HOME }}/.kube"
+    - "{{ kube_bin_dir }}/k"
+    - /etc/crictl.yaml
+
+- name: "[Reset] 清理 CNI 虚拟网卡(best-effort)"
+  shell: |
+    for i in cni0 flannel.1 vxlan.calico tunl0 kube-ipvs0 cilium_host cilium_net cilium_vxlan; do
+      ip link delete "$i" 2>/dev/null || true
+    done
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+
+- name: "[Reset] 清理 iptables / ipvs 规则(best-effort)"
+  shell: |
+    iptables -F 2>/dev/null || true
+    iptables -t nat -F 2>/dev/null || true
+    iptables -t mangle -F 2>/dev/null || true
+    ipvsadm --clear 2>/dev/null || true
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
