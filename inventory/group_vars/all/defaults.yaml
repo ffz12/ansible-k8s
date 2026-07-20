@@ -15,11 +15,6 @@ docker_arch_map:
     compose: "docker-compose-linux-aarch64"
 cri_dockerd_x86: cri-dockerd-0.3.16.amd64.tgz
 cri_dockerd_aarch64: cri-dockerd-0.3.16.arm64.tgz
-docker_mirrors:
-  - "https://docker.hlmirror.com"
-  - "https://docker.1ms.run"
-  - "https://docker.m.daocloud.io"
-  - "https://proxy.1panel.live"
 docker_services:
 - containerd.service
 - docker.service
@@ -88,12 +83,10 @@ harbor_images_aarch64:
 - redis-photon-v2.13.0-aarch64.tar.gz
 - registry-photon-v2.13.0-aarch64.tar.gz
 
-# ================= Nginx / Keepalived 路径 =================
-nginx_dir: /data/nginx
+# ================= Nginx / Keepalived 派生路径(nginx_dir/keepalived_dir 在 env.yaml) =================
 nginx_conf_dir: "{{ nginx_dir }}/conf"
 nginx_logs_dir: "{{ nginx_dir }}/logs"
 nginx_sbin_dir: "{{ nginx_dir }}/sbin"
-keepalived_dir: /data/keepalived
 keepalived_conf_dir: "{{ keepalived_dir }}/etc"
 keepalived_sbin_dir: "{{ keepalived_dir }}/sbin"
 
@@ -115,14 +108,8 @@ coredns_version:     "{{ (k8s_compat[k8s_minor] | default({})).coredns | default
 pause_image_version: "{{ (k8s_compat[k8s_minor] | default({})).pause   | default('3.10.1') }}"
 crictl_version:      "{{ (k8s_compat[k8s_minor] | default({})).crictl  | default(k8s_version) }}"
 
-# ================= CRI / 在线镜像仓 =================
-kube_criSocket: unix:///run/containerd/containerd.sock
-#kube_criSocket: unix:///var/run/cri-dockerd.sock
-# CNI 在线镜像仓(海外原仓,访问受限可换国内 mirror)
-calico_registry_online: "docker.io/calico"
-flannel_registry_online: "docker.io/flannel"
-cilium_registry_online: "quay.io/cilium"
-cilium_helm_repo: "https://helm.cilium.io"
+# ================= CRI / 镜像仓(在线源在 env.yaml) =================
+# kube_criSocket / calico_registry_online 等在线源已移到 env.yaml
 
 # ================= 派生: 镜像仓库(离线 Harbor / 在线 mirror) =================
 kube_image_repository: "{{ registry if (is_offline | default(false) | bool) else kube_image_mirror }}"
@@ -150,14 +137,8 @@ multus_cni_images_dir: "/opt/multus_cni"
 helm_bin_src: "{{ offline_binaries }}/helm/v{{ helm_version }}"
 cilium_chart_src: "{{ offline_binaries }}/cni/cilium/v{{ cilium_version }}/cilium-{{ cilium_version }}.tgz"
 
-# ================= 在线下载 mirror(官网受限时换国内) =================
-k8s_bin_mirror: "https://dl.k8s.io/release"          # 国内可换 https://mirrors.aliyun.com/kubernetes-new/...
-# containerd/runc/crictl 走 github, 国内用代理(ghfast.top 等,可换);离线不用管
-gh_proxy: "https://ghfast.top/https://github.com"
-containerd_bin_mirror: "{{ gh_proxy }}/containerd/containerd/releases/download"
-runc_bin_mirror: "{{ gh_proxy }}/opencontainers/runc/releases/download"
-crictl_bin_mirror: "{{ gh_proxy }}/kubernetes-sigs/cri-tools/releases/download"
-etcd_bin_mirror: "https://mirrors.huaweicloud.com/etcd"   # 华为云,国内稳
+# ================= 在线下载源已移到 env.yaml =================
+# k8s_bin_mirror / etcd_bin_mirror / gh_proxy / containerd_bin_mirror 等见 env.yaml
 
 # ================= 组件清单 =================
 k8s_components:
@@ -177,22 +158,16 @@ kube_bin_dir: /usr/local/bin
 kube_config_dir: /etc/kubernetes
 kubelet_config_dir: /var/lib/kubelet
 kubelet_service_dir: /etc/systemd/system/kubelet.service.d
-# kubelet 资源预留(通用默认; AI 大节点可调大, 或在 env.yaml 覆盖)
-kubelet_kube_reserved_cpu: "200m"
-kubelet_kube_reserved_mem: "512Mi"
-kubelet_system_reserved_cpu: "200m"
-kubelet_system_reserved_mem: "256Mi"
+# kubelet 资源预留已移到 env.yaml(kubelet_kube_reserved_* / kubelet_system_reserved_*)
 crictl_arch_map:
   x86_64: "crictl-v{{ crictl_version }}-linux-amd64.tar.gz"
   aarch64: "crictl-v{{ crictl_version }}-linux-arm64.tar.gz"
 
 # ================= etcd(外置二进制集群) =================
-etcd_install_dir: "/opt/etcd"
+# etcd_install_dir/data_dir/cert_expiry/cluster_token/config 已移到 env.yaml
 etcd_bin_dir: "{{ etcd_install_dir }}/bin"
-etcd_data_dir: "/var/lib/etcd"
 etcd_conf_dir: "/etc/etcd"
 etcd_cert_dir: "{{ etcd_conf_dir }}/ssl"
-etcd_cert_expiry: "36500"
 etcd_user: "etcd"
 etcd_group: "etcd"
 etcd_cluster_members: >-
@@ -203,14 +178,6 @@ etcd_cluster_members: >-
   }}
 etcd_peer_port: 2380
 etcd_client_port: 2379
-etcd_cluster_token: "prod-etcd-cluster-01"
-etcd_config:
-  quota_backend_bytes: 8589934592
-  auto_compaction_retention: "1h"
-  auto_compaction_mode: periodic
-  heartbeat_interval: 500
-  election_timeout: 5000
-  log_level: info
 etcd_enable_metrics: true
 etcd_metrics_listen_urls: "http://{{ ansible_host }}:2381"
 
