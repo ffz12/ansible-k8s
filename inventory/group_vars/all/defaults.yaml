@@ -164,7 +164,6 @@ crictl_arch_map:
   aarch64: "crictl-v{{ crictl_version }}-linux-arm64.tar.gz"
 
 # ================= etcd(外置二进制集群) =================
-# etcd_install_dir/data_dir/cert_expiry/cluster_token/config 已移到 env.yaml
 etcd_bin_dir: "{{ etcd_install_dir }}/bin"
 etcd_conf_dir: "/etc/etcd"
 etcd_cert_dir: "{{ etcd_conf_dir }}/ssl"
