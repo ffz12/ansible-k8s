@@ -19,7 +19,7 @@
 - name: 重置所有 k8s 节点(master + worker)
   hosts: k8s_master:k8s_node
   become: yes
-  gather_facts: no
+  gather_facts: yes
   roles:
     - kubernetes/kube-reset
 
