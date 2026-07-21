@@ -10,6 +10,7 @@ echo "开始初始化项目配置文件..."
 # 定义需要初始化的文件对 (源文件:目标文件)
 files=(
     "./tmp/hosts.example:inventory/hosts"
+    "./tmp/env.yaml.example:inventory/group_vars/all/env.yaml"
 )
 
 for pair in "${files[@]}"; do

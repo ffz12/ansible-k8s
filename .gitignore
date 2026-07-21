@@ -12,3 +12,6 @@ offline/binaries/harbor/x86/harbor.v2.11.2.tar.gz
 
 # k8s: 生成的 etcd/CA 私钥证书,绝不入库
 playbook/roles/certs/files/etcd-*/
+
+# env.yaml 是每套环境的实际配置(由 init.sh 从 tmp/env.yaml.example 生成),不入库
+inventory/group_vars/all/env.yaml
