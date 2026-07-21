@@ -1,51 +1,55 @@
 # inventory 主机清单模板 —— 复制为 inventory/hosts 并按实际填写(去掉行首 #)
+# 约定: ansible_host 及自定义变量【只在 [cluster] 写一次】, 其余组只列主机名(同名=同一台)
 
 [cluster]
-# 所有节点; 可带自定义变量 ipmi_ip / storage_ip
-#a800-node30 ansible_host=10.42.1.30
-#cpu06 ansible_host=10.2.0.16 ipmi_ip=10.0.0.160 storage_ip=10.20.4.31
-
-[docker_cpu]
-# 装 docker 的 CPU 节点
-#cpu01
-
-[docker_gpu]
-# 装 docker 的 GPU 节点
-#a800-node30
-
-[cri_docker_nodes]
-# cri-dockerd 已弃用,留空
-
-[containerd]
-# 用 containerd 的节点; accelerator_type 行内设(nvidia/dcu/npu; 不指定=默认 runc)
-#a800-node30 accelerator_type=nvidia
-
-[harbor]
-# Harbor 节点
-#10.2.0.15
-
-[k8slb]
-# haproxy+keepalived LB 节点(常与 master 共机); 用主机别名(与其他组一致)
-# VIP 网卡自动按 ansible_host 探测,无需 host_ip(如需强制指定可加 host_ip=...)
+# 所有节点; ansible_host 只在这里定义; 可带 ipmi_ip / storage_ip 等自定义变量
 #cpu217 ansible_host=172.171.0.217
 #cpu218 ansible_host=172.171.0.218
 #cpu219 ansible_host=172.171.0.219
+#node001 ansible_host=172.171.0.11
+
+[containerd]
+# 用 containerd 的节点(只列主机名); GPU 节点加 accelerator_type=nvidia/dcu/npu, 纯 CPU 不写
+#cpu217
+#cpu218
+#cpu219
+#node001
 
 [k8s_master]
-# k8s master 节点(控制平面; nginx-ha keepalived priority 也会用到)
-#a800-node30 ansible_host=10.42.1.30
+# 控制平面(建议奇数台); 多 master 需配 lbvip + 跑 LB(见 [k8slb])
+#cpu217
+#cpu218
+#cpu219
 
 [k8s_node]
-# k8s worker 节点
-#node001 ansible_host=10.1.0.1
+# worker 节点
+#node001
 
 [etcd]
-# 外置 etcd 集群节点(建议 3/5 台奇数); 证书按 ansible_host 签发
-#cpu01 ansible_host=10.2.0.11
-#cpu02 ansible_host=10.2.0.12
-#cpu03 ansible_host=10.2.0.13
+# 外置 etcd(建议 3/5 台奇数; 可与 master 共机)
+#cpu217
+#cpu218
+#cpu219
 
-# ---- 扩缩容用的临时组(平时留空; 加/删节点时才填) ----
+[k8slb]
+# haproxy+keepalived LB(多 master 才需要; 常与 master 共机)
+# 只列主机名; VIP 网卡自动按 ansible_host 探测, 无需 host_ip
+#cpu217
+#cpu218
+#cpu219
+
+[harbor]
+# Harbor 节点(在线从公共 mirror 拉镜像时可不部署)
+#cpu217
+
+[docker_cpu]
+# 装 docker 的 CPU 节点(Harbor 节点通常需要)
+[docker_gpu]
+# 装 docker 的 GPU 节点
+[cri_docker_nodes]
+# cri-dockerd 已弃用,留空
+
+# ---- 扩缩容临时组(平时留空; 加/删节点时才填,只列主机名) ----
 [master_to_add]
 [master_to_delete]
 [node_to_delete]
@@ -56,9 +60,9 @@
 # 时钟同步 NTP 源
 #chrony_ip=10.5.0.6
 # k8slb 虚拟 IP(VIP); 单 master 可不设(不配 LB), 多 master 高可用才需要
-#lbvip=10.2.1.251
-# VIP 掩码(默认 22),按实际网段改
-#vip_prefix=22
+#lbvip=172.171.0.250
+# VIP 掩码,按实际网段改(如 24)
+#vip_prefix=24
 # CNI 插件: calico(默认) / flannel / cilium
 #kube_network_plugin=calico
 # 离线部署置 true(在线留默认 false 或不设)
