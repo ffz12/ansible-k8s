@@ -20,10 +20,15 @@
   loop:
     - /etc/kubernetes
     - /var/lib/kubelet
-    - /etc/cni/net.d
+    - /etc/cni
+    - /opt/cni
     - /var/lib/cni
     - /run/flannel
-    - /opt/cni/bin/flannel
+    - /run/calico
+    - /var/run/calico
+    - /var/log/pods
+    - /var/log/containers
+    - /var/log/kubernetes
     - "{{ ansible_env.HOME }}/.kube"
     - /etc/crictl.yaml
     # systemd 单元(kube-common 部署的)
@@ -42,6 +47,12 @@
     - k          # kubectl 别名
     - helm       # cilium 用(装过才有)
 
+- name: "[Reset] 兜底删除 kube* 二进制(glob, /usr/bin 与 /usr/local/bin)"
+  shell: "rm -f /usr/bin/kube* /usr/local/bin/kube* 2>/dev/null || true"
+  args:
+    executable: /bin/bash
+  changed_when: false
+
 - name: "[Reset] systemd daemon-reload"
   systemd:
     daemon_reload: yes
@@ -56,12 +67,13 @@
   changed_when: false
   failed_when: false
 
-- name: "[Reset] 清理 iptables / ipvs 规则(best-effort)"
+- name: "[Reset] 清理 iptables / ipvs / nftables 规则(best-effort)"
   shell: |
     iptables -F 2>/dev/null || true
     iptables -t nat -F 2>/dev/null || true
     iptables -t mangle -F 2>/dev/null || true
     ipvsadm --clear 2>/dev/null || true
+    nft flush ruleset 2>/dev/null || true
   args:
     executable: /bin/bash
   changed_when: false
