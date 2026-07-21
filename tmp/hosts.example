@@ -25,10 +25,11 @@
 #10.2.0.15
 
 [k8slb]
-# haproxy+keepalived LB 节点; host_ip 行内设(用于探测 VIP 网卡)
-#10.2.0.11 host_ip=10.2.0.11
-#10.2.0.12 host_ip=10.2.0.12
-#10.2.0.13 host_ip=10.2.0.13
+# haproxy+keepalived LB 节点(常与 master 共机); 用主机别名(与其他组一致)
+# VIP 网卡自动按 ansible_host 探测,无需 host_ip(如需强制指定可加 host_ip=...)
+#cpu217 ansible_host=172.171.0.217
+#cpu218 ansible_host=172.171.0.218
+#cpu219 ansible_host=172.171.0.219
 
 [k8s_master]
 # k8s master 节点(控制平面; nginx-ha keepalived priority 也会用到)

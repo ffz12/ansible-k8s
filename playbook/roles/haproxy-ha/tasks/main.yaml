@@ -18,8 +18,8 @@
     allow_unauthenticated: true
   when: ansible_distribution in ['Debian', 'Ubuntu']
 
-- name: 自动设置keepalived变量
-  shell: "ip a|grep '{{ host_ip }}/'|awk '{print $NF}'"
+- name: 自动探测 VIP 所在网卡(用 ansible_host,兼容主机名/裸IP;host_ip 若设则优先)
+  shell: "ip a | grep '{{ host_ip | default(ansible_host | default(inventory_hostname)) }}/' | awk '{print $NF}'"
   register: LB_IF_TMP
   changed_when: false
 

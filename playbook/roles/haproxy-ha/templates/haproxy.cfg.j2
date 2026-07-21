@@ -37,5 +37,5 @@ backend k8s-api-backend
     # fall 3       - 连续3次失败标记为不可用，默认3
     # rise 2       - 连续2次成功恢复为可用，默认2
 {% for ip in groups['k8slb'] %}
-    server  {{ hostvars[ip]['inventory_hostname'] }}  {{ ip }}:{{ apiserver_port }}     check inter 5s rise 2 fall 3
+    server  {{ hostvars[ip]['inventory_hostname'] }}  {{ hostvars[ip].ansible_host | default(ip) }}:{{ apiserver_port }}     check inter 5s rise 2 fall 3
 {% endfor %}
