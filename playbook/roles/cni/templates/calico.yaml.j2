@@ -4907,7 +4907,7 @@ spec:
               value: "autodetect"
             # Enable IPIP
             - name: CALICO_IPV4POOL_IPIP
-              value: "{{ 'Always' if calico_encapsulation | default('none') == 'ipip' else 'Never' }}"
+              value: "{{ 'Always' if calico_encapsulation | default('none') == 'ipip' else ('CrossSubnet' if calico_encapsulation | default('none') == 'crosssubnet' else 'Never') }}"
             # Enable or Disable VXLAN on the default IP pool.
             - name: CALICO_IPV4POOL_VXLAN
               value: "{{ 'Always' if calico_encapsulation | default('none') == 'vxlan' else 'Never' }}"
