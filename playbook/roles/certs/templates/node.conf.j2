@@ -1,4 +1,4 @@
-{%- set hosts = [target_node_hostname, target_node_ip] -%}
+{%- set hosts = [target_node_hostname, target_node_ip] + (extra_sans | default([])) -%}
 {%- if enable_localhost_access | default(true) %}
 {%-   set hosts = hosts + ["localhost", "127.0.0.1"] -%}
 {%- endif %}
