@@ -24,8 +24,6 @@
     - /opt/cni
     - /var/lib/cni
     - /run/flannel
-    - /run/calico
-    - /var/run/calico
     - /var/log/pods
     - /var/log/containers
     - /var/log/kubernetes
@@ -34,6 +32,13 @@
     # systemd 单元(kube-common 部署的)
     - /etc/systemd/system/kubelet.service
     - "{{ kubelet_service_dir }}"
+
+- name: "[Reset] 清理 calico 运行时目录(best-effort, 可能有 BPF pinned 文件)"
+  shell: "rm -rf /run/calico /var/run/calico 2>/dev/null || true"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
 
 - name: "[Reset] 删除 k8s 二进制"
   file:
