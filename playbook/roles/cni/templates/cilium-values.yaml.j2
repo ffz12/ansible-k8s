@@ -4,7 +4,17 @@ k8sServiceHost: "{{ lbvip | default(hostvars[groups['k8s_master'][0]].ansible_ho
 k8sServicePort: {{ 8443 if lbvip is defined else 6443 }}
 
 # 保留 kube-proxy(稳妥默认); 若要 eBPF 替换 kube-proxy 改 true 并确认内核>=5.10
-kubeProxyReplacement: false
+kubeProxyReplacement: {{ cilium_kube_proxy_replacement | default(false) | bool | lower }}
+
+# 网络模式: tunnel(overlay,默认) / native(直接路由,需同二层或底层可路由 pod CIDR)
+routingMode: {{ cilium_routing_mode | default('tunnel') }}
+{% if (cilium_routing_mode | default('tunnel')) == 'tunnel' %}
+tunnelProtocol: {{ cilium_tunnel_protocol | default('vxlan') }}
+{% else %}
+# native 直接路由: 同二层用 autoDirectNodeRoutes 自动加路由
+autoDirectNodeRoutes: true
+ipv4NativeRoutingCIDR: "{{ pod_subnet }}"
+{% endif %}
 
 # IPAM: cluster-pool, CIDR 对齐 kubeadm podSubnet
 ipam:
