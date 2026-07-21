@@ -83,3 +83,19 @@
     executable: /bin/bash
   changed_when: false
   failed_when: false
+
+# 重建空的 CNI 配置目录 + 重启 containerd:
+# reset 删了 /etc/cni 整个目录会让 containerd 的 fsnotify 监听失效(盯着已删除的旧 inode),
+# 之后重装 CNI 写入新目录时 containerd 收不到事件 -> 一直 'cni plugin not initialized'。
+# 重建目录 + 重启 containerd 让它以干净状态重新建立 CNI 监听。
+- name: "[Reset] 重建空 CNI 配置目录(稳定 inode 供 containerd 监听)"
+  file:
+    path: /etc/cni/net.d
+    state: directory
+    mode: "0755"
+
+- name: "[Reset] 重启 containerd(重建干净 CNI 监听,避免重装后 CNI 不识别)"
+  systemd:
+    name: containerd
+    state: restarted
+  failed_when: false
