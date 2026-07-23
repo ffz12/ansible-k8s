@@ -1,0 +1,98 @@
+---
+# 原地切换 CNI: 删旧 CNI -> 清节点 CNI 状态 -> 装新 CNI -> 重建 coredns
+# ⚠️ 会短暂中断集群网络! 用法:
+#   ansible-playbook playbook/k8s-cni-switch.yaml -e kube_network_plugin=flannel -e confirm_switch=yes
+# (kube_network_plugin: calico/flannel/cilium; 离线加 -e is_offline=true)
+
+- name: 安全确认
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: 必须确认 + 指定目标 CNI
+      assert:
+        that:
+          - confirm_switch | default('') | string == 'yes'
+          - kube_network_plugin in ['calico', 'flannel', 'cilium']
+        fail_msg: >-
+          原地换 CNI 会短暂中断网络! 确认请加: -e confirm_switch=yes
+          并指定 -e kube_network_plugin=calico|flannel|cilium
+        success_msg: "开始切换 CNI 到 {{ kube_network_plugin }} ..."
+
+# 1. 在首 master 删除现有 CNI 的所有资源(best-effort,不知装的哪个就都试)
+- name: 删除旧 CNI 资源
+  hosts: "{{ groups['k8s_master'][0] }}"
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: "[Switch] 删除 calico/flannel/multus manifest(若存在)"
+      shell: "kubectl delete -f {{ kube_config_dir }}/{{ item }} --ignore-not-found --wait=false"
+      args:
+        executable: /bin/bash
+      loop:
+        - calico.yaml
+        - kube-flannel.yml
+        - multus-daemonset.yml
+      ignore_errors: yes
+
+    - name: "[Switch] helm 卸载 cilium(若装过)"
+      shell: "helm uninstall cilium -n kube-system"
+      args:
+        executable: /bin/bash
+      ignore_errors: yes
+
+# 2. 每个节点清 CNI 状态(配置/接口/规则) + 重启 containerd 让其重建监听
+- name: 清理节点 CNI 状态
+  hosts: k8s_master:k8s_node
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: "[Switch] 清 CNI 配置"
+      shell: "rm -f /etc/cni/net.d/* 2>/dev/null || true"
+      args: { executable: /bin/bash }
+      changed_when: false
+
+    - name: "[Switch] 删 CNI 虚拟网卡(best-effort)"
+      shell: |
+        for i in cni0 flannel.1 vxlan.calico tunl0 kube-ipvs0 cilium_host cilium_net cilium_vxlan; do
+          ip link delete "$i" 2>/dev/null || true
+        done
+      args: { executable: /bin/bash }
+      changed_when: false
+      failed_when: false
+
+    - name: "[Switch] 清 calico 运行时目录(best-effort)"
+      shell: "rm -rf /run/calico /var/run/calico 2>/dev/null || true"
+      args: { executable: /bin/bash }
+      changed_when: false
+      failed_when: false
+
+    - name: "[Switch] 重启 containerd(重建 CNI 监听)"
+      systemd:
+        name: containerd
+        state: restarted
+      failed_when: false
+
+# 3. 装新 CNI(首 master, 复用 cni role: 含离线镜像同步 + apply)
+- name: 部署新 CNI
+  hosts: "{{ groups['k8s_master'][0] }}"
+  gather_facts: yes
+  become: yes
+  roles:
+    - cni
+
+# 4. 重建 coredns(拿新 CNI 的 IP); 业务 Pod 请自行 rollout restart
+- name: 重建 coredns
+  hosts: "{{ groups['k8s_master'][0] }}"
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: "[Switch] 重启 coredns"
+      shell: "kubectl -n kube-system rollout restart deployment coredns"
+      args: { executable: /bin/bash }
+      ignore_errors: yes
+
+    - name: "[Switch] 提示"
+      debug:
+        msg: >-
+          CNI 已切换为 {{ kube_network_plugin }}。业务 Pod 仍持旧 IP,
+          请对各命名空间执行: kubectl rollout restart deploy -n <ns> (或删 Pod 让其重建)。
