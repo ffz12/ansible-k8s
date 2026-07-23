@@ -2,3 +2,10 @@
 *.zip filter=lfs diff=lfs merge=lfs -text
 runc.amd64 filter=lfs diff=lfs merge=lfs -text
 runc.arm64 filter=lfs diff=lfs merge=lfs -text
+
+# Linux 目标机: 文本统一 LF, 防 Windows/autocrlf checkout 成 CRLF 导致 bash/ansible 报错
+* text=auto eol=lf
+*.sh text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.j2 text eol=lf
