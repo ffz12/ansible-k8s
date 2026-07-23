@@ -1,14 +1,12 @@
 # 安装 docker(给 Harbor / cri-docker 用; k8s 节点用 containerd,不需要)
-# CPU 节点: docker + daemon.json 配置; GPU 节点: docker + nvidia-container-toolkit
-# 一次跑完两类, 各自按 [docker_cpu] / [docker_gpu] 分组; 用不到的组留空即可
-- name: 安装 docker (CPU 节点)
-  hosts: docker_cpu
+# 与 containerd 一致: 一个 [docker] 组, 每台按行内 accelerator_type 决定:
+#   accelerator_type=nvidia -> docker + nvidia-container-toolkit(update-docker-gpu)
+#   其它/不设            -> docker + 普通 daemon.json(update-docker-daemon)
+- name: 安装 docker
+  hosts: docker
   roles:
     - docker
-    - update-docker-daemon
-
-- name: 安装 docker (GPU 节点)
-  hosts: docker_gpu
-  roles:
-    - docker
-    - update-docker-gpu
+    - role: update-docker-gpu
+      when: accelerator_type | default('none') == 'nvidia'
+    - role: update-docker-daemon
+      when: accelerator_type | default('none') != 'nvidia'

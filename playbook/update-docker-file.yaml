@@ -1,3 +1,8 @@
-- hosts: docker_cpu
+# 仅刷新 docker 配置(daemon.json/harbor 登录),不重装 docker
+# 按行内 accelerator_type 刷对应配置(与 docker-install 一致)
+- hosts: docker
   roles:
-  - role: update-docker-daemon 
+    - role: update-docker-gpu
+      when: accelerator_type | default('none') == 'nvidia'
+    - role: update-docker-daemon
+      when: accelerator_type | default('none') != 'nvidia'

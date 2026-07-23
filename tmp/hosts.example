@@ -42,10 +42,11 @@
 # Harbor 节点(在线从公共 mirror 拉镜像时可不部署)
 #cpu217
 
-[docker_cpu]
-# 装 docker 的 CPU 节点(Harbor 节点通常需要)
-[docker_gpu]
-# 装 docker 的 GPU 节点
+[docker]
+# 装 docker 的节点(给 Harbor/cri-docker 用); 与 containerd 一致按行内 accelerator_type 区分:
+#   nvidia -> 装 nvidia-container-toolkit; 不设 -> 普通 docker
+#cpu217
+#a800-node30 accelerator_type=nvidia
 [cri_docker_nodes]
 # cri-dockerd 已弃用,留空
 
