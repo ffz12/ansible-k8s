@@ -1,6 +1,8 @@
 # ============================================================================
 #  defaults.yaml —— 默认变量,一般不用动(要改的在 env.yaml)
 #  与 env.yaml 同属 group_vars/all,同优先级、自动合并;-e 仍可临时覆盖任意变量
+#  多数是「派生变量」(引用 env.yaml 的值自动算出)或固定默认;
+#  kube_criSocket / 在线镜像源 / 下载 mirror / 各类路径等可调项都在 env.yaml。
 # ============================================================================
 
 # ================= Docker =================
@@ -108,9 +110,6 @@ coredns_version:     "{{ (k8s_compat[k8s_minor] | default({})).coredns | default
 pause_image_version: "{{ (k8s_compat[k8s_minor] | default({})).pause   | default('3.10.1') }}"
 crictl_version:      "{{ (k8s_compat[k8s_minor] | default({})).crictl  | default(k8s_version) }}"
 
-# ================= CRI / 镜像仓(在线源在 env.yaml) =================
-# kube_criSocket / calico_registry_online 等在线源已移到 env.yaml
-
 # ================= 派生: 镜像仓库(离线 Harbor / 在线 mirror) =================
 kube_image_repository: "{{ registry if (is_offline | default(false) | bool) else kube_image_mirror }}"
 calico_images:
@@ -136,9 +135,6 @@ src_multus_cni_images_dir: "{{ offline_binaries }}/cni/multus/v{{ multus_cni_ver
 multus_cni_images_dir: "/opt/multus_cni"
 helm_bin_src: "{{ offline_binaries }}/helm/v{{ helm_version }}"
 cilium_chart_src: "{{ offline_binaries }}/cni/cilium/v{{ cilium_version }}/cilium-{{ cilium_version }}.tgz"
-
-# ================= 在线下载源已移到 env.yaml =================
-# k8s_bin_mirror / etcd_bin_mirror / gh_proxy / containerd_bin_mirror 等见 env.yaml
 
 # ================= 组件清单 =================
 k8s_components:
