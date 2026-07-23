@@ -33,14 +33,12 @@
             group: root
             mode: "0600"
 
-        - name: 设置 kubectl 别名 k
-          copy:
+        - name: 设置 kubectl 别名 k(软链接)
+          file:
             src: "{{ kube_bin_dir }}/kubectl"
             dest: "{{ kube_bin_dir }}/k"
-            remote_src: yes
-            owner: root
-            group: root
-            mode: "0755"
+            state: link
+            force: yes
 
     - name: 移除污点(允许 master 调度)
       shell: |

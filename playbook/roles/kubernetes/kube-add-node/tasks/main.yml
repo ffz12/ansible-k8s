@@ -13,12 +13,10 @@
   command: "{{ _join_cmd_result.stdout }} --cri-socket {{ kube_criSocket }} --ignore-preflight-errors=SystemVerification"
   become: yes
   when: not kubelet_conf.stat.exists
-- name: 设置kubectl为k
-  copy:
+- name: 设置 kubectl 别名 k(软链接,幂等)
+  file:
     src: "{{ kube_bin_dir }}/kubectl"
     dest: "{{ kube_bin_dir }}/k"
-    mode: "0755"
-    remote_src: yes
-    owner: root
-    group: root
-   
+    state: link
+    force: yes
+  become: yes

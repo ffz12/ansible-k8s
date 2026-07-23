@@ -78,16 +78,13 @@
     mode: "0600"
   become: yes
   when: not kubelet_conf.stat.exists
-- name: "[Add Master] 设置kubectl为k"
-  copy:
+- name: "[Add Master] 设置 kubectl 别名 k(软链接,幂等)"
+  file:
     src: "{{ kube_bin_dir }}/kubectl"
     dest: "{{ kube_bin_dir }}/k"
-    remote_src: yes
-    owner: root
-    group: root
-    mode: "0755"
+    state: link
+    force: yes
   become: yes
-  when: not kubelet_conf.stat.exists
 
 - name: "移除污点(允许 master 调度)"
   shell: |
