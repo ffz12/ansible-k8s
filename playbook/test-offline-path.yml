@@ -1,7 +1,0 @@
-- hosts: localhost
-  connection: local
-  gather_facts: yes
-  tasks:
-    - name: Show computed offline_binaries path
-      debug:
-        msg: "Offline binaries path: {{ offline_binaries }}"
