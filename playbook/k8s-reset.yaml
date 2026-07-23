@@ -1,7 +1,7 @@
 ---
 # 重置整个 k8s 集群(所有 master + worker 执行 kubeadm reset + 清理)
 # ⚠️ 破坏性操作! 必须显式确认: ansible-playbook playbook/k8s-reset.yaml -e confirm_reset=yes
-# 外置 etcd 数据默认一起清(否则重装会撞旧数据); 保留 etcd 数据加 -e reset_etcd=false
+# 外置 etcd 默认一并销毁(否则重装会撞旧数据); 保留 etcd 加 -e reset_etcd=false
 
 - name: 安全确认
   hosts: localhost
@@ -13,7 +13,7 @@
           - confirm_reset | default('') | string == 'yes'
         fail_msg: >-
           这会销毁整个 k8s 集群! 确认请加: -e confirm_reset=yes
-          (默认同时清空外置 etcd 数据; 想保留 etcd 数据再加 -e reset_etcd=false)
+          (默认同时销毁外置 etcd; 想保留 etcd 再加 -e reset_etcd=false)
         success_msg: "已确认, 开始重置集群..."
 
 - name: 重置所有 k8s 节点(master + worker)
@@ -23,27 +23,13 @@
   roles:
     - kubernetes/kube-reset
 
-- name: 清空外置 etcd 数据(默认执行; -e reset_etcd=false 可跳过)
+# 外置 etcd 默认一并销毁(否则重装会撞旧数据); 保留 etcd 加 -e reset_etcd=false
+- name: 销毁外置 etcd 集群(默认执行; -e reset_etcd=false 跳过)
   hosts: etcd
   become: yes
   gather_facts: no
   tasks:
-    - name: 停止 etcd
-      systemd:
-        name: etcd
-        state: stopped
-      failed_when: false
-      when: reset_etcd | default(true) | bool
-
-    - name: 清空 etcd 数据目录
-      shell: "rm -rf {{ etcd_data_dir }}/*"
-      args:
-        executable: /bin/bash
-      when: reset_etcd | default(true) | bool
-
-    - name: 重启 etcd(空集群)
-      systemd:
-        name: etcd
-        state: started
-      failed_when: false
+    - name: 销毁 etcd(停用+删服务/二进制/数据/配置)
+      include_role:
+        name: etcd/etcd-destroy
       when: reset_etcd | default(true) | bool
