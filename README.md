@@ -170,7 +170,7 @@ jzgpu10
 #挂载nvme盘
 ansible-playbook playbook/mount_nvme.yaml 
 #安装docker GPU 版本
-ansible-playbook -i inventory/hosts playbook/docker-gpu-install.yaml
+ansible-playbook -i inventory/hosts playbook/docker-install.yaml
 #如果docker 没启动
 ansible gpu -m shell -a "systemctl restart  docker "
 ```
@@ -300,7 +300,7 @@ ansible gpu -m shell -a "rpm -qa  |grep nvidia-container-toolkit"
 
 ### 更新 GPU 配置，若gpu节点没有没有安装nvidia-container-toolkit则会自动安装
 
-```bash #可略，如何使用了ansible-playbook playbook/docker-gpu-install.yaml 
+```bash #可略，如何使用了ansible-playbook playbook/docker-install.yaml 
 ansible-playbook -i inventory/hosts playbook/update-gpu.yaml
 ```
 
@@ -385,7 +385,7 @@ ansible-playbook playbook/mount_nvme.yaml
 #检查nvidia-container-toolkit
 ansible gpu -m shell -a "dpkg -l |grep nvidia-container-toolkit"
 #安装docker及配置gpu daemon.json
-ansible-playbook playbook/docker-gpu-install.yaml 
+ansible-playbook playbook/docker-install.yaml 
 #检查docker
 ansible gpu -m shell -a "systemctl restart  docker "
 ansible gpu -m shell -a "systemctl status docker "

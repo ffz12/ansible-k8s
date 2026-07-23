@@ -1,4 +1,0 @@
-- hosts: docker_gpu
-  roles:
-  - role: docker
-  - role: update-docker-gpu
