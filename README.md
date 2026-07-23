@@ -142,7 +142,7 @@ ansible cluster -m shell -a "systemctl unmask docker.socket docker.service conta
 
 ```bash
 #挂载nvme盘
-ansible-playbook playbook/mount_nvme.yaml 
+ansible-playbook playbook/mount-nvme.yaml 
 #安装docker cpu 版本
 ansible-playbook -i inventory/hosts playbook/docker-install.yaml
 ```
@@ -150,7 +150,7 @@ ansible-playbook -i inventory/hosts playbook/docker-install.yaml
 ### 更新 Docker 配置
 
 ```bash
-ansible-playbook -i inventory/hosts playbook/update-docker-file.yaml
+ansible-playbook -i inventory/hosts playbook/docker-config-update.yaml
 ```
 
 ### 安装 GPU 环境 
@@ -168,7 +168,7 @@ jzgpu10
 
 ```bash
 #挂载nvme盘
-ansible-playbook playbook/mount_nvme.yaml 
+ansible-playbook playbook/mount-nvme.yaml 
 #安装docker GPU 版本
 ansible-playbook -i inventory/hosts playbook/docker-install.yaml
 #如果docker 没启动
@@ -186,13 +186,13 @@ ansible-playbook -i inventory/hosts playbook/harbor-install.yaml
 ### 删除 Harbor
 
 ```bash
-ansible-playbook -i inventory/hosts playbook/harbor-rm.yaml
+ansible-playbook -i inventory/hosts playbook/harbor-remove.yaml
 ```
 
 ### 部署 etcd
 
 ```bash
-ansible-playbook -i inventory/hosts playbook/deploy-etcd.yml
+ansible-playbook -i inventory/hosts playbook/etcd-deploy.yaml
 ```
 
 ### 安装 Kubernetes Master
@@ -222,13 +222,13 @@ ansible-playbook -i inventory/hosts playbook/host-set.yaml
 ### 卸载 Docker
 
 ```bash
-ansible-playbook -i inventory/hosts playbook/docker-rm.yaml
+ansible-playbook -i inventory/hosts playbook/docker-remove.yaml
 ```
 
 ### 销毁 etcd
 
 ```bash
-ansible-playbook -i inventory/hosts playbook/destroy-etcd.yml
+ansible-playbook -i inventory/hosts playbook/etcd-destroy.yaml
 ```
 
 ## GPU 相关操作
@@ -301,7 +301,7 @@ ansible gpu -m shell -a "rpm -qa  |grep nvidia-container-toolkit"
 ### 更新 GPU 配置，若gpu节点没有没有安装nvidia-container-toolkit则会自动安装
 
 ```bash #可略，如何使用了ansible-playbook playbook/docker-install.yaml 
-ansible-playbook -i inventory/hosts playbook/update-gpu.yaml
+ansible-playbook -i inventory/hosts playbook/gpu-update.yaml
 ```
 
 ## Harbor 与 cri-dockerd
@@ -358,8 +358,8 @@ lbvip=172.31.72.199
 ### 部署顺序参考
 
 1. 初始化环境：`playbook/init.yaml`
-2. 安装 etcd：`playbook/deploy-etcd.yml`
-3. 安装 Nginx HA：`playbook/nginx-ha-install.yaml`
+2. 安装 etcd：`playbook/etcd-deploy.yaml`
+3. 安装 Nginx HA：`playbook/lb-nginx-install.yaml`
 4. 初始化第一个 Master：`playbook/k8s-init-master.yaml`
 5. 添加剩余 Master：`playbook/k8s-add-master.yaml`
 6. 添加 Node：`playbook/k8s-add-node.yaml`
@@ -381,7 +381,7 @@ ansible-playbook -i inventory/hosts playbook/init.yaml
 #gpu环境初始化
 ansible-playbook -i inventory/hosts playbook/gpu-init.yaml
 #挂载nvme盘
-ansible-playbook playbook/mount_nvme.yaml 
+ansible-playbook playbook/mount-nvme.yaml 
 #检查nvidia-container-toolkit
 ansible gpu -m shell -a "dpkg -l |grep nvidia-container-toolkit"
 #安装docker及配置gpu daemon.json
@@ -1958,7 +1958,7 @@ kubeadm reset --cri-socket /var/run/cri-dockerd.sock
 ### 删除 etcd 集群
 
 ```bash
-ansible-playbook -i inventory/hosts playbook/destroy-etcd.yml
+ansible-playbook -i inventory/hosts playbook/etcd-destroy.yaml
 ```
 
 ## Ubuntu 网络示例
