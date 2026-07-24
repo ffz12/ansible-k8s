@@ -49,6 +49,7 @@ say(){ echo -e "\033[0;32m[+] $*\033[0m"; }
 save_img(){
   local src="$1" tmpl="$2" dir="$3" name="$4" a t i
   for a in $ARCHES; do
+    if [ -s "$dir/$a/$name.tar" ]; then say "跳过(已存在) $name.tar ($a)"; continue; fi
     say "pull $src ($a)"
     # docker.io/quay 偶发 EOF, 重试几次
     for i in 1 2 3 4 5; do
@@ -64,7 +65,7 @@ save_img(){
   done
   docker rmi "$src" >/dev/null 2>&1 || true
 }
-dl(){ mkdir -p "$(dirname "$2")"; say "curl $1"; curl -fSL --retry 3 -o "$2" "$1"; }
+dl(){ if [ -s "$2" ]; then say "跳过(已存在) $2"; return; fi; mkdir -p "$(dirname "$2")"; say "curl $1"; curl -fSL --retry 3 -o "$2" "$1"; }
 
 # ========== 1. k8s 二进制 (kubeadm/kubectl/kubelet/crictl) ==========
 for a in $ARCHES; do
