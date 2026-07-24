@@ -6,41 +6,25 @@
   failed_when: false
   changed_when: false
 
-- block:
-    - name: "[Delete Node] 驱逐节点上的 Pod (Drain)"
-      shell: >
-        kubectl drain {{ inventory_hostname }} 
-        --ignore-daemonsets 
-        --delete-emptydir-data 
-        --force 
-        --grace-period=30
-      delegate_to: "{{ groups['k8s_master'][0] }}"
-      register: _drain_result
-      ignore_errors: yes
-
-    - name: "[Delete Node] 执行 kubeadm reset"
-      command: kubeadm reset -f --cri-socket {{ kube_criSocket }}
-      become: yes
-      register: _reset_result
-
-    - name: "[Delete Node] 从 Master 节点删除 Node 对象"
-      shell: "kubectl delete node {{ inventory_hostname }}"
-      delegate_to: "{{ groups['k8s_master'][0] }}"
-      ignore_errors: yes
-
-    - name: "[Delete Node] 清理残留的 CNI 配置文件"
-      file:
-        path: "{{ item }}"
-        state: absent
-      with_items:
-        - /etc/cni/net.d
-        - /var/lib/kubelet
-        - /etc/kubernetes
-        - /var/lib/etcd
-
-    - name: "[Delete Node] 移除 kubectl 别名 'k'"
-      file:
-        path: "{{ kube_bin_dir }}/k"
-        state: absent
-
+# 在集群中: 先 drain 再从 apiserver 删除 node 对象
+- name: "[Delete Node] 驱逐节点上的 Pod (Drain)"
+  shell: >
+    kubectl drain {{ inventory_hostname }}
+    --ignore-daemonsets
+    --delete-emptydir-data
+    --force
+    --grace-period=30
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  ignore_errors: yes
   when: _node_check.rc == 0
+
+- name: "[Delete Node] 从 Master 删除 Node 对象"
+  shell: "kubectl delete node {{ inventory_hostname }} --ignore-not-found"
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  ignore_errors: yes
+  when: _node_check.rc == 0
+
+# 节点侧彻底清理: 复用 kube-reset(kubeadm reset + 清目录/二进制/systemd/CNI网卡/iptables + 重启 containerd)
+- name: "[Delete Node] 复用 kube-reset 彻底清理本节点"
+  include_role:
+    name: kubernetes/kube-reset
