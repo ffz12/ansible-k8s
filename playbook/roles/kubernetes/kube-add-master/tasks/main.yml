@@ -5,6 +5,11 @@
     path: /etc/kubernetes/kubelet.conf
   register: kubelet_conf
 
+# 已加入(含首 master)则本机早停, 避免重跑把 join 那套刷一遍
+- name: "[Add Master] 已加入则跳过本机后续"
+  meta: end_host
+  when: kubelet_conf.stat.exists
+
 # ================================
 # 仅当未加入时才执行以下操作
 # ================================

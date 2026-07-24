@@ -3,6 +3,11 @@
     path: /etc/kubernetes/kubelet.conf
   register: kubelet_conf
 
+# 已加入则本机早停, 避免重跑刷屏
+- name: "[Add Node] 已加入则跳过本机后续"
+  meta: end_host
+  when: kubelet_conf.stat.exists
+
 - name: "[Add Node] 从 first master 获取 join 命令"
   shell: kubeadm token create --print-join-command
   register: _join_cmd_result
