@@ -61,11 +61,34 @@ save_img(){
     docker tag "$src" "$t"
     mkdir -p "$dir/$a"
     docker save "$t" -o "$dir/$a/$name.tar"
+    # 校验保存的 tar 完整(能列表), 损坏则删掉报错
+    if ! tar -tf "$dir/$a/$name.tar" >/dev/null 2>&1; then
+      rm -f "$dir/$a/$name.tar"; echo "  ✗ 保存的 $name.tar($a) 损坏, 请重跑"; exit 1
+    fi
     docker rmi "$t" >/dev/null 2>&1 || true
   done
   docker rmi "$src" >/dev/null 2>&1 || true
 }
-dl(){ if [ -s "$2" ]; then say "跳过(已存在) $2"; return; fi; mkdir -p "$(dirname "$2")"; say "curl $1"; curl -fSL --retry 3 -o "$2" "$1"; }
+# 远端 Content-Length(跟随重定向)
+rsize(){ curl -sIL -m 15 "$1" 2>/dev/null | awk 'BEGIN{IGNORECASE=1}/^content-length:/{v=$2}END{gsub(/\r/,"",v);print v}'; }
+# 下载 + 大小校验; 残缺/不符自动重下. $1=url $2=dest
+dl(){
+  local url="$1" dest="$2" i r l
+  if [ -s "$dest" ]; then
+    r=$(rsize "$url"); l=$(stat -c%s "$dest" 2>/dev/null || wc -c <"$dest")
+    if [ -z "$r" ] || [ "$r" = "$l" ]; then say "跳过(完整) $dest"; return; fi
+    say "已存在但大小不符($l/$r), 重下"; rm -f "$dest"
+  fi
+  mkdir -p "$(dirname "$dest")"
+  for i in 1 2 3 4 5; do
+    say "curl $url"
+    curl -fSL --retry 3 -o "$dest" "$url" || { echo "  下载失败,第 $i 次重试"; sleep 5; continue; }
+    r=$(rsize "$url"); l=$(stat -c%s "$dest" 2>/dev/null || wc -c <"$dest")
+    { [ -z "$r" ] || [ "$r" = "$l" ]; } && return
+    echo "  大小不符($l/$r),第 $i 次重下"; rm -f "$dest"; sleep 3
+  done
+  echo "✗ 下载/校验失败: $url"; exit 1
+}
 
 # ========== 1. k8s 二进制 (kubeadm/kubectl/kubelet/crictl) ==========
 for a in $ARCHES; do
