@@ -50,6 +50,7 @@ save_img(){
   local src="$1" tmpl="$2" dir="$3" name="$4" a t i
   for a in $ARCHES; do
     if [ -s "$dir/$a/$name.tar" ]; then say "跳过(已存在) $name.tar ($a)"; continue; fi
+    docker rmi "$src" >/dev/null 2>&1 || true   # 删本地缓存, 强制按平台重新拉(否则 arm64 可能复用 amd64)
     say "pull $src ($a)"
     # docker.io/quay 偶发 EOF, 重试几次
     for i in 1 2 3 4 5; do
