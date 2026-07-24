@@ -49,6 +49,7 @@
 - name:  输出k8s 命令
   debug:
     var: _join_cmd_result.stdout
+  when: not kubelet_conf.stat.exists
 
 # Step 6: 执行 join
 - name: "[Add Master] 执行 kubeadm join --control-plane"
@@ -86,13 +87,12 @@
     force: yes
   become: yes
 
-- name: "移除污点(允许 master 调度)"
+- name: "移除污点(允许 master 调度; 幂等,污点不存在也不报错)"
   shell: |
-    kubectl taint node {{ inventory_hostname }} node-role.kubernetes.io/control-plane-
-    kubectl taint node {{ inventory_hostname }} node-role.kubernetes.io/master-
-    kubectl taint node {{ inventory_hostname }} node.kubernetes.io/unschedulable-
-    kubectl taint node {{ inventory_hostname }} node.kubernetes.io/not-ready-
+    for t in node-role.kubernetes.io/control-plane node-role.kubernetes.io/master node.kubernetes.io/unschedulable node.kubernetes.io/not-ready; do
+      kubectl taint node {{ inventory_hostname }} ${t}- 2>/dev/null || true
+    done
   args:
     executable: /bin/bash
-  ignore_errors: yes
+  changed_when: false
   when: inventory_hostname != groups['k8s_master'][0]
