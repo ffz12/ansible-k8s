@@ -35,7 +35,8 @@
     - "{{ etcd_install_dir }}"
     - "{{ etcd_data_dir }}"
     - "{{ etcd_conf_dir }}"
-    - "/var/backups/kube_etcd" 
+    - "/var/backups/kube_etcd"
+    - "/usr/local/bin/etcd-backup.sh" 
 - name: Reload systemd
   systemd:
     daemon_reload: yes
