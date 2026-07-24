@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
-#  download-k8s-offline.sh —— 在【有网 + 有 docker】的机器上跑,
-#  把 k8s 层所有离线物料(双架构)下好并 docker save 成 tar,
+#  download-k8s-offline.sh —— 在【有网】的机器上跑(装 skopeo + curl, 无需 docker daemon),
+#  把 k8s 层所有离线物料(双架构)下好并存成 tar,
 #  按 offline/binaries/ 版本目录摆好, 镜像 tag 严格对齐 ansible sync 的期望。
 #  拷回内网后, 部署时 -e is_offline=true 即可。
 #
