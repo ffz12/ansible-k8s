@@ -34,12 +34,11 @@ cri_dockerd_services:
 - cri-docker.socket
 
 # ================= Containerd =================
-#legacy pause(旧变量,保留兼容)
-pause: harbor.unisound.ai/unisound/pause:3.10
-pause_version: "3.10"
-#containerd sandbox(pause)镜像: 离线->自建 Harbor, 在线->国内 mirror(随 is_offline 自动切)
-harbor_pause_repo: "{{ registry }}"
+#containerd sandbox(pause)镜像: 离线->自建 Harbor(与 sync/kubeadm 同为 registry), 在线->国内 mirror
+#pause_image_version 由下方 k8s_compat 按 k8s_version 自动取
 sandbox_image: "{{ (registry ~ '/pause:' ~ pause_image_version) if (is_offline | default(false) | bool) else (kube_image_mirror ~ '/pause:' ~ pause_image_version) }}"
+#cri-dockerd 的 pod-infra-container-image, 跟随 sandbox_image
+pause: "{{ sandbox_image }}"
 #config 格式版本自动推导: 1.x -> 2, 2.x+ -> 3 (勿手改)
 containerd_config_version: "{{ 3 if (containerd_version.split('.')[0] | int) >= 2 else 2 }}"
 #containerd 数据目录(等同 docker data-root),随 container_base
