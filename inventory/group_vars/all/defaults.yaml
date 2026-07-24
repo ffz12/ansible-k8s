@@ -96,7 +96,7 @@ keepalived_sbin_dir: "{{ keepalived_dir }}/sbin"
 offline_binaries: "{{ playbook_dir | dirname }}/offline/binaries"
 harbor_dns: "{{ harbor_instances[0].dns }}"
 harbor_ip: "{{ harbor_instances[0].ip }}"
-registry: "{{ harbor_dns }}/unisound"           # 自建 harbor 前缀
+registry: "{{ harbor_dns }}/{{ harbor_project | default('unisound') }}"   # 自建 harbor 前缀(项目名在 env.yaml)
 
 # ================= k8s 版本配套(A 组自动派生) =================
 k8s_minor: "{{ k8s_version.split('.')[0] ~ '.' ~ k8s_version.split('.')[1] }}"
