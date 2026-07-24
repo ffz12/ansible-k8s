@@ -27,11 +27,11 @@ HELM="3.16.4"
 ARCHES="amd64 arm64"
 CNIS="calico flannel cilium"   # 只打包用得到的可删减, 如 CNIS="calico"
 
-# -------- 源(国内 mirror;受限自行改) --------
+# -------- 源(国内 mirror;受限自行改。skopeo 直接从这些地址拉,不走 docker daemon 加速) --------
 IMG_MIRROR="registry.aliyuncs.com/google_containers"    # k8s 组件/pause/coredns
-CALICO_SRC="docker.io/calico"
-FLANNEL_SRC="docker.io/flannel"
-CILIUM_SRC="quay.io/cilium"
+CALICO_SRC="docker.m.daocloud.io/calico"                # = docker.io/calico(daocloud 加速)
+FLANNEL_SRC="docker.m.daocloud.io/flannel"              # = docker.io/flannel
+CILIUM_SRC="quay.m.daocloud.io/cilium"                  # = quay.io/cilium(daocloud 加速)
 # -------- 二进制源: daocloud 通用文件代理(国内快, 一个源代理 dl.k8s.io/github/get.helm.sh) --------
 DAO="https://files.m.daocloud.io"
 K8S_BIN="$DAO/dl.k8s.io/release"
