@@ -6,7 +6,7 @@
 #  拷回内网后, 部署时 -e is_offline=true 即可。
 #
 #  用法: bash download-k8s-offline.sh
-#  依赖: docker(支持 --platform 拉多架构)、curl、tar、helm(拉 cilium chart 时;脚本会自动下)
+#  依赖: skopeo(拉镜像,按架构精确)、curl、tar
 # =============================================================================
 set -e
 
@@ -45,30 +45,26 @@ CILIUM_HELM_REPO="https://helm.cilium.io"
 B="$(cd "$(dirname "$0")/binaries" && pwd)"    # offline/binaries
 say(){ echo -e "\033[0;32m[+] $*\033[0m"; }
 
-# 拉镜像→按 arch 重命名→save. $1=源(含tag) $2=目标模板(含 __ARCH__) $3=目标目录 $4=文件名(无扩展)
+# 依赖检查: skopeo(镜像) + curl(二进制)
+command -v skopeo >/dev/null 2>&1 || { echo "缺 skopeo, 请先装: yum install -y skopeo  或  apt install -y skopeo"; exit 1; }
+command -v curl   >/dev/null 2>&1 || { echo "缺 curl"; exit 1; }
+
+# 用 skopeo 按架构精确拉取并存成 docker-archive(避开 docker save 多架构毛病)
+# $1=源(不含协议,含tag) $2=目标 docker load 名模板(含 __ARCH__) $3=目标目录 $4=文件名(无扩展)
 save_img(){
-  local src="$1" tmpl="$2" dir="$3" name="$4" a t i
+  local src="$1" tmpl="$2" dir="$3" name="$4" a load i
   for a in $ARCHES; do
     if [ -s "$dir/$a/$name.tar" ]; then say "跳过(已存在) $name.tar ($a)"; continue; fi
-    docker rmi "$src" >/dev/null 2>&1 || true   # 删本地缓存, 强制按平台重新拉(否则 arm64 可能复用 amd64)
-    say "pull $src ($a)"
-    # docker.io/quay 偶发 EOF, 重试几次
-    for i in 1 2 3 4 5; do
-      docker pull --platform "linux/$a" "$src" && break
-      echo "  pull 失败, 第 $i 次重试..."; sleep 5
-      [ "$i" = 5 ] && { echo "  ✗ $src ($a) 多次失败, 建议配 docker 镜像加速后重跑"; exit 1; }
-    done
-    t="${tmpl/__ARCH__/$a}"
-    docker tag "$src" "$t"
+    load="${tmpl/__ARCH__/$a}"
     mkdir -p "$dir/$a"
-    docker save "$t" -o "$dir/$a/$name.tar"
-    # 校验保存的 tar 完整(能列表), 损坏则删掉报错
-    if ! tar -tf "$dir/$a/$name.tar" >/dev/null 2>&1; then
-      rm -f "$dir/$a/$name.tar"; echo "  ✗ 保存的 $name.tar($a) 损坏, 请重跑"; exit 1
-    fi
-    docker rmi "$t" >/dev/null 2>&1 || true
+    for i in 1 2 3 4 5; do
+      say "skopeo copy $src ($a)"
+      skopeo copy --override-os linux --override-arch "$a" \
+        "docker://$src" "docker-archive:$dir/$a/$name.tar:$load" && break
+      echo "  失败, 第 $i 次重试..."; rm -f "$dir/$a/$name.tar"; sleep 5
+      [ "$i" = 5 ] && { echo "  ✗ $src ($a) 多次失败"; exit 1; }
+    done
   done
-  docker rmi "$src" >/dev/null 2>&1 || true
 }
 # 远端 Content-Length(跟随重定向)
 rsize(){ curl -sIL -m 15 "$1" 2>/dev/null | awk 'BEGIN{IGNORECASE=1}/^content-length:/{v=$2}END{gsub(/\r/,"",v);print v}'; }
