@@ -38,8 +38,8 @@ cri_dockerd_services:
 pause: harbor.unisound.ai/unisound/pause:3.10
 pause_version: "3.10"
 #containerd sandbox(pause)镜像: 离线->自建 Harbor, 在线->国内 mirror(随 is_offline 自动切)
-harbor_pause_repo: "{{ harbor_dns }}/kubernetes/kubernetes"
-sandbox_image: "{{ (harbor_pause_repo ~ '/pause:' ~ pause_image_version) if (is_offline | default(false) | bool) else (kube_image_mirror ~ '/pause:' ~ pause_image_version) }}"
+harbor_pause_repo: "{{ registry }}"
+sandbox_image: "{{ (registry ~ '/pause:' ~ pause_image_version) if (is_offline | default(false) | bool) else (kube_image_mirror ~ '/pause:' ~ pause_image_version) }}"
 #config 格式版本自动推导: 1.x -> 2, 2.x+ -> 3 (勿手改)
 containerd_config_version: "{{ 3 if (containerd_version.split('.')[0] | int) >= 2 else 2 }}"
 #containerd 数据目录(等同 docker data-root),随 container_base
