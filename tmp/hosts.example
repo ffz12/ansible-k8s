@@ -50,12 +50,12 @@
 [cri_docker_nodes]
 # cri-dockerd 已弃用,留空
 
-# ---- 扩缩容临时组(平时留空; 加/删节点时才填,只列主机名) ----
-[master_to_add]
-[master_to_delete]
+# ---- 扩缩容临时组(平时留空; 加/删时才填,只列主机名) ----
+# 注: 加 master/worker 直接进 [k8s_master]/[k8s_node] + --limit 即可, 无需 master_to_add
 [node_to_delete]
 [etcd_to_add]
 [etcd_to_delete]
+[master_to_delete]
 
 [all:vars]
 # 时钟同步 NTP 源

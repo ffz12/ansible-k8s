@@ -1,12 +1,6 @@
-- name: 环境初始化
-  hosts: "{{ lb_upstream_servers }}"
-  vars:
-    lb_upstream_servers: >-
-      {{
-        ((groups.k8s_master | default([])) + (groups.master_to_add | default([])))
-        | difference(groups.master_to_delete | default([]))
-        | unique
-      }}
+# 加 master: 新节点加进 [k8s_master], 用 --limit 新master 跑(已加入的会自动早停)
+- name: 加入 master
+  hosts: k8s_master
   roles:
     - kubernetes/kube-common
     - kubernetes/kube-add-master

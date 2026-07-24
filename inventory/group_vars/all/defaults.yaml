@@ -177,9 +177,4 @@ etcd_enable_metrics: true
 etcd_metrics_listen_urls: "http://{{ ansible_host }}:2381"
 
 # ================= 动态成员列表 =================
-final_master_list: >-
-  {{
-    ((groups.k8s_master | default([])) + (groups.master_to_add | default([])))
-    | difference(groups.master_to_delete | default([]))
-    | unique
-  }}
+final_master_list: "{{ groups.k8s_master | default([]) }}"

@@ -1,12 +1,7 @@
-# 动态计算最终 master 列表（用于条件判断）
+# 最终 master 列表 = [k8s_master](加 master 直接进该组 + --limit)
 - name: 计算最终 master 成员列表
   set_fact:
-    final_master_list: >-
-      {{
-        ((groups.k8s_master | default([])) + (groups.master_to_add | default([])))
-        | difference(groups.master_to_delete | default([]))
-        | unique
-      }}
+    final_master_list: "{{ groups.k8s_master | default([]) }}"
   run_once: true
   delegate_to: localhost
 
