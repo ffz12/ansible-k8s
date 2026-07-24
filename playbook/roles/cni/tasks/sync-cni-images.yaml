@@ -22,6 +22,7 @@
     COMP="{{ item }}"
     VERSION="v{{ calico_version }}"
     REGISTRY="{{ registry }}"
+    if docker manifest inspect --insecure "${REGISTRY}/calico-${COMP}:${VERSION}" >/dev/null 2>&1; then echo "skip calico-${COMP}:${VERSION} (已在 harbor)"; exit 0; fi
     docker load -i "{{ calico_images_dir }}/images/amd64/${COMP}.tar"
     docker load -i "{{ calico_images_dir }}/images/arm64/${COMP}.tar"
     docker tag "calico/${COMP}:${VERSION}-amd64" "${REGISTRY}/calico-${COMP}:${VERSION}-amd64"
@@ -58,6 +59,7 @@
     REGISTRY="{{ registry }}"
     sync_one() {
       local SRC="$1" DST="$2"    # SRC 不含 -arch 后缀, DST 目标(不含 tag)
+      if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${DST} (已在 harbor)"; return 0; fi
       docker tag "${SRC}-amd64" "${DST}-amd64"
       docker tag "${SRC}-arm64" "${DST}-arm64"
       docker push "${DST}-amd64"; docker push "${DST}-arm64"
@@ -91,6 +93,7 @@
     REGISTRY="{{ registry }}"
     sync_one() {
       local SRC="$1" DST="$2"
+      if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${DST} (已在 harbor)"; return 0; fi
       docker tag "${SRC}-amd64" "${DST}-amd64"
       docker tag "${SRC}-arm64" "${DST}-arm64"
       docker push "${DST}-amd64"; docker push "${DST}-arm64"

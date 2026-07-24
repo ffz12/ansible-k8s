@@ -50,7 +50,8 @@
   shell: |
     set -e
     IMAGE_NAME="{{ item }}"
-    TAG="{{ pause_version }}"
+    TAG="{{ pause_image_version }}"
+    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
 
     # 加载 amd64 和 arm64 镜像
     docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar"
@@ -93,6 +94,7 @@
     set -e
     IMAGE_NAME="{{ item }}"
     TAG="v{{ coredns_version }}"
+    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
 
     # 加载 amd64 和 arm64 镜像
     docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar"
@@ -136,6 +138,7 @@
     set -e
     IMAGE_NAME="{{ item }}"
     TAG="v{{ k8s_version }}"
+    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
 
     # 加载 amd64 和 arm64 镜像
     docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar"
