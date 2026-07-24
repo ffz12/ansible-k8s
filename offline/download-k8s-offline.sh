@@ -45,10 +45,15 @@ say(){ echo -e "\033[0;32m[+] $*\033[0m"; }
 
 # 拉镜像→按 arch 重命名→save. $1=源(含tag) $2=目标模板(含 __ARCH__) $3=目标目录 $4=文件名(无扩展)
 save_img(){
-  local src="$1" tmpl="$2" dir="$3" name="$4" a t
+  local src="$1" tmpl="$2" dir="$3" name="$4" a t i
   for a in $ARCHES; do
     say "pull $src ($a)"
-    docker pull --platform "linux/$a" "$src"
+    # docker.io/quay 偶发 EOF, 重试几次
+    for i in 1 2 3 4 5; do
+      docker pull --platform "linux/$a" "$src" && break
+      echo "  pull 失败, 第 $i 次重试..."; sleep 5
+      [ "$i" = 5 ] && { echo "  ✗ $src ($a) 多次失败, 建议配 docker 镜像加速后重跑"; exit 1; }
+    done
     t="${tmpl/__ARCH__/$a}"
     docker tag "$src" "$t"
     mkdir -p "$dir/$a"
