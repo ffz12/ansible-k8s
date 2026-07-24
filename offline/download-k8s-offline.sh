@@ -136,12 +136,8 @@ for cni in $CNIS; do case $cni in
       tmp="$(mktemp -d)"; dl "$HELM_BIN/helm-v$HELM-linux-$a.tar.gz" "$tmp/helm.tgz"
       tar -xzf "$tmp/helm.tgz" -C "$tmp"; mkdir -p "$B/helm/v$HELM/$a"; cp "$tmp/linux-$a/helm" "$B/helm/v$HELM/$a/helm"; chmod +x "$B/helm/v$HELM/$a/helm"; rm -rf "$tmp"
     done
-    if command -v helm >/dev/null 2>&1; then
-      helm repo add cilium "$CILIUM_HELM_REPO" >/dev/null 2>&1 || true; helm repo update >/dev/null 2>&1 || true
-      helm pull cilium/cilium --version "$CILIUM" -d "$B/cni/cilium/v$CILIUM/"
-    else
-      echo "  ⚠ 本机无 helm,cilium chart 未下; 手动: helm pull cilium/cilium --version $CILIUM -d $B/cni/cilium/v$CILIUM/"
-    fi ;;
+    # cilium chart: 直接下 tgz(无需本机 helm), 对齐 cilium_chart_src
+    dl "$CILIUM_HELM_REPO/cilium-$CILIUM.tgz" "$B/cni/cilium/v$CILIUM/cilium-$CILIUM.tgz" ;;
 esac; done
 
 say "全部完成! 物料在 $B ; 拷回内网后 -e is_offline=true 部署。"
