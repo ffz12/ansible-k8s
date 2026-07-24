@@ -134,7 +134,7 @@ for cni in $CNIS; do case $cni in
     # helm 二进制 + cilium chart
     for a in $ARCHES; do
       tmp="$(mktemp -d)"; dl "$HELM_BIN/helm-v$HELM-linux-$a.tar.gz" "$tmp/helm.tgz"
-      tar -xzf "$tmp/helm.tgz" -C "$tmp"; cp "$tmp/linux-$a/helm" "$B/helm/v$HELM/$a/helm"; chmod +x "$B/helm/v$HELM/$a/helm"; rm -rf "$tmp"
+      tar -xzf "$tmp/helm.tgz" -C "$tmp"; mkdir -p "$B/helm/v$HELM/$a"; cp "$tmp/linux-$a/helm" "$B/helm/v$HELM/$a/helm"; chmod +x "$B/helm/v$HELM/$a/helm"; rm -rf "$tmp"
     done
     if command -v helm >/dev/null 2>&1; then
       helm repo add cilium "$CILIUM_HELM_REPO" >/dev/null 2>&1 || true; helm repo update >/dev/null 2>&1 || true
