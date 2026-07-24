@@ -32,12 +32,14 @@ IMG_MIRROR="registry.aliyuncs.com/google_containers"    # k8s 组件/pause/cored
 CALICO_SRC="docker.io/calico"
 FLANNEL_SRC="docker.io/flannel"
 CILIUM_SRC="quay.io/cilium"
-K8S_BIN="https://dl.k8s.io/release"
-CRICTL_BIN="https://ghfast.top/https://github.com/kubernetes-sigs/cri-tools/releases/download"
-ETCD_BIN="https://mirrors.huaweicloud.com/etcd"
-CONTAINERD_BIN="https://ghfast.top/https://github.com/containerd/containerd/releases/download"
-RUNC_BIN="https://ghfast.top/https://github.com/opencontainers/runc/releases/download"
-HELM_BIN="https://get.helm.sh"
+# -------- 二进制源: daocloud 通用文件代理(国内快, 一个源代理 dl.k8s.io/github/get.helm.sh) --------
+DAO="https://files.m.daocloud.io"
+K8S_BIN="$DAO/dl.k8s.io/release"
+CRICTL_BIN="$DAO/github.com/kubernetes-sigs/cri-tools/releases/download"
+ETCD_BIN="$DAO/github.com/etcd-io/etcd/releases/download"
+CONTAINERD_BIN="$DAO/github.com/containerd/containerd/releases/download"
+RUNC_BIN="$DAO/github.com/opencontainers/runc/releases/download"
+HELM_BIN="$DAO/get.helm.sh"
 CILIUM_HELM_REPO="https://helm.cilium.io"
 
 B="$(cd "$(dirname "$0")/binaries" && pwd)"    # offline/binaries
