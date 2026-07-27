@@ -1,0 +1,18 @@
+---
+# 让 etcdctl 可"零参数"直接使用:
+#   ① 软链到 /usr/local/bin(进 PATH, sudo/非交互 shell 也能直接调)
+#   ② /etc/profile.d 导出 ETCDCTL_* (端点+证书), 登录 shell 自动加载
+- name: 软链 etcdctl 到 /usr/local/bin
+  file:
+    src: "{{ etcd_bin_dir }}/etcdctl"
+    dest: /usr/local/bin/etcdctl
+    state: link
+    force: yes
+
+- name: 渲染 etcdctl 便捷环境变量到 /etc/profile.d/etcdctl.sh
+  template:
+    src: etcdctl.sh.j2
+    dest: /etc/profile.d/etcdctl.sh
+    mode: '0644'
+    owner: root
+    group: root

@@ -1,0 +1,8 @@
+# etcdctl 便捷环境变量(ansible 渲染, 勿手改) —— 登录 shell 自动 source
+# 之后可直接: etcdctl endpoint health / member list / endpoint status --write-out=table
+export ETCDCTL_API=3
+export ETCDCTL_ENDPOINTS="{% for h in etcd_cluster_members %}https://{{ hostvars[h].ansible_host }}:{{ etcd_client_port }}{% if not loop.last %},{% endif %}{% endfor %}"
+
+export ETCDCTL_CACERT="{{ etcd_cert_dir }}/ca.pem"
+export ETCDCTL_CERT="{{ etcd_cert_dir }}/{{ inventory_hostname }}.pem"
+export ETCDCTL_KEY="{{ etcd_cert_dir }}/{{ inventory_hostname }}-key.pem"

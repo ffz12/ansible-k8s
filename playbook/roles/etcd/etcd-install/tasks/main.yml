@@ -18,6 +18,8 @@
 
 # 健康检查
 - include_tasks: health_check.yml
+# 让 etcdctl 可直接使用(软链上 PATH + profile.d 环境变量)
+- include_tasks: etcdctl-env.yml
 # 更新etcd new状态
-#- include_tasks: mask_etcd.yaml 
+#- include_tasks: mask_etcd.yaml
 - include_tasks: backup.yml
