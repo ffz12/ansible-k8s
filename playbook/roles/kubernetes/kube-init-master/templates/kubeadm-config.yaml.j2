@@ -54,14 +54,14 @@ imageRepository: {{ kube_image_repository }}
 kind: ClusterConfiguration
 kubernetesVersion: v{{ k8s_version }}
 networking:
-  dnsDomain: cluster.local
+  dnsDomain: {{ dns_domain }}
   serviceSubnet: {{ service_subnet }}
   podSubnet: {{ pod_subnet }}
 ---
 # === KubeProxyConfiguration ===
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
 kind: KubeProxyConfiguration
-mode: ipvs
+mode: {{ kube_proxy_mode }}
 ---
 # === KubeletConfiguration ===
 apiVersion: kubelet.config.k8s.io/v1beta1
@@ -125,5 +125,5 @@ logging:
     json:
       infoBufferSize: "0"
   verbosity: 0
-shutdownGracePeriod: 30s     # 节点关机时给 Pod 的优雅退出时间
-shutdownGracePeriodCriticalPods: 10s
+shutdownGracePeriod: {{ kubelet_shutdown_grace }}             # 节点关机时给 Pod 的优雅退出时间
+shutdownGracePeriodCriticalPods: {{ kubelet_shutdown_grace_critical }}
