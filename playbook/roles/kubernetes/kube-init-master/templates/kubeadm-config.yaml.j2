@@ -76,18 +76,18 @@ featureGates:
   CPUManagerPolicyAlphaOptions: true
 {% endif %}
 
-#驱逐策略
+#驱逐策略(内存阈值可在 env.yaml 调; 磁盘/pid 不随内存伸缩故固定)
 evictionSoft:
-  memory.available: 10%       # 当剩余内存低于 10% 时触发
+  memory.available: {{ kubelet_eviction_soft_mem }}    # 低于此且持续超宽限期才驱逐
   nodefs.available: 10%       # 防止磁盘写满导致节点 NotReady
   nodefs.inodesFree: 5%
 evictionSoftGracePeriod:
-  memory.available: 1m30s     # 给予 1 分半钟的宽限期
+  memory.available: {{ kubelet_eviction_soft_grace }}
   nodefs.available: 1m30s
   nodefs.inodesFree: 1m30s
 
 evictionHard:
-  memory.available: 5%
+  memory.available: {{ kubelet_eviction_hard_mem }}    # 低于此立即驱逐(无宽限)
   pid.available: 10%
   nodefs.available: 10%
   nodefs.inodesFree: 5%
