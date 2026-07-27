@@ -91,6 +91,8 @@ evictionHard:
   pid.available: 10%
   nodefs.available: 10%
   nodefs.inodesFree: 5%
+evictionMaxPodGracePeriod: {{ kubelet_eviction_max_pod_grace }}
+evictionPressureTransitionPeriod: {{ kubelet_eviction_pressure_transition }}
 
 kubeReserved:
   cpu: "{{ kubelet_kube_reserved_cpu }}"
@@ -101,6 +103,22 @@ systemReserved:
   cpu: "{{ kubelet_system_reserved_cpu }}"
   memory: "{{ kubelet_system_reserved_mem }}"
 maxPods: {{ kubelet_max_pods }}
+podPidsLimit: {{ kubelet_pod_pids_limit }}
+containerLogMaxSize: {{ kubelet_container_log_max_size }}
+containerLogMaxFiles: {{ kubelet_container_log_max_files }}
+rotateCertificates: true
+{% if kubelet_security_enhancement | default(false) | bool %}
+# ---- 安全加固(CIS 基线; env.yaml: kubelet_security_enhancement=true 开启) ----
+readOnlyPort: 0                        # 关闭只读端口 10255(无认证)
+protectKernelDefaults: true            # 内核参数不符即报错,不静默修改
+eventRecordQPS: 1
+streamingConnectionIdleTimeout: 5m     # exec/attach/port-forward 空闲超时
+makeIPTablesUtilChains: true
+tlsCipherSuites:
+  - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+  - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+  - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+{% endif %}
 logging:
   flushFrequency: 5000000000 # 5s
   options:
