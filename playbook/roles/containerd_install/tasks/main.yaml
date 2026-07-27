@@ -12,13 +12,19 @@
   changed_when: false
   failed_when: false
 
+# shim 与 containerd 同在官方 tar 包里; 单独校验其存在,缺失也触发重装(否则缺 shim 会跳过解压)
+- name: 检测 containerd-shim-runc-v2 是否存在
+  stat:
+    path: /usr/local/bin/containerd-shim-runc-v2
+  register: ctd_shim
+
 - name: 判断是否需要(重新)安装 containerd
   set_fact:
-    containerd_need_install: "{{ ctd_installed.rc != 0 or containerd_version not in ctd_installed.stdout }}"
+    containerd_need_install: "{{ ctd_installed.rc != 0 or containerd_version not in ctd_installed.stdout or not ctd_shim.stat.exists }}"
 
 - name: 📢 [终端显示] 版本判断
   debug:
-    msg: "已装: {{ (ctd_installed.stdout | trim) if ctd_installed.rc == 0 else '无' }} | 目标: v{{ containerd_version }} | 需要安装: {{ containerd_need_install }}"
+    msg: "已装: {{ (ctd_installed.stdout | trim) if ctd_installed.rc == 0 else '无' }} | 目标: v{{ containerd_version }} | shim: {{ '有' if ctd_shim.stat.exists else '缺失' }} | 需要安装: {{ containerd_need_install }}"
 
 # 2. 版本不符时先停 containerd,避免替换运行中的二进制
 - name: 停止 containerd (版本切换前)
