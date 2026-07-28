@@ -12,7 +12,7 @@
 #  版本: 全部取该系统当前【可得的最新版】(Ubuntu 走官方 PPA; 麒麟走 EPEL + 默认源)。
 #
 #  依赖: docker(用多架构镜像拉包, 需能 --platform linux/arm64)。
-#  用法: bash offline/download-ansible-offline.sh [kylin|ubuntu|all]
+#  用法: bash offline/download-ansible-offline.sh [kylin|ubuntu|openeuler|all]
 #        不带参数 = all(全部发行版全部架构)。
 # =============================================================================
 set -e
@@ -31,14 +31,16 @@ run() {
 }
 
 case "$TARGET" in
-  kylin)  run download_kylin_ansible.sh ;;
-  ubuntu) run download_ubuntu_ansible.sh ;;
+  kylin)    run download_kylin_ansible.sh ;;
+  ubuntu)   run download_ubuntu_ansible.sh ;;
+  openeuler) run download_openeuler_ansible.sh ;;
   all)
     run download_kylin_ansible.sh
     run download_ubuntu_ansible.sh
+    run download_openeuler_ansible.sh
     ;;
   *)
-    echo "用法: bash $0 [kylin|ubuntu|all]"; exit 1 ;;
+    echo "用法: bash $0 [kylin|ubuntu|openeuler|all]"; exit 1 ;;
 esac
 
 echo -e "\n=========================================================="
