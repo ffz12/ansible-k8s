@@ -9,6 +9,14 @@ OPENEULER_IMAGE="openeuler/openeuler:22.03-lts-sp4"
 
 # 最终存放最新版 Ansible TAR 包的根目录（与 kylin/ubuntu 对齐；按脚本所在目录定位, 不依赖 CWD）
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)/ansible-pkg-install"
+
+# 架构选择(默认双架构; 单架构指定一个即可)。arch:tag_name 成对: amd64->x86_64, arm64->arm64
+case "${1:-all}" in
+  amd64) ARCH_PAIRS="amd64:x86_64" ;;
+  arm64) ARCH_PAIRS="arm64:arm64" ;;
+  all)   ARCH_PAIRS="amd64:x86_64 arm64:arm64" ;;
+  *) echo "用法: bash $0 [amd64|arm64|all]  (默认 all)"; exit 1 ;;
+esac
 # ============================================
 
 # 封装一个下载与打包函数
@@ -78,13 +86,10 @@ download_by_arch() {
 
 # ================= 执行矩阵下载并打包 =================
 
-# 1. 下载并打包 x86_64 架构的 Ansible 离线包
-download_by_arch "amd64" "x86_64"
-
-echo -e "\n"
-
-# 2. 下载并打包 ARM64 架构的 Ansible 离线包
-download_by_arch "arm64" "arm64"
+for pair in $ARCH_PAIRS; do
+    download_by_arch "${pair%%:*}" "${pair##*:}"
+    echo -e "\n"
+done
 
 echo -e "\n=========================================================="
 echo " openEuler Ansible 离线全架构包制作结束！"

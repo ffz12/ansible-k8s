@@ -12,22 +12,24 @@
 #  版本: 全部取该系统当前【可得的最新版】(Ubuntu 走官方 PPA; 麒麟走 EPEL + 默认源)。
 #
 #  依赖: docker(用多架构镜像拉包, 需能 --platform linux/arm64)。
-#  用法: bash offline/download-ansible-offline.sh [kylin|ubuntu|openeuler|all]
-#        不带参数 = all(全部发行版全部架构)。
+#  用法: bash offline/download-ansible-offline.sh [kylin|ubuntu|openeuler|all] [amd64|arm64|all]
+#        第 1 参数 = 发行版(默认 all);  第 2 参数 = 架构(默认 all=双架构, 单架构集群指定一个省一半)。
 # =============================================================================
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET="${1:-all}"
+ARCH_ARG="${2:-all}"
+case "$ARCH_ARG" in amd64|arm64|all) ;; *) echo "架构参数须为 amd64|arm64|all"; exit 1 ;; esac
 
 command -v docker >/dev/null 2>&1 || { echo "缺 docker(脚本用容器按架构精确拉包), 请先安装"; exit 1; }
 
 run() {
   local script="$1"
   echo "=========================================================="
-  echo " 调用 $script"
+  echo " 调用 $script  (架构: $ARCH_ARG)"
   echo "=========================================================="
-  bash "$DIR/$script"
+  bash "$DIR/$script" "$ARCH_ARG"
 }
 
 case "$TARGET" in
@@ -40,7 +42,7 @@ case "$TARGET" in
     run download_openeuler_ansible.sh
     ;;
   *)
-    echo "用法: bash $0 [kylin|ubuntu|openeuler|all]"; exit 1 ;;
+    echo "用法: bash $0 [kylin|ubuntu|openeuler|all] [amd64|arm64|all]"; exit 1 ;;
 esac
 
 echo -e "\n=========================================================="

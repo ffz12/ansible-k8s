@@ -5,10 +5,19 @@
 #  按 offline/artifacts/ 版本目录摆好, 镜像 tag 严格对齐 ansible sync 的期望。
 #  拷回内网后, 部署时 -e is_offline=true 即可。
 #
-#  用法: bash download-k8s-offline.sh
+#  用法: bash download-k8s-offline.sh [amd64|arm64|all]   (默认 all=双架构)
+#        集群是纯 amd64 或纯 arm64 时, 指定单架构可省一半体积/时间(镜像大头)。
 #  依赖: skopeo(拉镜像,按架构精确)、curl、tar
 # =============================================================================
 set -e
+
+# -------- 架构选择(默认双架构; 单架构集群指定一个即可省一半) --------
+case "${1:-all}" in
+  amd64) ARCHES="amd64" ;;
+  arm64) ARCHES="arm64" ;;
+  all)   ARCHES="amd64 arm64" ;;
+  *) echo "用法: bash $0 [amd64|arm64|all]  (默认 all)"; exit 1 ;;
+esac
 
 # -------- 版本(与 inventory/group_vars/all/env.yaml 保持一致) --------
 K8S="1.34.3"                 # kubeadm/kubectl/kubelet + 组件镜像
@@ -24,7 +33,6 @@ FLANNEL_CNI="1.6.2-flannel1"
 CILIUM="1.16.5"
 HELM="3.16.4"
 
-ARCHES="amd64 arm64"
 CNIS="calico flannel cilium"   # 只打包用得到的可删减, 如 CNIS="calico"
 
 # -------- 源(国内 mirror;受限自行改。skopeo 直接从这些地址拉,不走 docker daemon 加速) --------

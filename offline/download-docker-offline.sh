@@ -9,10 +9,19 @@
 #      github 代理(files.m.daocloud.io/github.com, 国内快)。
 #  特性: 双架构(amd64/arm64) + curl 重试 + 远端大小校验(残缺自动重下) + 已完整则跳过。
 #
-#  用法: bash offline/download-docker-offline.sh
+#  用法: bash offline/download-docker-offline.sh [amd64|arm64|all]   (默认 all=双架构)
+#        集群是纯 amd64 或纯 arm64 时, 指定单架构可省一半体积/时间。
 #  依赖: curl
 # =============================================================================
 set -e
+
+# -------- 架构选择(默认双架构; 单架构集群指定一个即可省一半) --------
+case "${1:-all}" in
+  amd64) ARCHES="amd64" ;;
+  arm64) ARCHES="arm64" ;;
+  all)   ARCHES="amd64 arm64" ;;
+  *) echo "用法: bash $0 [amd64|arm64|all]  (默认 all)"; exit 1 ;;
+esac
 
 # -------- 版本(与 inventory/group_vars/all/defaults.yaml 的 docker_arch_map / cri_dockerd_* 对齐) --------
 DOCKER="29.4.2"        # docker 静态二进制包 -> {amd,arm}-docker-$DOCKER.tgz
@@ -52,7 +61,7 @@ dl(){
   echo "✗ 下载/校验失败: $url"; exit 1
 }
 
-for GOARCH in amd64 arm64; do
+for GOARCH in $ARCHES; do
   case $GOARCH in
     amd64) DK="x86_64";  PFX="amd"; COMP="x86_64" ;;
     arm64) DK="aarch64"; PFX="arm"; COMP="aarch64" ;;
