@@ -23,8 +23,8 @@
     VERSION="v{{ calico_version }}"
     REGISTRY="{{ registry }}"
     if docker manifest inspect --insecure "${REGISTRY}/calico-${COMP}:${VERSION}" >/dev/null 2>&1; then echo "skip calico-${COMP}:${VERSION} (已在 harbor)"; exit 0; fi
-    docker load -i "{{ calico_images_dir }}/images/amd64/${COMP}.tar"
-    docker load -i "{{ calico_images_dir }}/images/arm64/${COMP}.tar"
+    docker load -i "{{ calico_images_dir }}/images/amd64/${COMP}.tar.gz"
+    docker load -i "{{ calico_images_dir }}/images/arm64/${COMP}.tar.gz"
     docker tag "calico/${COMP}:${VERSION}-amd64" "${REGISTRY}/calico-${COMP}:${VERSION}-amd64"
     docker tag "calico/${COMP}:${VERSION}-arm64" "${REGISTRY}/calico-${COMP}:${VERSION}-arm64"
     docker push "${REGISTRY}/calico-${COMP}:${VERSION}-amd64"
@@ -70,10 +70,10 @@
       docker manifest push --insecure "${DST}"
       docker rmi "${DST}-amd64" "${DST}-arm64" || true
     }
-    docker load -i "{{ flannel_images_dir }}/images/amd64/flannel.tar"
-    docker load -i "{{ flannel_images_dir }}/images/arm64/flannel.tar"
-    docker load -i "{{ flannel_images_dir }}/images/amd64/flannel-cni-plugin.tar"
-    docker load -i "{{ flannel_images_dir }}/images/arm64/flannel-cni-plugin.tar"
+    docker load -i "{{ flannel_images_dir }}/images/amd64/flannel.tar.gz"
+    docker load -i "{{ flannel_images_dir }}/images/arm64/flannel.tar.gz"
+    docker load -i "{{ flannel_images_dir }}/images/amd64/flannel-cni-plugin.tar.gz"
+    docker load -i "{{ flannel_images_dir }}/images/arm64/flannel-cni-plugin.tar.gz"
     sync_one "flannel/flannel:v{{ flannel_version }}"            "${REGISTRY}/flannel:v{{ flannel_version }}"
     sync_one "flannel/flannel-cni-plugin:v1.6.2-flannel1"        "${REGISTRY}/flannel-cni-plugin:v1.6.2-flannel1"
   args:
@@ -104,10 +104,10 @@
       docker manifest push --insecure "${DST}"
       docker rmi "${DST}-amd64" "${DST}-arm64" || true
     }
-    docker load -i "{{ cilium_images_dir }}/images/amd64/cilium.tar"
-    docker load -i "{{ cilium_images_dir }}/images/arm64/cilium.tar"
-    docker load -i "{{ cilium_images_dir }}/images/amd64/operator-generic.tar"
-    docker load -i "{{ cilium_images_dir }}/images/arm64/operator-generic.tar"
+    docker load -i "{{ cilium_images_dir }}/images/amd64/cilium.tar.gz"
+    docker load -i "{{ cilium_images_dir }}/images/arm64/cilium.tar.gz"
+    docker load -i "{{ cilium_images_dir }}/images/amd64/operator-generic.tar.gz"
+    docker load -i "{{ cilium_images_dir }}/images/arm64/operator-generic.tar.gz"
     sync_one "quay.io/cilium/cilium:v{{ cilium_version }}"           "${REGISTRY}/cilium:v{{ cilium_version }}"
     sync_one "quay.io/cilium/operator-generic:v{{ cilium_version }}" "${REGISTRY}/operator-generic:v{{ cilium_version }}"
   args:

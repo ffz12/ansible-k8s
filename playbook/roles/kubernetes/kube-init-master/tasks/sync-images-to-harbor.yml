@@ -54,8 +54,8 @@
     if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
 
     # 加载 amd64 和 arm64 镜像
-    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar"
-    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar"
+    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar.gz"
+    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar.gz"
 
     # 打标签（注意：源镜像名需匹配实际加载后的名称）
     docker tag "registry.k8s.io/${IMAGE_NAME}-amd64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
@@ -97,8 +97,8 @@
     if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
 
     # 加载 amd64 和 arm64 镜像
-    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar"
-    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar"
+    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar.gz"
+    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar.gz"
 
     # 打标签（注意：源镜像名需匹配实际加载后的名称）
     docker tag "registry.k8s.io/${IMAGE_NAME}-amd64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
@@ -141,8 +141,8 @@
     if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
 
     # 加载 amd64 和 arm64 镜像
-    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar"
-    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar"
+    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar.gz"
+    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar.gz"
 
     # 打标签（注意：源镜像名需匹配实际加载后的名称）
     docker tag "registry.k8s.io/${IMAGE_NAME}-amd64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"

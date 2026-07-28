@@ -49,19 +49,24 @@ say(){ echo -e "\033[0;32m[+] $*\033[0m"; }
 command -v skopeo >/dev/null 2>&1 || { echo "缺 skopeo, 请先装: yum install -y skopeo  或  apt install -y skopeo"; exit 1; }
 command -v curl   >/dev/null 2>&1 || { echo "缺 curl"; exit 1; }
 
-# 用 skopeo 按架构精确拉取并存成 docker-archive(避开 docker save 多架构毛病)
-# $1=源(不含协议,含tag) $2=目标 docker load 名模板(含 __ARCH__) $3=目标目录 $4=文件名(无扩展)
+# 用 skopeo 按架构精确拉取并存成 docker-archive(避开 docker save 多架构毛病), 再 gzip 压缩省空间
+# $1=源(不含协议,含tag) $2=目标 docker load 名模板(含 __ARCH__) $3=目标目录 $4=文件名(无扩展, 落盘为 .tar.gz)
 save_img(){
   local src="$1" tmpl="$2" dir="$3" name="$4" a load i
   for a in $ARCHES; do
-    if [ -s "$dir/$a/$name.tar" ]; then say "跳过(已存在) $name.tar ($a)"; continue; fi
+    if [ -s "$dir/$a/$name.tar.gz" ]; then say "跳过(已存在) $name.tar.gz ($a)"; continue; fi
     load="${tmpl/__ARCH__/$a}"
     mkdir -p "$dir/$a"
     for i in 1 2 3 4 5; do
       say "skopeo copy $src ($a)"
-      skopeo copy --override-os linux --override-arch "$a" \
-        "docker://$src" "docker-archive:$dir/$a/$name.tar:$load" && break
-      echo "  失败, 第 $i 次重试..."; rm -f "$dir/$a/$name.tar"; sleep 5
+      if skopeo copy --override-os linux --override-arch "$a" \
+        "docker://$src" "docker-archive:$dir/$a/$name.tar:$load"; then
+        # skopeo 存的是未压缩 tar, 再 gzip 省空间(docker load 会自动解压 .tar.gz)
+        say "gzip $name.tar -> $name.tar.gz ($a)"
+        gzip -f "$dir/$a/$name.tar"
+        break
+      fi
+      echo "  失败, 第 $i 次重试..."; rm -f "$dir/$a/$name.tar" "$dir/$a/$name.tar.gz"; sleep 5
       [ "$i" = 5 ] && { echo "  ✗ $src ($a) 多次失败"; exit 1; }
     done
   done
