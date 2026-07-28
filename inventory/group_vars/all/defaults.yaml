@@ -110,6 +110,37 @@ coredns_version:     "{{ (k8s_compat[k8s_minor] | default({})).coredns | default
 pause_image_version: "{{ (k8s_compat[k8s_minor] | default({})).pause   | default('3.10.1') }}"
 crictl_version:      "{{ (k8s_compat[k8s_minor] | default({})).crictl  | default(k8s_version) }}"
 
+# ===== 在线下载源 / 镜像源(默认值; 可在 env.yaml 覆盖) =====
+# 说明: 这些是【在线模式】拉镜像/下二进制的源。默认值放这里, 保证即便 env.yaml
+#       是旧版/精简版没写它们, 下面的派生列表也不会因 undefined 而报错。
+#       想换源/加代理, 在 env.yaml 里重定义同名变量即可覆盖本默认(env.yaml 后加载胜出)。
+kube_image_mirror: "registry.aliyuncs.com/google_containers"   # kubeadm 组件在线仓
+calico_registry_online: "docker.io/calico"
+flannel_registry_online: "docker.io/flannel"
+cilium_registry_online: "quay.io/cilium"
+cilium_helm_repo: "https://helm.cilium.io"
+docker_mirrors:
+  - "https://docker.hlmirror.com"
+  - "https://docker.1ms.run"
+  - "https://docker.m.daocloud.io"
+  - "https://proxy.1panel.live"
+k8s_bin_mirrors:
+  - "https://files.m.daocloud.io/dl.k8s.io/release"
+  - "https://dl.k8s.io/release"
+etcd_bin_mirrors:
+  - "https://mirrors.huaweicloud.com/etcd"
+  - "https://files.m.daocloud.io/github.com/etcd-io/etcd/releases/download"
+helm_bin_mirrors:
+  - "https://mirrors.huaweicloud.com/helm/v{{ helm_version }}"
+  - "https://get.helm.sh"
+gh_proxies:
+  - "https://ghfast.top/https://github.com"
+  - "https://ghproxy.net/https://github.com"
+  - "https://mirror.ghproxy.com/https://github.com"
+download_retries: 3
+download_delay: 5
+download_timeout: 30
+
 # ===== 派生: github 类二进制的多源下载列表(由 env.yaml 的 gh_proxies 拼各仓库路径) =====
 # 每个源都是 <代理前缀>/<owner>/<repo>/releases/download; 下载时再接 /v{ver}/<文件名>。
 # ghfast 风格(.../https://github.com) 与 daocloud 风格(.../github.com) 都能这样拼。
