@@ -4,8 +4,8 @@
 # 定义你想下载的软件包，专门针对离线部署 Ansible 自身及必要环境
 OFFLINE_PKGS="ansible"
 
-# 最终存放最新版 Ansible TAR 包的根目录
-BASE_OUT_DIR="$(pwd)/ansible-pkg-install"
+# 最终存放最新版 Ansible TAR 包的根目录（按脚本所在目录定位, 不依赖 CWD）
+BASE_OUT_DIR="$(cd "$(dirname "$0")" && pwd)/ansible-pkg-install"
 # ============================================
 
 # 封装 Ubuntu 下载最新 Ansible 与打包核心函数
@@ -64,12 +64,13 @@ download_ubuntu_ansible() {
     if [ $? -eq 0 ] && [ -f "$tmp_save_dir/Packages" ]; then
         echo " -> 容器内下载最新版完成，开始在宿主机进行单文件打包..."
         
-        cd "$tmp_save_dir"
-        tar -czf "$BASE_OUT_DIR/$tar_name" ./*
-        cd - > /dev/null
-        
-        rm -rf "$tmp_save_dir"
-        echo " 🌟 [ 成功 ] 最新版离线 Tar 包已就位: $BASE_OUT_DIR/$tar_name"
+        # 打包成【带顶层目录】的 tar(解压出 ansible_ubuntuXX_xxx/, 内网 apt/dpkg 直接指向该目录)
+        local pkg_dir="ansible_ubuntu${major_version}_${tag_name}"
+        rm -rf "$BASE_OUT_DIR/$pkg_dir"
+        mv "$tmp_save_dir" "$BASE_OUT_DIR/$pkg_dir"
+        tar -czf "$BASE_OUT_DIR/$tar_name" -C "$BASE_OUT_DIR" "$pkg_dir"
+        rm -rf "$BASE_OUT_DIR/$pkg_dir"
+        echo " 🌟 [ 成功 ] 最新版离线 Tar 包已就位: $BASE_OUT_DIR/$tar_name (含顶层目录 $pkg_dir/)"
     else
         echo " ❌ [ 失败 ] Ubuntu $ubuntu_version 下载或注册 PPA 失败，请检查报错。"
         rm -rf "$tmp_save_dir"

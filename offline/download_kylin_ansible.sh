@@ -7,8 +7,8 @@ OFFLINE_PKGS="ansible"
 # 基础镜像：社区支持多架构的麒麟 V10 SP3 镜像
 KYLIN_IMAGE="hxsoong/kylin:v10-sp3"
 
-# 最终存放最新版 Ansible TAR 包的根目录（完美对齐 Ubuntu 的路径）
-BASE_DIR="$(pwd)/ansible-pkg-install"
+# 最终存放最新版 Ansible TAR 包的根目录（完美对齐 Ubuntu 的路径；按脚本所在目录定位, 不依赖 CWD）
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)/ansible-pkg-install"
 # ============================================
 
 # 封装一个下载与打包函数
@@ -56,16 +56,17 @@ download_by_arch() {
     if [ $? -eq 0 ]; then
         echo " -> 容器内下载完成，开始在宿主机进行单文件打包..."
         
-        cd "$tmp_save_dir"
+        # 打包成【带顶层目录】的 tar(解压出 ansible_kylin_xxx/, 内网直接 cd 进去 rpm -Uvh ./*.rpm)
+        local pkg_dir="ansible_kylin_${tag_name}"
         # 确保目录不为空才进行打包
-        if [ "$(ls -A)" ]; then
-            tar -czf "$BASE_DIR/$tar_name" ./*
-            cd - > /dev/null
-            rm -rf "$tmp_save_dir"
-            echo " 🌟 [ 成功 ] 麒麟 Ansible 离线 Tar 包已就位: $BASE_DIR/$tar_name"
+        if [ "$(ls -A "$tmp_save_dir")" ]; then
+            rm -rf "$BASE_DIR/$pkg_dir"
+            mv "$tmp_save_dir" "$BASE_DIR/$pkg_dir"
+            tar -czf "$BASE_DIR/$tar_name" -C "$BASE_DIR" "$pkg_dir"
+            rm -rf "$BASE_DIR/$pkg_dir"
+            echo " 🌟 [ 成功 ] 麒麟 Ansible 离线 Tar 包已就位: $BASE_DIR/$tar_name (含顶层目录 $pkg_dir/)"
         else
             echo " ❌ [ 失败 ] 下载目录为空，请检查容器源或包名是否正确。"
-            cd - > /dev/null
             rm -rf "$tmp_save_dir"
         fi
     else
