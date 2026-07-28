@@ -1,0 +1,48 @@
+---
+# ============================================================
+# 通用在线下载: 多源 + 重试 + 断言
+# ------------------------------------------------------------
+# 从多个候选 URL 依次尝试, 每个源带重试; 任一成功即止, 全部失败才 fail。
+# 依赖 get_url 幂等性: force=no 且 dest 已存在时直接跳过、不再触网,
+# 因此前一个源下载成功后, 列表里后续源会自动跳过。
+#
+# 入参:
+#   dl_urls    : 候选 URL 列表(必填, 从上到下依次尝试)
+#   dl_dest    : 目标落地路径(必填)
+#   dl_mode    : 文件权限, 默认 '0755'
+#   dl_retries : 单源重试次数, 默认 download_retries(3)
+#   dl_delay   : 重试间隔秒,   默认 download_delay(5)
+#   dl_timeout : 单次超时秒,   默认 download_timeout(30)
+# 用 include_tasks 调用; 若外层还要循环(如多个二进制), 外层用默认 item 即可,
+# 本文件内部循环变量是 dl_item, 不冲突。
+# ============================================================
+
+- name: "下载(多源+重试): {{ dl_dest | basename }}"
+  get_url:
+    url: "{{ dl_item }}"
+    dest: "{{ dl_dest }}"
+    mode: "{{ dl_mode | default('0755') }}"
+    force: no
+    timeout: "{{ dl_timeout | default(download_timeout | default(30)) }}"
+  loop: "{{ dl_urls }}"
+  loop_control:
+    loop_var: dl_item
+  register: dl_result
+  until: dl_result is succeeded
+  retries: "{{ dl_retries | default(download_retries | default(3)) }}"
+  delay: "{{ dl_delay | default(download_delay | default(5)) }}"
+  ignore_errors: yes
+
+- name: "校验下载结果: {{ dl_dest | basename }}"
+  stat:
+    path: "{{ dl_dest }}"
+  register: dl_stat
+
+- name: "断言下载成功: {{ dl_dest | basename }}"
+  assert:
+    that:
+      - dl_stat.stat.exists
+    fail_msg: >-
+      [{{ dl_dest | basename }}] 所有镜像源均下载失败, 已尝试: {{ dl_urls }}
+      —— 请检查网络/代理是否可达, 或切换离线模式(is_offline=true, 走本地 tar)。
+    success_msg: "[{{ dl_dest | basename }}] 下载成功: {{ dl_dest }}"

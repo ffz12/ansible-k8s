@@ -31,12 +31,12 @@
     - kubelet
   when: is_offline | default(false) | bool
 
-- name: 下载 Kubernetes 二进制(在线,从 mirror,官网受限可改 k8s_bin_mirror)
-  get_url:
-    url: "{{ k8s_bin_mirror }}/v{{ k8s_version }}/bin/linux/{{ kube_arch }}/{{ item }}"
-    dest: "{{ kube_bin_dir }}/{{ item }}"
-    mode: "0755"
-    force: no
+- name: 下载 Kubernetes 二进制(在线, 多源+重试)
+  include_tasks: "{{ playbook_dir }}/tasks/download-with-fallback.yml"
+  vars:
+    dl_urls: "{{ k8s_bin_mirrors | map('regex_replace', '$', '/v' ~ k8s_version ~ '/bin/linux/' ~ kube_arch ~ '/' ~ item) | list }}"
+    dl_dest: "{{ kube_bin_dir }}/{{ item }}"
+    dl_mode: "0755"
   loop:
     - kubeadm
     - kubectl
@@ -52,13 +52,14 @@
   when: is_offline | default(false) | bool
   ignore_errors: true      # crictl 可选,缺了不阻断
 
-- name: 下载并安装 crictl (在线)
+- name: 下载并安装 crictl (在线, 多源+重试)
   block:
     - name: 下载 crictl tar
-      get_url:
-        url: "{{ crictl_bin_mirror }}/v{{ crictl_version }}/crictl-v{{ crictl_version }}-linux-{{ kube_arch }}.tar.gz"
-        dest: "/tmp/crictl-v{{ crictl_version }}-linux-{{ kube_arch }}.tar.gz"
-        mode: "0644"
+      include_tasks: "{{ playbook_dir }}/tasks/download-with-fallback.yml"
+      vars:
+        dl_urls: "{{ crictl_bin_mirrors | map('regex_replace', '$', '/v' ~ crictl_version ~ '/crictl-v' ~ crictl_version ~ '-linux-' ~ kube_arch ~ '.tar.gz') | list }}"
+        dl_dest: "/tmp/crictl-v{{ crictl_version }}-linux-{{ kube_arch }}.tar.gz"
+        dl_mode: "0644"
     - name: 解压 crictl 到 bin
       unarchive:
         src: "/tmp/crictl-v{{ crictl_version }}-linux-{{ kube_arch }}.tar.gz"

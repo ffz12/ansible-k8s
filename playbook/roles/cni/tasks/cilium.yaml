@@ -23,11 +23,12 @@
 
 - name: 下载并安装 helm 二进制(在线)
   block:
-    - name: 下载 helm 压缩包
-      get_url:
-        url: "https://get.helm.sh/helm-v{{ helm_version }}-linux-{{ kube_arch }}.tar.gz"
-        dest: "/tmp/helm-v{{ helm_version }}-linux-{{ kube_arch }}.tar.gz"
-        mode: "0644"
+    - name: 下载 helm 压缩包(多源+重试)
+      include_tasks: "{{ playbook_dir }}/tasks/download-with-fallback.yml"
+      vars:
+        dl_urls: "{{ helm_bin_mirrors | map('regex_replace', '$', '/helm-v' ~ helm_version ~ '-linux-' ~ kube_arch ~ '.tar.gz') | list }}"
+        dl_dest: "/tmp/helm-v{{ helm_version }}-linux-{{ kube_arch }}.tar.gz"
+        dl_mode: "0644"
     - name: 解压 helm
       unarchive:
         src: "/tmp/helm-v{{ helm_version }}-linux-{{ kube_arch }}.tar.gz"

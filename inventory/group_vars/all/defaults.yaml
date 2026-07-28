@@ -110,6 +110,13 @@ coredns_version:     "{{ (k8s_compat[k8s_minor] | default({})).coredns | default
 pause_image_version: "{{ (k8s_compat[k8s_minor] | default({})).pause   | default('3.10.1') }}"
 crictl_version:      "{{ (k8s_compat[k8s_minor] | default({})).crictl  | default(k8s_version) }}"
 
+# ===== 派生: github 类二进制的多源下载列表(由 env.yaml 的 gh_proxies 拼各仓库路径) =====
+# 每个源都是 <代理前缀>/<owner>/<repo>/releases/download; 下载时再接 /v{ver}/<文件名>。
+# ghfast 风格(.../https://github.com) 与 daocloud 风格(.../github.com) 都能这样拼。
+containerd_bin_mirrors: "{{ gh_proxies | map('regex_replace', '$', '/containerd/containerd/releases/download') | list }}"
+runc_bin_mirrors:       "{{ gh_proxies | map('regex_replace', '$', '/opencontainers/runc/releases/download') | list }}"
+crictl_bin_mirrors:     "{{ gh_proxies | map('regex_replace', '$', '/kubernetes-sigs/cri-tools/releases/download') | list }}"
+
 # ================= 派生: 镜像仓库(离线 Harbor / 在线 mirror) =================
 kube_image_repository: "{{ registry if (is_offline | default(false) | bool) else kube_image_mirror }}"
 calico_images:

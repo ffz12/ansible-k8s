@@ -48,11 +48,12 @@
         mode: '0755'
       when: is_offline | default(false) | bool
 
-    - name: Download etcd tarball to remote /tmp (在线, 官网受限可改 etcd_bin_mirror)
-      get_url:
-        url: "{{ etcd_bin_mirror }}/v{{ etcd_version }}/{{ etcd_tar }}"
-        dest: "/tmp/{{ etcd_tar }}"
-        mode: '0755'
+    - name: Download etcd tarball to remote /tmp (在线, 多源+重试)
+      include_tasks: "{{ playbook_dir }}/tasks/download-with-fallback.yml"
+      vars:
+        dl_urls: "{{ etcd_bin_mirrors | map('regex_replace', '$', '/v' ~ etcd_version ~ '/' ~ etcd_tar) | list }}"
+        dl_dest: "/tmp/{{ etcd_tar }}"
+        dl_mode: "0755"
       when: not (is_offline | default(false) | bool)
 
     - name: Extract etcd tarball on remote host
