@@ -16,6 +16,8 @@
     state: absent
   loop:
     - /usr/local/bin/containerd
+    - /usr/local/bin/containerd-shim
+    - /usr/local/bin/containerd-shim-runc-v1
     - /usr/local/bin/containerd-shim-runc-v2
     - /usr/local/bin/containerd-stress
     - /usr/local/bin/ctr
