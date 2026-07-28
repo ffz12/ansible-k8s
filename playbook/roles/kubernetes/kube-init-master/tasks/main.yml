@@ -18,6 +18,30 @@
   run_once: true
   delegate_to: localhost
 
+# 预检: containerd 的 sandbox_image 必须与当前变量渲染值一致
+# 防止「改了 k8s_version / is_offline 却没重跑 containerd-setup」→ config.toml 里 pause
+# 地址过期(旧版本号 or 离线 harbor 地址),kubeadm init 拉不到 pause 卡死在 wait-control-plane
+- name: 读取节点上 containerd 的 sandbox_image
+  shell: "awk -F'\"' '/sandbox_image/ {print $2}' /etc/containerd/config.toml"
+  register: node_sandbox_image
+  changed_when: false
+  failed_when: false
+  when: "'containerd' in kube_criSocket"
+
+- name: 预检 —— containerd sandbox_image 与当前配置一致
+  assert:
+    that:
+      - (node_sandbox_image.stdout | default('') | trim) == sandbox_image
+    fail_msg: >-
+      节点 {{ inventory_hostname }} 的 containerd sandbox_image =
+      "{{ node_sandbox_image.stdout | default('(未读到/文件缺失)') | trim }}",
+      与当前配置期望值 "{{ sandbox_image }}" 不一致
+      —— 通常是改了 k8s_version 或 is_offline 后没重跑 containerd-setup。
+      请先执行: ansible-playbook -i inventory/hosts playbook/containerd-setup.yaml -l {{ inventory_hostname }}
+      再重试 k8s 初始化。
+    success_msg: "containerd sandbox_image 校验通过: {{ sandbox_image }}"
+  when: "'containerd' in kube_criSocket"
+
 # 按标签执行阶段
 
 - name: 同步 k8s 核心镜像到 Harbor(仅离线)
