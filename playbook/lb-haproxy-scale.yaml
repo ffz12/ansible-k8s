@@ -1,0 +1,26 @@
+---
+# 新增 LB 节点 / 变更 [k8slb] 成员后, 重新渲染全部 LB 节点的 haproxy + keepalived 配置。
+# 对称于 lb-scale.yaml(nginx)。
+#
+# 用法: 在 inventory 的 [k8slb] 加上新节点, 然后执行本 playbook。
+# 原理: haproxy 后端列表与 keepalived 优先级都按 [k8slb] 组自动计算,
+#       重跑 haproxy-ha role 即完成「新节点安装 + 所有节点配置刷新」。
+# 注意: role 内对 haproxy/keepalived 执行 restarted, 重跑会短暂重启 keepalived,
+#       当前持有 VIP 的节点可能出现秒级 VIP 瞬断(对 apiserver 访问基本无感)。
+
+- name: 校验 LB 节点数量
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: 至少保留 2 个 LB 节点(高可用前提)
+      assert:
+        that:
+          - (groups['k8slb'] | default([])) | length >= 2
+        fail_msg: "[k8slb] 少于 2 个节点, 无法构成高可用: {{ groups['k8slb'] | default([]) }}"
+        success_msg: "[k8slb] = {{ groups['k8slb'] }}"
+      run_once: yes
+
+- name: 安装 / 刷新 HAProxy-HA 配置
+  hosts: k8slb
+  roles:
+    - haproxy-ha

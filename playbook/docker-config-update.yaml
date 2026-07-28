@@ -2,7 +2,7 @@
 # 按行内 accelerator_type 刷对应配置(与 docker-install 一致)
 - hosts: docker
   roles:
-    - role: update-docker-gpu
+    - role: docker/docker-gpu
       when: accelerator_type | default('none') == 'nvidia'
-    - role: update-docker-daemon
+    - role: docker/docker-daemon
       when: accelerator_type | default('none') != 'nvidia'

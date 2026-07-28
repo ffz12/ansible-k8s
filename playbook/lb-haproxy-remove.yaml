@@ -1,0 +1,7 @@
+---
+# 从所有 LB 节点整体卸载 HAProxy-HA(haproxy + keepalived)
+# 对称于 lb-nginx-remove.yaml
+- name: 卸载 HAProxy-HA 高可用组件
+  hosts: k8slb
+  roles:
+    - remove/remove-haproxy-ha

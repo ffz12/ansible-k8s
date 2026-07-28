@@ -1,0 +1,52 @@
+---
+# 卸载 HAProxy-HA(haproxy + keepalived, 包管理安装模式)
+# 与 nginx-ha 不同: haproxy/keepalived 是 yum/apt 装的, 用包自带 systemd 服务,
+# 无自定义二进制/用户/服务文件, 因此卸载 = 停服务 + 删配置 + 卸载软件包。
+# 服务停止后 keepalived 会自动释放 VIP。
+
+- name: 停止并禁用 haproxy / keepalived
+  systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: no
+    daemon_reload: yes
+  loop:
+    - haproxy
+    - keepalived
+  ignore_errors: yes
+
+- name: 删除 haproxy / keepalived 配置文件
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/haproxy/haproxy.cfg
+    - /etc/keepalived/keepalived.conf
+    - /etc/keepalived/check_haproxy.sh
+
+- name: 卸载 haproxy / keepalived 软件包(RedHat 系)
+  yum:
+    name:
+      - haproxy
+      - keepalived
+    state: absent
+  when: ansible_distribution in ['RedHat', 'openEuler', 'CentOS']
+  ignore_errors: yes
+
+- name: 卸载 haproxy / keepalived 软件包(Debian 系)
+  apt:
+    name:
+      - haproxy
+      - keepalived
+    state: absent
+    purge: yes
+  when: ansible_distribution in ['Debian', 'Ubuntu']
+  ignore_errors: yes
+
+- name: 重新加载 systemd
+  systemd:
+    daemon_reload: yes
+
+- name: 输出卸载完成信息
+  debug:
+    msg: "✅ HAProxy-HA 卸载完成: 服务已停、VIP 已释放、配置与软件包已清理 ({{ inventory_hostname }})"

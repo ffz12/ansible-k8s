@@ -1,0 +1,31 @@
+---
+# 删除某个 LB 节点 + 刷新剩余节点配置。对称于 lb-scale-remove.yaml(nginx)。
+#
+# 用法(两步):
+#   1) inventory 里把被删节点从 [k8slb] 移除, 并把它列入 [master_to_delete];
+#   2) 执行本 playbook。
+# 效果: 清理被删节点(停服务/释放 VIP/删配置/卸载软件包) + 按剩余 [k8slb] 刷新配置。
+
+- name: 校验删除后 LB 节点数量
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: 删除后至少保留 2 个 LB 节点
+      assert:
+        that:
+          - (groups['k8slb'] | default([])) | length >= 2
+        fail_msg: >-
+          删除后 [k8slb] 少于 2 个节点: {{ groups['k8slb'] | default([]) }}
+          (请确认被删节点已从 [k8slb] 移出)
+        success_msg: "剩余 [k8slb] = {{ groups['k8slb'] }}"
+      run_once: yes
+
+- name: 卸载被删除的 LB 节点
+  hosts: "{{ groups['master_to_delete'] | default([]) }}"
+  roles:
+    - remove/remove-haproxy-ha
+
+- name: 刷新剩余 LB 节点的 HAProxy-HA 配置
+  hosts: k8slb
+  roles:
+    - haproxy-ha

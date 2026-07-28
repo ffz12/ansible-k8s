@@ -1,8 +1,8 @@
 - hosts: containerd
   become: yes
   roles:
-    - role: containerd_install   # 先装 containerd 二进制 + runc + 服务
-    - role: container-toolkit    # 再装加速器运行时(nvidia/dcu/npu)
-    - role: containerd_setup     # 最后配置 config.toml / registry / CDI
+    - role: containerd/containerd-install   # 先装 containerd 二进制 + runc + 服务
+    - role: container-toolkit               # 再装加速器运行时(nvidia/dcu/npu)
+    - role: containerd/containerd-setup     # 最后配置 config.toml / registry / CDI
     
 

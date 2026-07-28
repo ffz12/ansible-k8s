@@ -1,12 +1,12 @@
 # 安装 docker(给 Harbor / cri-docker 用; k8s 节点用 containerd,不需要)
 # 与 containerd 一致: 一个 [docker] 组, 每台按行内 accelerator_type 决定:
-#   accelerator_type=nvidia -> docker + nvidia-container-toolkit(update-docker-gpu)
-#   其它/不设            -> docker + 普通 daemon.json(update-docker-daemon)
+#   accelerator_type=nvidia -> docker + nvidia-container-toolkit(docker/docker-gpu)
+#   其它/不设            -> docker + 普通 daemon.json(docker/docker-daemon)
 - name: 安装 docker
   hosts: docker
   roles:
-    - docker
-    - role: update-docker-gpu
+    - docker/docker-install
+    - role: docker/docker-gpu
       when: accelerator_type | default('none') == 'nvidia'
-    - role: update-docker-daemon
+    - role: docker/docker-daemon
       when: accelerator_type | default('none') != 'nvidia'

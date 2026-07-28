@@ -1,4 +1,4 @@
 - hosts: containerd
   become: yes
   roles:
-    - remove/remove-containerd
+    - containerd/containerd-remove
