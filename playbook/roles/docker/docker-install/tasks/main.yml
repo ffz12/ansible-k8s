@@ -49,7 +49,7 @@
   block:
     - name: 解压 Docker 压缩包
       unarchive:
-        src: "{{ offline_binaries }}/docker/{{ docker_arch_map[ansible_architecture].pkg }}"
+        src: "{{ offline_artifacts }}/docker/{{ docker_arch_map[ansible_architecture].pkg }}"
         dest: /tmp
     - name: 批量移动二进制文件
       copy:
@@ -62,7 +62,7 @@
 
 - name: 安装 Docker 插件 (Buildx & Compose)
   copy:
-    src: "{{ offline_binaries }}/docker/{{ item.src }}"
+    src: "{{ offline_artifacts }}/docker/{{ item.src }}"
     dest: "/usr/libexec/docker/cli-plugins/{{ item.dest }}"
     mode: '0755'
   loop:
@@ -71,7 +71,7 @@
 
 - name: 安装 Docker-Compose
   copy:
-    src: "{{ offline_binaries }}/docker/{{ item.src }}"
+    src: "{{ offline_artifacts }}/docker/{{ item.src }}"
     dest: "/usr/local/bin/{{ item.dest }}"
     mode: '0755'
   loop:

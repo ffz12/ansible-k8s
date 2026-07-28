@@ -92,7 +92,7 @@ keepalived_conf_dir: "{{ keepalived_dir }}/etc"
 keepalived_sbin_dir: "{{ keepalived_dir }}/sbin"
 
 # ================= 派生: 离线路径 / Harbor 地址 =================
-offline_binaries: "{{ playbook_dir | dirname }}/offline/binaries"
+offline_artifacts: "{{ playbook_dir | dirname }}/offline/artifacts"
 harbor_dns: "{{ harbor_instances[0].dns }}"
 harbor_ip: "{{ harbor_instances[0].ip }}"
 registry: "{{ harbor_dns }}/{{ harbor_project | default('unisound') }}"   # 自建 harbor 前缀(项目名在 env.yaml)
@@ -129,19 +129,19 @@ flannel_images:
 cilium_image_repo: "{{ registry if (is_offline | default(false) | bool) else cilium_registry_online }}"
 
 # ================= 离线包路径(多版本 v{{k8s_version}}) =================
-k8s_bin_src: "{{ offline_binaries }}/kubernetes/v{{ k8s_version }}/bin"
-src_k8s_images_dir: "{{ offline_binaries }}/kubernetes/v{{ k8s_version }}/images"
+k8s_bin_src: "{{ offline_artifacts }}/kubernetes/v{{ k8s_version }}/bin"
+src_k8s_images_dir: "{{ offline_artifacts }}/kubernetes/v{{ k8s_version }}/images"
 k8s_images_dir: "/opt/kubernetes"
-src_calico_images_dir: "{{ offline_binaries }}/cni/calico/v{{ calico_version }}/images"
+src_calico_images_dir: "{{ offline_artifacts }}/cni/calico/v{{ calico_version }}/images"
 calico_images_dir: "/opt/calico"
-src_flannel_images_dir: "{{ offline_binaries }}/cni/flannel/v{{ flannel_version }}/images"
+src_flannel_images_dir: "{{ offline_artifacts }}/cni/flannel/v{{ flannel_version }}/images"
 flannel_images_dir: "/opt/flannel"
-src_cilium_images_dir: "{{ offline_binaries }}/cni/cilium/v{{ cilium_version }}/images"
+src_cilium_images_dir: "{{ offline_artifacts }}/cni/cilium/v{{ cilium_version }}/images"
 cilium_images_dir: "/opt/cilium"
-src_multus_cni_images_dir: "{{ offline_binaries }}/cni/multus/v{{ multus_cni_version }}/images"
+src_multus_cni_images_dir: "{{ offline_artifacts }}/cni/multus/v{{ multus_cni_version }}/images"
 multus_cni_images_dir: "/opt/multus_cni"
-helm_bin_src: "{{ offline_binaries }}/helm/v{{ helm_version }}"
-cilium_chart_src: "{{ offline_binaries }}/cni/cilium/v{{ cilium_version }}/cilium-{{ cilium_version }}.tgz"
+helm_bin_src: "{{ offline_artifacts }}/helm/v{{ helm_version }}"
+cilium_chart_src: "{{ offline_artifacts }}/cni/cilium/v{{ cilium_version }}/cilium-{{ cilium_version }}.tgz"
 
 # ================= 组件清单 =================
 k8s_components:

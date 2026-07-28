@@ -15,7 +15,7 @@ git clone <仓库地址>
 ```bash
 GIT_LFS_SKIP_SMUDGE=1 git clone <仓库地址>
 # 之后需要某些离线包时再按需拉取：
-git lfs pull --include="offline/binaries/harbor/x86/*"
+git lfs pull --include="offline/artifacts/harbor/x86/*"
 ```
 
 ### 3. 浅克隆（只取最新版本，不要历史）
@@ -29,20 +29,20 @@ git clone --depth=1 <仓库地址>
 ```bash
 GIT_LFS_SKIP_SMUDGE=1 git clone <仓库地址>
 cd ansible-ai
-git lfs pull --exclude="offline/binaries/ios-offline/*,offline/binaries/dcu/*,offline/binaries/nginx-ha/*,offline/binaries/npu/*,offline/ansible-pkg-install/*"
+git lfs pull --exclude="offline/artifacts/ios-offline/*,offline/artifacts/dcu/*,offline/artifacts/nginx-ha/*,offline/artifacts/npu/*,offline/ansible-pkg-install/*"
 ```
 上例排除 ios-offline / dcu / nginx-ha / npu / ansible-pkg-install（约省 1.85G），仍会下载 harbor / containerd / runc 等。
 
 让排除**永久生效**（之后 pull/checkout 都跳过）：
 ```bash
-git config lfs.fetchexclude "offline/binaries/ios-offline/*,offline/binaries/dcu/*,offline/binaries/nginx-ha/*,offline/binaries/npu/*,offline/ansible-pkg-install/*"
+git config lfs.fetchexclude "offline/artifacts/ios-offline/*,offline/artifacts/dcu/*,offline/artifacts/nginx-ha/*,offline/artifacts/npu/*,offline/ansible-pkg-install/*"
 # 取消: git config --unset lfs.fetchexclude
 ```
 
 反向——**只拉本机需要的**（更精准）：
 ```bash
 GIT_LFS_SKIP_SMUDGE=1 git clone <仓库地址> && cd ansible-ai
-git lfs pull --include="offline/binaries/harbor/*,offline/binaries/containerd/*,offline/binaries/runc/*"
+git lfs pull --include="offline/artifacts/harbor/*,offline/artifacts/containerd/*,offline/artifacts/runc/*"
 ```
 
 > 各 LFS 目录大小参考：ios-offline ~1.5G、harbor ~2G、ansible-pkg-install ~269M、
@@ -63,7 +63,7 @@ git lfs ls-files -s
 git lfs pull
 
 # 按目录/模式拉取部分 LFS 文件
-git lfs pull --include="offline/binaries/ios-offline/*"
+git lfs pull --include="offline/artifacts/ios-offline/*"
 
 # 查看 LFS 跟踪规则（即 .gitattributes 里配置的）
 git lfs track

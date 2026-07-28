@@ -1,7 +1,7 @@
 - name: cri-dockerd包初始化x86版本
   block:
   - name: cir-dockerd包拷贝
-    copy: src={{ offline_binaries }}/docker/{{ cri_dockerd_x86 }} dest=/tmp mode=0755
+    copy: src={{ offline_artifacts }}/docker/{{ cri_dockerd_x86 }} dest=/tmp mode=0755
   - name: 解压 
     shell: |
       tar xf /tmp/{{ cri_dockerd_x86 }} -C /tmp
@@ -11,7 +11,7 @@
 - name:  cri-dockerd包初始化aarch64
   block:
   - name: cri-dockerd包拷贝
-    copy: src={{ offline_binaries }}/docker/{{ cri_dockerd_aarch64 }} dest=/tmp mode=0755
+    copy: src={{ offline_artifacts }}/docker/{{ cri_dockerd_aarch64 }} dest=/tmp mode=0755
   - name: 解压
     shell: |
       tar xf /tmp/{{ cri_dockerd_aarch64 }} -C /tmp

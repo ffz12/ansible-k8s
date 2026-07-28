@@ -41,7 +41,7 @@
 
     - name: 动态同步对应架构的 RPM 离线安装包
       unarchive: 
-        src: "{{ offline_binaries }}/ios-offline/kylin_{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}.tar.gz" 
+        src: "{{ offline_artifacts }}/ios-offline/kylin_{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}.tar.gz" 
         dest: /opt/kylin-pkgs/
         mode: '0644'
         owner: root

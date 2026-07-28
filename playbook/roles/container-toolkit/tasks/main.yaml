@@ -30,7 +30,7 @@
   block:
     - name: 拷贝 NVIDIA RPM 安装包
       copy:
-        src: "{{ offline_binaries }}/nvidia-gpu/rhel-gpu/"
+        src: "{{ offline_artifacts }}/nvidia-gpu/rhel-gpu/"
         dest: /tmp/nvidia-gpu-rpm/
     - name: 本地 YUM 安装 NVIDIA 组件
       yum:
@@ -46,7 +46,7 @@
   block:
     - name: 拷贝 NVIDIA DEB 安装包
       copy:
-        src: "{{ offline_binaries }}/nvidia-gpu/debian-gpu/"
+        src: "{{ offline_artifacts }}/nvidia-gpu/debian-gpu/"
         dest: /tmp/nvidia-gpu-deb/
     - name: Dpkg 安装 NVIDIA 组件
       shell: "dpkg -i /tmp/nvidia-gpu-deb/*.deb || apt-get --fix-broken install -y"
@@ -64,7 +64,7 @@
   block:
     - name: 拷贝 DCU RPM 安装包
       copy:
-        src: "{{ offline_binaries }}/dcu/rhel-dcu/"
+        src: "{{ offline_artifacts }}/dcu/rhel-dcu/"
         dest: /opt/dcu-rpm/
     - name: 本地 YUM 安装 DCU 组件
       yum:
@@ -80,7 +80,7 @@
   block:
     - name: 拷贝 DCU DEB 安装包（已修正原脚本 src 路径错误）
       copy:
-        src: "{{ offline_binaries }}/dcu/debian-dcu/"
+        src: "{{ offline_artifacts }}/dcu/debian-dcu/"
         dest: /opt/dcu-deb/
     - name: Dpkg 安装 DCU 组件
       shell: "dpkg -i /opt/dcu-deb/*.deb || apt-get --fix-broken install -y"
@@ -103,7 +103,7 @@
 
     - name: 🚚 拷贝对应架构的 NPU .run 安装包到节点
       copy:
-        src: "{{ offline_binaries }}/npu/{{ ascend_run_file }}"
+        src: "{{ offline_artifacts }}/npu/{{ ascend_run_file }}"
         dest: "/opt/{{ ascend_run_file }}"
         mode: '0755'
     

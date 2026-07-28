@@ -36,7 +36,7 @@
 
 - name: 解压 containerd 二进制到 /usr/local (离线,版本不符时覆盖)
   unarchive:
-    src: "{{ offline_binaries }}/containerd/v{{ containerd_version }}/{{ containerd_arch }}/containerd-{{ containerd_version }}-linux-{{ containerd_arch }}.tar.gz"
+    src: "{{ offline_artifacts }}/containerd/v{{ containerd_version }}/{{ containerd_arch }}/containerd-{{ containerd_version }}-linux-{{ containerd_arch }}.tar.gz"
     dest: /usr/local
     remote_src: no
   when:
@@ -66,7 +66,7 @@
 # 3. runc (官方 containerd 包不含 runc,单独装)
 - name: 安装 runc 到 /usr/local/sbin/runc (离线)
   copy:
-    src: "{{ offline_binaries }}/runc/v{{ runc_version }}/{{ containerd_arch }}/runc.{{ containerd_arch }}"
+    src: "{{ offline_artifacts }}/runc/v{{ runc_version }}/{{ containerd_arch }}/runc.{{ containerd_arch }}"
     dest: /usr/local/sbin/runc
     owner: root
     group: root

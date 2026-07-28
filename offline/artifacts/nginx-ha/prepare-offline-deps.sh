@@ -2,7 +2,7 @@
 set -e
 
 # 输出目录（相对于脚本位置）
-OUTPUT_DIR="offline/binaries/nginx-ha/deps"
+OUTPUT_DIR="offline/artifacts/nginx-ha/deps"
 
 DEB_PKGS=(
     libssl3

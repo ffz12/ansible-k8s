@@ -13,7 +13,7 @@
 
     - name: 动态拷贝对应版本和架构的 DEB 离线包到目标机
       unarchive: 
-        src: "{{ offline_binaries }}/ios-offline/ubuntu{{ ansible_distribution_version.split('.')[0] }}_{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}.tar.gz"
+        src: "{{ offline_artifacts }}/ios-offline/ubuntu{{ ansible_distribution_version.split('.')[0] }}_{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}.tar.gz"
         dest: /opt/ubuntu-offline-pkgs/
         mode: '0644'
         owner: root

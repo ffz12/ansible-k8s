@@ -36,7 +36,7 @@
   set_fact:
     etcd_tar: "etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz"
     etcd_dir: "etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}"
-    etcd_src_path: "{{ playbook_dir }}/../offline/binaries/etcd/v{{ etcd_version }}/{{ etcd_arch }}/etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz"
+    etcd_src_path: "{{ playbook_dir }}/../offline/artifacts/etcd/v{{ etcd_version }}/{{ etcd_arch }}/etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz"
   when: not etcd_installed.stat.exists
 
 - name: Deploy etcd binaries

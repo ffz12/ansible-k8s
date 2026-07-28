@@ -88,7 +88,7 @@
 
 - name: 拷贝 Keepalived 二进制
   copy:
-    src: "{{ offline_binaries }}/nginx-ha/bin/{{ _bin_os_dir }}/{{ _bin_arch_dir }}/keepalived"
+    src: "{{ offline_artifacts }}/nginx-ha/bin/{{ _bin_os_dir }}/{{ _bin_arch_dir }}/keepalived"
     dest: "{{ keepalived_sbin_dir }}/keepalived"
     mode: "0755"
     owner: root
@@ -96,7 +96,7 @@
 
 - name: 拷贝 Nginx 二进制
   copy:
-    src: "{{ offline_binaries }}/nginx-ha/bin/{{ _bin_os_dir }}/{{ _bin_arch_dir }}/nginx"
+    src: "{{ offline_artifacts }}/nginx-ha/bin/{{ _bin_os_dir }}/{{ _bin_arch_dir }}/nginx"
     dest: "{{ nginx_sbin_dir }}/nginx"
     mode: "0755"
     owner: nginx

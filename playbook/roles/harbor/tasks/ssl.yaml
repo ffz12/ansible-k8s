@@ -76,12 +76,12 @@
   run_once: true
   become: false
   file:
-    path: "{{ offline_binaries }}/harbor/{{ harbor_dns }}/certs/"
+    path: "{{ offline_artifacts }}/harbor/{{ harbor_dns }}/certs/"
     state: directory
     mode: '0700'
 
 - name: Fetch Harbor CA from remote node to control node
   fetch:
     src: "{{ harbor_copy_path }}/harbor/ssl/ca.crt"
-    dest: "{{ offline_binaries }}/harbor/{{ harbor_dns }}/certs/{{ harbor_ip }}-ca.crt"
+    dest: "{{ offline_artifacts }}/harbor/{{ harbor_dns }}/certs/{{ harbor_ip }}-ca.crt"
     flat: yes
