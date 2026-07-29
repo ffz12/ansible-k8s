@@ -529,3 +529,66 @@ echo "请重启系统以使用新内核: sudo reboot"
 ```
 
 
+
+---
+
+# NVIDIA fabricmanager / peermem（HGX/NVLink 节点必配）
+
+> 适用于 HGX（如 H100/A100 8 卡 NVSwitch）节点。装完 GPU 驱动后需再装
+> **fabricmanager**（NVSwitch 拓扑管理）并加载 **nvidia-peermem**（GPUDirect RDMA），否则
+> `nvidia-smi topo -m` 看不到 NVLink、或 GPU 无法互联。
+
+## 安装 fabricmanager
+
+> **下载地址**（NVIDIA 官方 CUDA 仓库，按系统/架构换目录）：
+> - Ubuntu 22.04 / x86_64：<https://developer.download.nvidia.cn/compute/cuda/repos/ubuntu2204/x86_64/>
+> - 其它系统在 `repos/` 下换对应目录（如 `rhel9`、`ubuntu2404`、`sbsa`(arm64)）
+> - 包名：`nvidia-fabricmanager_<驱动版本>_amd64.deb` / `nvidia-fabric-manager-<驱动版本>.rpm`
+>
+> ⚠️ **fabricmanager 版本必须与 NVIDIA 驱动版本严格一致**（如驱动 580.126.09 → fabricmanager 580.126.09），否则服务起不来。
+
+- Red Hat / CentOS:
+
+```bash
+rpm -ivh nvidia-fabric-manager-535.104.12-1.x86_64.rpm
+```
+
+- Debian / Ubuntu:
+
+```bash
+dpkg -i nvidia-fabricmanager_580.126.09-1_amd64.deb
+```
+
+## 启动并检查服务
+
+```bash
+systemctl enable nvidia-fabricmanager.service --now
+systemctl status nvidia-fabricmanager.service
+```
+
+## 验证 GPU 拓扑
+
+```bash
+nvidia-smi topo -m
+```
+
+## 启用 nvidia-peermem（GPUDirect RDMA）
+
+```bash
+lsmod | grep nvidia_peermem
+echo "nvidia-peermem" | sudo tee /etc/modules-load.d/nvidia-peermem.conf
+modprobe -v nvidia-peermem
+```
+
+## 批量检查（ansible）
+
+```bash
+# fabricmanager 状态 / 开机自启
+ansible gpu -m shell -a "systemctl status nvidia-fabricmanager.service"
+ansible gpu -m shell -a "systemctl is-enabled nvidia-fabricmanager.service"
+# nvidia-peermem 是否加载
+ansible gpu -m shell -a "lsmod | grep nvidia_peermem"
+# nvidia-container-toolkit 是否安装（deb / rpm）
+ansible gpu -m shell -a "dpkg -l | grep nvidia-container-toolkit"
+ansible gpu -m shell -a "rpm -qa | grep nvidia-container-toolkit"
+```
