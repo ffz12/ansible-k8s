@@ -2,7 +2,8 @@
 
 # ================= 配置区域 =================
 # 要打包的 RPM(用户指定 + 常用基础依赖); dnf 会自动带上全部依赖
-OFFLINE_PKGS="openssl-libs pcre zlib socat chrony ipvsadm conntrack-tools nfs-utils ansible unzip wget net-tools lrzsz vim tar rsync tmux htop bash-completion curl gcc gcc-c++ make cmake git ipset ebtables libseccomp bzip2 sysstat iotop lsof psmisc nmap-ncat telnet jq device-mapper-persistent-data lvm2 python3"
+# 注: 不含 ansible —— ansible 只装在控制机, 由 download-ansible-offline.sh 单独打包(避免重复)
+OFFLINE_PKGS="openssl-libs pcre zlib socat chrony ipvsadm conntrack-tools nfs-utils unzip wget net-tools lrzsz vim tar rsync tmux htop bash-completion curl gcc gcc-c++ make cmake git ipset ebtables libseccomp bzip2 sysstat iotop lsof psmisc nmap-ncat telnet jq device-mapper-persistent-data lvm2 python3"
 
 # openEuler 容器镜像(多架构); 若拉不到可换成实际可用 tag,如 22.03-lts-sp4
 EULER_IMAGE="openeuler/openeuler:22.03-lts"
