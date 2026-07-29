@@ -1,9 +1,10 @@
 #!/bin/bash
 # =============================================================================
-#  download-docker-offline.sh —— 在【有网】机器上把 docker 层离线物料一次下齐(双架构)。
-#  下载: docker 静态包 + buildx 插件 + compose 插件 + cri-dockerd, 存进 offline/artifacts/docker/。
-#  文件名严格对齐 ansible 角色期望(docker_arch_map / cri_dockerd_*), 拷回内网即用。
-#  containerd/runc 不在这里(已由 download-k8s-offline.sh 下)。
+#  download-docker-offline.sh —— 在【有网】机器上把底座运行时 + docker 层离线物料一次下齐(双架构)。
+#  下载: containerd + runc + docker 静态包 + buildx 插件 + compose 插件 + cri-dockerd。
+#  文件名严格对齐 ansible 角色期望(docker_arch_map / cri_dockerd_* / containerd_version / runc_version), 拷回内网即用。
+#  ★ containerd/runc 是底座运行时(docker 复用 containerd, harbor 节点也需要), 故归本脚本;
+#    这样"只离线装底座(不上 k8s)"也自洽, 无需先跑 download-k8s-offline.sh。
 #
 #  源: docker 静态包走 download.docker.com; buildx/compose/cri-dockerd 走 daocloud 的
 #      github 代理(files.m.daocloud.io/github.com, 国内快)。
@@ -28,13 +29,18 @@ DOCKER="29.4.2"        # docker 静态二进制包 -> {amd,arm}-docker-$DOCKER.t
 BUILDX="0.32.1"        # docker/buildx        -> buildx-v$BUILDX.linux-{amd64,arm64}
 COMPOSE="2.32.4"       # docker/compose       -> docker-compose-linux-{x86_64,aarch64}(换版本核对 releases)
 CRIDOCKERD="0.3.16"    # Mirantis/cri-dockerd -> cri-dockerd-$CRIDOCKERD.{amd64,arm64}.tgz
+CONTAINERD="1.7.32"    # containerd 静态包(与 env.yaml containerd_version 一致; 换 2.2.3 改这里重下)
+RUNC="1.1.12"          # runc(containerd 依赖; 官方 containerd 包不含 runc, 单独下)
 
 # -------- 源 --------
 DOCKER_STATIC="https://download.docker.com/linux/static/stable"
 DAO="https://files.m.daocloud.io"
 GH="$DAO/github.com"
+CONTAINERD_BIN="$GH/containerd/containerd/releases/download"
+RUNC_BIN="$GH/opencontainers/runc/releases/download"
 
-D="$(cd "$(dirname "$0")/artifacts" && pwd)/docker"    # offline/artifacts/docker
+A="$(cd "$(dirname "$0")/artifacts" && pwd)"    # offline/artifacts (containerd/runc 落这层)
+D="$A/docker"                                    # offline/artifacts/docker
 mkdir -p "$D"
 say(){ echo -e "\033[0;32m[+] $*\033[0m"; }
 
@@ -75,9 +81,15 @@ for GOARCH in $ARCHES; do
   dl "$GH/docker/compose/releases/download/v$COMPOSE/docker-compose-linux-$COMP"    "$D/docker-compose-linux-$COMP"
   # 4) cri-dockerd(-> cri-dockerd-$CRIDOCKERD.$GOARCH.tgz, 对齐 cri_dockerd_{x86,aarch64})
   dl "$GH/Mirantis/cri-dockerd/releases/download/v$CRIDOCKERD/cri-dockerd-$CRIDOCKERD.$GOARCH.tgz" "$D/cri-dockerd-$CRIDOCKERD.$GOARCH.tgz"
+  # 5) containerd 静态包(底座运行时, docker 复用它; -> artifacts/containerd/v$CONTAINERD/$GOARCH/)
+  dl "$CONTAINERD_BIN/v$CONTAINERD/containerd-$CONTAINERD-linux-$GOARCH.tar.gz" "$A/containerd/v$CONTAINERD/$GOARCH/containerd-$CONTAINERD-linux-$GOARCH.tar.gz"
+  # 6) runc(containerd 依赖; -> artifacts/runc/v$RUNC/$GOARCH/runc.$GOARCH)
+  dl "$RUNC_BIN/v$RUNC/runc.$GOARCH" "$A/runc/v$RUNC/$GOARCH/runc.$GOARCH"; chmod +x "$A/runc/v$RUNC/$GOARCH/runc.$GOARCH"
 done
 
 echo -e "\n=========================================================="
-echo " docker 层离线物料下载完成! 目录: $D"
+echo " 底座运行时 + docker 层离线物料下载完成!"
+echo "   docker 层:      $D"
+echo "   containerd/runc: $A/containerd , $A/runc"
 ls -1 "$D"
 echo "=========================================================="

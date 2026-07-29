@@ -25,8 +25,6 @@ COREDNS="1.12.1"             # 对着 `kubeadm config images list --kubernetes-v
 PAUSE="3.10.1"               # 同上(注意 pause tag 无 v 前缀)
 CRICTL="1.34.0"
 ETCD="3.6.8"
-CONTAINERD="1.7.32"
-RUNC="1.1.12"
 CALICO="3.27.5"
 FLANNEL="0.26.7"
 FLANNEL_CNI="1.6.2-flannel1"
@@ -45,8 +43,6 @@ DAO="https://files.m.daocloud.io"
 K8S_BIN="$DAO/dl.k8s.io/release"
 CRICTL_BIN="$DAO/github.com/kubernetes-sigs/cri-tools/releases/download"
 ETCD_BIN="$DAO/github.com/etcd-io/etcd/releases/download"
-CONTAINERD_BIN="$DAO/github.com/containerd/containerd/releases/download"
-RUNC_BIN="$DAO/github.com/opencontainers/runc/releases/download"
 HELM_BIN="$DAO/get.helm.sh"
 CILIUM_HELM_REPO="https://helm.cilium.io"
 
@@ -122,11 +118,9 @@ done
 save_img "$IMG_MIRROR/pause:$PAUSE"     "registry.k8s.io/pause-__ARCH__:$PAUSE"     "$KIMG" "pause"
 save_img "$IMG_MIRROR/coredns:v$COREDNS" "registry.k8s.io/coredns-__ARCH__:v$COREDNS" "$KIMG" "coredns"
 
-# ========== 3. etcd / containerd / runc ==========
+# ========== 3. etcd (containerd/runc 已挪到 download-docker-offline.sh 的底座层) ==========
 for a in $ARCHES; do
   dl "$ETCD_BIN/v$ETCD/etcd-v$ETCD-linux-$a.tar.gz" "$B/etcd/v$ETCD/$a/etcd-v$ETCD-linux-$a.tar.gz"
-  dl "$CONTAINERD_BIN/v$CONTAINERD/containerd-$CONTAINERD-linux-$a.tar.gz" "$B/containerd/v$CONTAINERD/$a/containerd-$CONTAINERD-linux-$a.tar.gz"
-  dl "$RUNC_BIN/v$RUNC/runc.$a" "$B/runc/v$RUNC/$a/runc.$a"; chmod +x "$B/runc/v$RUNC/$a/runc.$a"
 done
 
 # ========== 4. CNI 镜像(按 CNIS 选) ==========
