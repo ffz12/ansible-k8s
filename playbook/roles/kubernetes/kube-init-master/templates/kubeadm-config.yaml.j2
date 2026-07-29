@@ -36,7 +36,18 @@ caCertificateValidityPeriod: 876000h
 certificateValidityPeriod: 876000h
 certificatesDir: /etc/kubernetes/pki
 clusterName: kubernetes
-controllerManager: {}
+apiServer:
+  extraArgs:
+    - name: bind-address
+      value: 0.0.0.0                 # apiserver 默认已监听 0.0.0.0,这里显式写一份
+controllerManager:
+  extraArgs:
+    - name: bind-address
+      value: 0.0.0.0                 # 默认 127.0.0.1;改 0.0.0.0 才能远程抓 10257 metrics
+scheduler:
+  extraArgs:
+    - name: bind-address
+      value: 0.0.0.0                 # 默认 127.0.0.1;改 0.0.0.0 才能远程抓 10259 metrics
 dns: {}
 encryptionAlgorithm: RSA-2048
 etcd:
