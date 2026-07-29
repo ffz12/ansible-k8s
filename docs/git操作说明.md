@@ -1,4 +1,4 @@
-# Git 操作说明（ansible-ai 仓库）
+# Git 操作说明（ansible-k8s 仓库）
 
 > 本仓库使用 **Git LFS** 管理离线二进制（Harbor 镜像、各系统离线包等），`.git` 体积较大（约 4G），克隆/拉取时请注意下面的 LFS 相关说明。
 
@@ -28,7 +28,7 @@ git clone --depth=1 <仓库地址>
 先跳过所有 LFS 克隆，再拉取"除排除项外"的 LFS：
 ```bash
 GIT_LFS_SKIP_SMUDGE=1 git clone <仓库地址>
-cd ansible-ai
+cd ansible-k8s
 git lfs pull --exclude="offline/artifacts/ios-offline/*,offline/artifacts/dcu/*,offline/artifacts/nginx-ha/*,offline/artifacts/npu/*,offline/ansible-pkg-install/*"
 ```
 上例排除 ios-offline / dcu / nginx-ha / npu / ansible-pkg-install（约省 1.85G），仍会下载 harbor / containerd / runc 等。
@@ -41,7 +41,7 @@ git config lfs.fetchexclude "offline/artifacts/ios-offline/*,offline/artifacts/d
 
 反向——**只拉本机需要的**（更精准）：
 ```bash
-GIT_LFS_SKIP_SMUDGE=1 git clone <仓库地址> && cd ansible-ai
+GIT_LFS_SKIP_SMUDGE=1 git clone <仓库地址> && cd ansible-k8s
 git lfs pull --include="offline/artifacts/harbor/*,offline/artifacts/containerd/*,offline/artifacts/runc/*"
 ```
 

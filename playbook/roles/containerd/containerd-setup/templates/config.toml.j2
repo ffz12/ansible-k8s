@@ -1,4 +1,3 @@
-# /root/ansible-ai/playbook/roles/containerd_setup/templates/config.toml.j2
 version = 3
 root = '{{ containerd_root | default("/var/lib/containerd") }}'
 state = '/run/containerd'
