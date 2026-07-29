@@ -19,20 +19,20 @@
 
 | 文档 | 内容 |
 |---|---|
-| **[部署说明.md](部署说明.md)** | **主部署手册**：inventory / 变量 / SSH 免密 / init / 挂盘 / containerd / docker / harbor / LB / etcd / k8s / CNI 切换 / 离线部署 / 常见问题排查 |
-| [AI应用与调度.md](AI应用与调度.md) | 集群装好后的上层：GPU device-plugin / Prometheus / network-operator(RDMA) / MPI Job(nccl) / 调度器 binpack / Volcano / Rayjob / nsight / 镜像同步脚本 |
-| [gpu-ib-install.md](gpu-ib-install.md) | IB 网卡驱动 / GPU 驱动 / nvidia-container-toolkit / fabricmanager / peermem |
-| [containerd.md](containerd.md) | containerd 手工安装、crictl、GPU 运行时、device-plugin、RuntimeClass 调度 |
-| [ceph.md](ceph.md) | Ceph 安装与配置（含 BIOS 调优、内核升级） |
-| [系统维护相关.md](系统维护相关.md) | Ubuntu 网络/apt/内核锁定、NFS、OpenELB、Docker Rootless、Jenkins、K8s 问题汇总 |
-| [docker-user.md](docker-user.md) | Docker 调试方法 |
-| [git操作说明.md](git操作说明.md) | Git / Git LFS 操作（克隆、按需拉大文件、提交、分支、回滚） |
+| **[部署说明.md](docs/部署说明.md)** | **主部署手册**：inventory / 变量 / SSH 免密 / init / 挂盘 / containerd / docker / harbor / LB / etcd / k8s / CNI 切换 / 离线部署 / 常见问题排查 |
+| [AI应用与调度.md](docs/AI应用与调度.md) | 集群装好后的上层：GPU device-plugin / Prometheus / network-operator(RDMA) / MPI Job(nccl) / 调度器 binpack / Volcano / Rayjob / nsight / 镜像同步脚本 |
+| [gpu-ib-install.md](docs/gpu-ib-install.md) | IB 网卡驱动 / GPU 驱动 / nvidia-container-toolkit / fabricmanager / peermem |
+| [containerd.md](docs/containerd.md) | containerd 手工安装、crictl、GPU 运行时、device-plugin、RuntimeClass 调度 |
+| [ceph.md](docs/ceph.md) | Ceph 安装与配置（含 BIOS 调优、内核升级） |
+| [系统维护相关.md](docs/系统维护相关.md) | Ubuntu 网络/apt/内核锁定、NFS、OpenELB、Docker Rootless、Jenkins、K8s 问题汇总 |
+| [docker-user.md](docs/docker-user.md) | Docker 调试方法 |
+| [git操作说明.md](docs/git操作说明.md) | Git / Git LFS 操作（克隆、按需拉大文件、提交、分支、回滚） |
 
 ## 目录结构
 
 - `playbook/`：Ansible Playbook + roles
 - `inventory/`：主机清单 `hosts`（由 `init.sh` 生成）与组变量 `group_vars/all/`（`defaults.yaml` 提交、`env.yaml` 本地私有）
-- `offline/`：离线物料下载脚本与 `artifacts/`（大文件走 Git LFS，见 [git操作说明.md](git操作说明.md)）
+- `offline/`：离线物料下载脚本与 `artifacts/`（大文件走 Git LFS，见 [git操作说明.md](docs/git操作说明.md)）
 - `scripts/`：单机初始化等辅助脚本
 - `tmp/hosts.example`：inventory 模板
 
@@ -54,7 +54,7 @@ ansible-playbook playbook/ssh-passwordless.yaml -k
 # 4. 按《部署说明.md》整体流程走：init → 挂盘 → containerd → docker/harbor → etcd → k8s → CNI
 ```
 
-> 完整分步命令、在线/离线差异、单/多 master、CNI 切换、离线打包与排错，全部见 **[部署说明.md](部署说明.md)**。
+> 完整分步命令、在线/离线差异、单/多 master、CNI 切换、离线打包与排错，全部见 **[部署说明.md](docs/部署说明.md)**。
 
 ## 前置条件
 

@@ -30,7 +30,7 @@ cd monitor/k8s-device-plugin
 
 ```bash
 curl -k -X POST "https://${HARBOR_URL}/api/v2.0/projects" \
-  -u "admin:<HARBOR_PASSWORD>" \
+  -u "admin:Harbor12345" \
   -H "Content-Type: application/json" \
   -d '{
     "project_name": "'"${HARBOR_PROJECT}"'",
@@ -61,8 +61,8 @@ services:
       - no_proxy=localhost,127.0.0.1
 
       # 可选：如果 Docker Hub 频繁触发频率限制，可以配置账号
-      - REGISTRY_PROXY_USERNAME=<DOCKERHUB_USER>
-      - REGISTRY_PROXY_PASSWORD=<DOCKERHUB_TOKEN>
+      - REGISTRY_PROXY_USERNAME=pineking
+      - REGISTRY_PROXY_PASSWORD=dckr_pat_sPbkusqSDlIJTX6fhyeC8TMey5Q
     volumes:
       - ./config.yml:/etc/docker/registry/config.yml
       - /data1/registry:/var/lib/registry
@@ -91,8 +91,8 @@ http:
     X-Content-Type-Options: [nosniff]
 proxy:
   remoteurl: https://registry-1.docker.io
-  username: <DOCKERHUB_USER>
-  password: <DOCKERHUB_TOKEN>
+  username: pineking
+  password: dckr_pat_sPbkusqSDlIJTX6fhyeC8TMey5Q
 
 ```
 ```bash
@@ -573,7 +573,7 @@ RUN sed -i 's/[ #]\(.*StrictHostKeyChecking \).*/ \1no/g' /etc/ssh/ssh_config &&
 RUN groupadd -f -g 2005 nlp && \
     groupadd -f -g 2011 mpitest && \
     useradd -m -u 2011 -g mpitest -G nlp -s /bin/bash mpitest && \
-    echo "mpitest:<CONTAINER_USER_PASSWORD>" | chpasswd && \
+    echo "mpitest:unisound#atlas..!" | chpasswd && \
     echo 'mpitest ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
 
 # 4. 自动克隆并编译 nccl-tests
@@ -662,7 +662,7 @@ RUN sed -i 's/[ #]\(.*StrictHostKeyChecking \).*/ \1no/g' /etc/ssh/ssh_config &&
 # 此处应按照具体情况进行修改：填入使用者host机器的uid、gid、组名、用户名（必须操作）
 
 RUN groupadd -f -g 2005 nlp && groupadd -f -g 2011 mpitest && useradd -m -u 2011 -g mpitest -G nlp -s /bin/bash mpitest \
-    && echo 'mpitest ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers && echo "mpitest:<CONTAINER_USER_PASSWORD>" | chpasswd 
+    && echo 'mpitest ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers && echo "mpitest:unisound#atlas..!" | chpasswd 
 
 # COPY initialize_env.sh /home/mpitest
 USER root
@@ -1382,7 +1382,7 @@ skopeo login harbor.unisound.ai
 # --- 配置区 ---
 DOMAIN="harbor.unisound.ai"
 PROJECT="unisound"
-USER_PASS="admin:<HARBOR_PASSWORD>"  # 刚才测试成功的账号密码
+USER_PASS="admin:Harobor"  # 刚才测试成功的账号密码
 LOCAL_BACKUP_DIR="./local_backup"
 CONCURRENCY=5
 # --------------
@@ -1455,7 +1455,7 @@ echo "✅ 全部镜像打包完成，存放在 $LOCAL_BACKUP_DIR 目录下。"
 # --- 配置区 ---
 NEW_DOMAIN="harbor.unisound.ai"
 NEW_PROJECT="unisound"
-NEW_USER_PASS="admin:<HARBOR_PASSWORD>"
+NEW_USER_PASS="admin:Harobor"
 # 自动获取当前目录下 local_backup 的绝对路径
 LOCAL_BACKUP_DIR="$(pwd)/local_backup"
 CONCURRENCY=5
