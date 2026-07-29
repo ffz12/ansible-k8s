@@ -1,0 +1,90 @@
+#!/bin/bash
+# =============================================================================
+#  download-harbor-offline.sh —— 在【有网】机器上把 Harbor 离线物料下齐(仅 amd64)。
+#  下载: 12 个 goharbor 组件镜像(存成 docker load 可用的 .tar.gz) + docker-compose 二进制。
+#  文件名严格对齐 ansible harbor 角色期望(group_vars 的 harbor_offline_images + x86.yaml),
+#  落到 offline/artifacts/harbor/x86/ , 拷回内网即用。
+#
+#  ★ 为什么只有 amd64: goharbor 官方镜像仅 amd64, Docker Hub 无任何版本的官方 arm64
+#    (多架构 PR goharbor/harbor#21825 至今 stalled)。项目里 harbor_images_aarch64 那套
+#    v2.13.0-aarch64 是社区/手工构建的, 见 artifacts/harbor/aarch64/harbor/downimage.sh —
+#    arm64 请沿用该手工流程(docker pull 社区 arm64 镜像 -> docker save | gzip), 本脚本不代劳。
+#
+#  源: goharbor 镜像走 daocloud 加速(docker.m.daocloud.io/goharbor = docker.io/goharbor);
+#      docker-compose 走 daocloud 的 github 代理。skopeo 直接拉, 不依赖 docker daemon。
+#  依赖: skopeo、curl、gzip、tar
+#  用法: bash offline/download-harbor-offline.sh
+# =============================================================================
+set -e
+
+# -------- 版本(harbor 与 group_vars/all/defaults.yaml 的 harbor_offline_images 对齐) --------
+HARBOR="2.11.2"        # goharbor 组件镜像 tag -> <组件>-v$HARBOR.tar.gz
+COMPOSE="2.32.4"       # 与 docker_arch_map[].compose 保持一致(换版本核对 releases)
+
+# 12 个组件(= harbor_offline_images 去掉 -v$HARBOR.tar.gz;也 == goharbor/<组件> 镜像名)
+COMPONENTS="harbor-exporter redis-photon trivy-adapter-photon harbor-registryctl \
+registry-photon nginx-photon harbor-log harbor-jobservice harbor-core harbor-portal \
+harbor-db prepare"
+
+# -------- 源 --------
+HARBOR_SRC="docker.m.daocloud.io/goharbor"                  # = docker.io/goharbor(daocloud 加速)
+DAO="https://files.m.daocloud.io"
+COMPOSE_BIN="$DAO/github.com/docker/compose/releases/download"
+
+A="$(cd "$(dirname "$0")/artifacts" && pwd)"    # offline/artifacts
+D="$A/harbor/x86"                                # 角色 x86.yaml 从这里取
+mkdir -p "$D"
+say(){ echo -e "\033[0;32m[+] $*\033[0m"; }
+
+command -v skopeo >/dev/null 2>&1 || { echo "缺 skopeo, 请先装: yum install -y skopeo  或  apt install -y skopeo"; exit 1; }
+command -v curl   >/dev/null 2>&1 || { echo "缺 curl"; exit 1; }
+
+# 远端 Content-Length(跟随重定向)
+rsize(){ curl -sIL -m 15 "$1" 2>/dev/null | awk 'BEGIN{IGNORECASE=1}/^content-length:/{v=$2}END{gsub(/\r/,"",v);print v}'; }
+
+# ========== 1. 12 个 harbor 组件镜像 ==========
+# skopeo 按 amd64 精确拉取存成 docker-archive(load 名 = goharbor/<组件>:v$HARBOR, 供 harbor compose 识别),
+# 再 gzip 省空间(harbor install.sh 里 docker load 会自动解压 .tar.gz)。
+for c in $COMPONENTS; do
+  file="$c-v$HARBOR.tar.gz"
+  if [ -s "$D/$file" ]; then say "跳过(已存在) $file"; continue; fi
+  for i in 1 2 3 4 5; do
+    say "skopeo copy $HARBOR_SRC/$c:v$HARBOR (amd64) -> $file"
+    if skopeo copy --override-os linux --override-arch amd64 \
+        "docker://$HARBOR_SRC/$c:v$HARBOR" "docker-archive:$D/$c-v$HARBOR.tar:goharbor/$c:v$HARBOR"; then
+      say "gzip $c-v$HARBOR.tar -> $file"
+      gzip -f "$D/$c-v$HARBOR.tar"
+      break
+    fi
+    echo "  失败, 第 $i 次重试..."; rm -f "$D/$c-v$HARBOR.tar" "$D/$file"; sleep 5
+    [ "$i" = 5 ] && { echo "  ✗ $c:v$HARBOR 多次失败"; exit 1; }
+  done
+done
+
+# ========== 2. docker-compose 二进制(-> docker-compose.x86, 对齐 x86.yaml) ==========
+dest="$D/docker-compose.x86"
+if [ -s "$dest" ]; then
+  say "跳过(已存在) docker-compose.x86"
+else
+  url="$COMPOSE_BIN/v$COMPOSE/docker-compose-linux-x86_64"
+  for i in 1 2 3 4 5; do
+    say "curl $url"
+    if curl -fSL --retry 3 -o "$dest" "$url"; then
+      r=$(rsize "$url"); l=$(stat -c%s "$dest" 2>/dev/null || wc -c <"$dest")
+      { [ -z "$r" ] || [ "$r" = "$l" ]; } && { chmod +x "$dest"; break; }
+      echo "  大小不符($l/$r),第 $i 次重下"
+    else
+      echo "  下载失败,第 $i 次重试"
+    fi
+    rm -f "$dest"; sleep 5
+    [ "$i" = 5 ] && { echo "  ✗ docker-compose 多次失败"; exit 1; }
+  done
+fi
+
+echo -e "\n=========================================================="
+echo " Harbor(amd64)离线物料下载完成! 物料在 $D"
+ls -1 "$D"
+echo
+echo " 提示: arm64 无官方镜像, 需手工准备(见 artifacts/harbor/aarch64/harbor/downimage.sh)。"
+echo " 拷回内网后, 部署时 -e is_offline=true 即可。"
+echo "=========================================================="
