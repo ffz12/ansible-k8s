@@ -6,9 +6,9 @@
 #  落到 offline/artifacts/harbor/x86/ , 拷回内网即用。
 #
 #  ★ 为什么只有 amd64: goharbor 官方镜像仅 amd64, Docker Hub 无任何版本的官方 arm64
-#    (多架构 PR goharbor/harbor#21825 至今 stalled)。项目里 harbor_images_aarch64 那套
-#    v2.13.0-aarch64 是社区/手工构建的, 见 artifacts/harbor/aarch64/harbor/downimage.sh —
-#    arm64 请沿用该手工流程(docker pull 社区 arm64 镜像 -> docker save | gzip), 本脚本不代劳。
+#    (多架构 PR goharbor/harbor#21825 至今 stalled)。arm64(harbor_images_aarch64, v2.13.0)
+#    来自 octohelm/harbor 的现成多架构镜像(ghcr.io/octohelm/harbor/<组件>:v2.13.0,
+#    国内可走 ghcr.m.daocloud.io), 复用已做好的那批 tar 即可, 本脚本只管 amd64。
 #
 #  源: goharbor 镜像走 daocloud 加速(docker.m.daocloud.io/goharbor = docker.io/goharbor);
 #      docker-compose 走 daocloud 的 github 代理。skopeo 直接拉, 不依赖 docker daemon。
@@ -85,6 +85,6 @@ echo -e "\n=========================================================="
 echo " Harbor(amd64)离线物料下载完成! 物料在 $D"
 ls -1 "$D"
 echo
-echo " 提示: arm64 无官方镜像, 需手工准备(见 artifacts/harbor/aarch64/harbor/downimage.sh)。"
+echo " 提示: arm64 用 octohelm/harbor 的现成多架构镜像(ghcr.io/octohelm/harbor/<组件>:v2.13.0),复用已做好的 tar。"
 echo " 拷回内网后, 部署时 -e is_offline=true 即可。"
 echo "=========================================================="
