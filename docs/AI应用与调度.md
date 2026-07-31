@@ -62,7 +62,7 @@ services:
 
       # 可选：如果 Docker Hub 频繁触发频率限制，可以配置账号
       - REGISTRY_PROXY_USERNAME=pineking
-      - REGISTRY_PROXY_PASSWORD=dckr_pat_sPbkusqSDlIJTX6fhyeC8TMey5Q
+      - REGISTRY_PROXY_PASSWORD=dckr_pat_<REDACTED-ROTATE-THIS-TOKEN>
     volumes:
       - ./config.yml:/etc/docker/registry/config.yml
       - /data1/registry:/var/lib/registry
@@ -92,7 +92,7 @@ http:
 proxy:
   remoteurl: https://registry-1.docker.io
   username: pineking
-  password: dckr_pat_sPbkusqSDlIJTX6fhyeC8TMey5Q
+  password: dckr_pat_<REDACTED-ROTATE-THIS-TOKEN>
 
 ```
 ```bash
@@ -573,7 +573,7 @@ RUN sed -i 's/[ #]\(.*StrictHostKeyChecking \).*/ \1no/g' /etc/ssh/ssh_config &&
 RUN groupadd -f -g 2005 nlp && \
     groupadd -f -g 2011 mpitest && \
     useradd -m -u 2011 -g mpitest -G nlp -s /bin/bash mpitest && \
-    echo "mpitest:unisound#atlas..!" | chpasswd && \
+    echo "mpitest:<PASSWORD>" | chpasswd && \
     echo 'mpitest ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
 
 # 4. 自动克隆并编译 nccl-tests
@@ -662,7 +662,7 @@ RUN sed -i 's/[ #]\(.*StrictHostKeyChecking \).*/ \1no/g' /etc/ssh/ssh_config &&
 # 此处应按照具体情况进行修改：填入使用者host机器的uid、gid、组名、用户名（必须操作）
 
 RUN groupadd -f -g 2005 nlp && groupadd -f -g 2011 mpitest && useradd -m -u 2011 -g mpitest -G nlp -s /bin/bash mpitest \
-    && echo 'mpitest ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers && echo "mpitest:unisound#atlas..!" | chpasswd 
+    && echo 'mpitest ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers && echo "mpitest:<PASSWORD>" | chpasswd 
 
 # COPY initialize_env.sh /home/mpitest
 USER root

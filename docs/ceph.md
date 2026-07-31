@@ -153,7 +153,7 @@ cephadm version
 mkdir -p /etc/ceph
 
 # 引导集群
-cephadm bootstrap --mon-ip 192.168.1.214 --initial-dashboard-password unisound#2023 --dashboard-password-noupdate
+cephadm bootstrap --mon-ip 192.168.1.214 --initial-dashboard-password '<PASSWORD>' --dashboard-password-noupdate
 
 # 安装 ceph-common 包
 # 部署节点安装
