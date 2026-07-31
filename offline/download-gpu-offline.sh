@@ -10,14 +10,13 @@
 #  ⚠️ 本脚本接 NVIDIA 官方源(nvidia.github.io), 未在国内网络实测; 若源路径/包名有变,
 #     按容器内报错微调下方 repo 配置即可(思路同 download_*_ansible.sh)。
 #
-#  用法: bash offline/download-gpu-offline.sh [amd64|arm64]   (默认 amd64)
+#  仅 amd64: GPU 节点基本都是 x86。arm64 + N 卡(GH200/Grace-Hopper、Jetson)是少数平台,
+#            本项目不覆盖; 真要用时把两处 --platform 改 linux/arm64 重跑即可。
+#  用法: bash offline/download-gpu-offline.sh
 #  依赖: docker(按架构精确拉包)
-#  注意: 角色按【单一目录扁平读取 *.rpm/*.deb】, 故一次只放一个架构; 换架构重跑会清空重下。
+#  注意: 角色按【单一目录扁平读取 *.rpm/*.deb】。
 # =============================================================================
 set -e
-
-ARCH="${1:-amd64}"
-case "$ARCH" in amd64|arm64) ;; *) echo "用法: bash $0 [amd64|arm64]"; exit 1;; esac
 
 GPU="$(cd "$(dirname "$0")/artifacts" && pwd)/nvidia-gpu"    # offline/artifacts/nvidia-gpu
 RHEL_DIR="$GPU/rhel-gpu"
@@ -29,9 +28,9 @@ NV_BASE="https://nvidia.github.io/libnvidia-container"
 NV_REPO="$NV_BASE/stable"
 
 # ---------- RHEL 系 (rpm) ----------
-echo "========== 下载 nvidia-container-toolkit RPM [$ARCH] =========="
+echo "========== 下载 nvidia-container-toolkit RPM [amd64] =========="
 tmp_rpm="$RHEL_DIR/_tmp"; rm -rf "$tmp_rpm"; mkdir -p "$tmp_rpm"
-docker run --rm --platform "linux/$ARCH" -v "$tmp_rpm":/tmp/download rockylinux:8 sh -c "
+docker run --rm --platform linux/amd64 -v "$tmp_rpm":/tmp/download rockylinux:8 sh -c "
     set -e
     curl -s -L $NV_REPO/rpm/nvidia-container-toolkit.repo -o /etc/yum.repos.d/nvidia-container-toolkit.repo
     yum install -y -q yum-utils >/dev/null
@@ -50,9 +49,9 @@ else
 fi
 
 # ---------- Debian 系 (deb) ----------
-echo "========== 下载 nvidia-container-toolkit DEB [$ARCH] =========="
+echo "========== 下载 nvidia-container-toolkit DEB [amd64] =========="
 tmp_deb="$DEB_DIR/_tmp"; rm -rf "$tmp_deb"; mkdir -p "$tmp_deb"
-docker run --rm --platform "linux/$ARCH" -v "$tmp_deb":/tmp/download ubuntu:22.04 sh -c "
+docker run --rm --platform linux/amd64 -v "$tmp_deb":/tmp/download ubuntu:22.04 sh -c "
     set -e
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
@@ -77,5 +76,5 @@ else
 fi
 
 echo -e "\n=========================================================="
-echo " NVIDIA GPU 离线包下载结束 [$ARCH]。DCU/NPU 请手动放包(见脚本头注释)。"
+echo " NVIDIA GPU 离线包下载结束 [amd64]。DCU/NPU 请手动放包(见脚本头注释)。"
 echo "=========================================================="
