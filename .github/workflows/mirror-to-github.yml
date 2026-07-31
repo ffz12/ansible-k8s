@@ -1,0 +1,45 @@
+name: mirror-to-github
+
+# 每天把 codeup(阿里云,源)镜像到本 GitHub 仓库。
+# 设计说明:
+#  - 本 workflow 文件随仓库一起被镜像, 故推送时会包含 .github/workflows/,
+#    GitHub 内置 GITHUB_TOKEN 无权推 workflow 文件 -> 必须用带 workflow 权限的 PAT(密钥 GH_PAT)。
+#  - 拉取 codeup 用只读部署密钥(密钥 CODEUP_SSH_KEY)。
+#  - 不镜像 Git LFS 对象(本仓库 0 个 LFS 对象; 且 GitHub 免费 LFS 仅 1G, 大文件本就不入库)。
+#
+# 需要在 GitHub 仓库配两个 Secret(Settings → Secrets and variables → Actions):
+#   CODEUP_SSH_KEY  codeup 只读部署密钥的【私钥】全文
+#   GH_PAT          GitHub PAT, 勾 repo + workflow 权限(经典 PAT)或 Contents:RW + Workflows:RW(细粒度)
+
+on:
+  schedule:
+    - cron: '23 18 * * *'      # UTC 每天 18:23 = 北京时间次日 02:23(错开整点, 减少 Actions 排队延迟)
+  workflow_dispatch: {}         # 也允许在 Actions 页面手动触发
+
+concurrency:
+  group: mirror-to-github
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 准备 codeup 只读 SSH 密钥
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.CODEUP_SSH_KEY }}" > ~/.ssh/id_codeup
+          chmod 600 ~/.ssh/id_codeup
+          ssh-keyscan -t rsa,ed25519 codeup.aliyun.com >> ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/.ssh/config <<'EOF'
+          Host codeup.aliyun.com
+            IdentityFile ~/.ssh/id_codeup
+            IdentitiesOnly yes
+          EOF
+
+      - name: 从 codeup 镜像克隆
+        run: git clone --mirror git@codeup.aliyun.com:68e89ecdf9c52e7d8c269ad7/ansible-k8s.git src.git
+
+      - name: 推送到本 GitHub 仓库(镜像)
+        run: |
+          cd src.git
+          git push --mirror "https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}.git"
