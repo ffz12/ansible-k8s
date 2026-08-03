@@ -1,0 +1,27 @@
+---
+# apt 代理配置 playbook(仅 /etc/apt/apt.conf.d/95proxy)
+# 用法: ansible-playbook -i ../inventory/hosts apt-proxy.yaml
+# 取消代理: ansible-playbook -i ../inventory/hosts apt-proxy.yaml -e proxy_state=absent
+
+- name: Configure apt proxy
+  hosts: all
+  become: true
+  vars:
+    proxy_url: "http://10.2.0.15:3128"
+    proxy_state: present          # present=设置代理; absent=移除代理
+
+  tasks:
+    - name: Set apt proxy config
+      copy:
+        dest: /etc/apt/apt.conf.d/95proxy
+        mode: "0644"
+        content: |
+          Acquire::http::Proxy "{{ proxy_url }}";
+          Acquire::https::Proxy "{{ proxy_url }}";
+      when: proxy_state == "present"
+
+    - name: Remove apt proxy config
+      file:
+        path: /etc/apt/apt.conf.d/95proxy
+        state: absent
+      when: proxy_state == "absent"
