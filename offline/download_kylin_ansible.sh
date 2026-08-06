@@ -47,8 +47,8 @@ download_by_arch() {
             # 1. 尝试接入 EPEL 源以获取可能更新的组件（即便不可用也会平滑切回默认源）
             yum install epel-release -y -q >/dev/null 2>&1
             
-            # 2. 安装 yum-utils，我们需要里面的 yumdownloader 工具
-            yum install yum-utils -y -q >/dev/null
+            # 2. 安装 dnf-plugins-core，麒麟 V10(dnf 体系)的 yumdownloader 由它提供(不是 yum-utils)
+            yum install dnf-plugins-core -y -q >/dev/null
 
             cd /tmp/download
 
