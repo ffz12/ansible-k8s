@@ -44,12 +44,9 @@ download_by_arch() {
         -v "$tmp_save_dir":/tmp/download \
         "$OPENEULER_IMAGE" \
         sh -c "
-            # 1. 开启 EPOL 源(openEuler 的 ansible 在 EPOL 里; 已开启则忽略报错)
+            # 1. 装 dnf-plugins-core(提供 yumdownloader)并开启 EPOL 源(openEuler 的 ansible 在 EPOL 里)
             yum install -y -q dnf-plugins-core >/dev/null 2>&1
             yum config-manager --set-enabled EPOL >/dev/null 2>&1 || true
-
-            # 2. 安装 yum-utils, 取里面的 yumdownloader 工具
-            yum install yum-utils -y -q >/dev/null
 
             cd /tmp/download
 
