@@ -1,14 +1,64 @@
-- name: yum安装haproxy/keepalived
+# ==================== 安装 haproxy + keepalived ====================
+# 离线: 从 offline/artifacts/lb-offline/ 取对应发行版+架构的包本地装(由 download-lb-offline.sh 预先下好);
+# 在线: 直接 yum/apt 装。nginx-ha 走 bundled 二进制, 与此无关。
+
+- name: (离线) 计算 LB 离线包 os/arch 标签
+  set_fact:
+    _lb_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}"
+    _lb_os: >-
+      {{ 'kylin' if ansible_distribution in ['Kylin Linux Advanced Server', 'Kylin']
+         else 'openEuler' + ansible_distribution_major_version if ansible_distribution == 'openEuler'
+         else 'ubuntu' + ansible_distribution_major_version if ansible_distribution in ['Ubuntu', 'Debian']
+         else 'unsupported' }}
+  when: is_offline | bool
+
+- name: (离线) 校验发行版是否有对应离线包
+  assert:
+    that: _lb_os != 'unsupported'
+    fail_msg: "haproxy-ha 离线暂不支持: {{ ansible_distribution }} {{ ansible_distribution_version }}; 请先用 download-lb-offline.sh 下载对应包"
+  when: is_offline | bool
+
+- name: (离线) 创建 LB 离线包目录
+  file:
+    path: /opt/lb-pkgs
+    state: directory
+    mode: '0755'
+  when: is_offline | bool
+
+- name: (离线) 解压 haproxy+keepalived 离线包到节点
+  unarchive:
+    src: "{{ offline_artifacts }}/lb-offline/lb_{{ _lb_os }}_{{ _lb_arch }}.tar.gz"
+    dest: /opt/lb-pkgs/
+    mode: '0644'
+    owner: root
+    group: root
+  when: is_offline | bool
+
+- name: (离线-RPM) 本地安装 haproxy+keepalived
+  shell: yum localinstall -y /opt/lb-pkgs/*.rpm
+  when:
+    - is_offline | bool
+    - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
+
+- name: (离线-DEB) 本地安装 haproxy+keepalived
+  shell: dpkg -i /opt/lb-pkgs/*.deb || apt-get -f install -y
+  when:
+    - is_offline | bool
+    - ansible_distribution in ['Debian', 'Ubuntu']
+
+- name: (在线) yum安装haproxy/keepalived
   yum:
     name:
       - haproxy
       - keepalived
     state: present
-  when: ansible_distribution in ['RedHat', 'openEuler', 'CentOS']
+  when:
+    - not is_offline | bool
+    - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
 
 # 修复: 原来 state/update_cache/allow_unauthenticated 缩进在 task 层级(非法关键字),
 #       现已全部移到 apt: 模块下。
-- name: apt安装haproxy/keepalived
+- name: (在线) apt安装haproxy/keepalived
   apt:
     name:
       - haproxy
@@ -16,7 +66,9 @@
     state: present
     update_cache: yes
     allow_unauthenticated: true
-  when: ansible_distribution in ['Debian', 'Ubuntu']
+  when:
+    - not is_offline | bool
+    - ansible_distribution in ['Debian', 'Ubuntu']
 
 - name: 自动探测 VIP 所在网卡(用 ansible_host,兼容主机名/裸IP;host_ip 若设则优先)
   shell: "ip a | grep '{{ host_ip | default(ansible_host | default(inventory_hostname)) }}/' | awk '{print $NF}'"
