@@ -17,6 +17,11 @@
 #          docker run --privileged --rm tonistiigi/binfmt --install arm64
 #  用法: bash offline/download-lb-offline.sh [kylin|ubuntu|openeuler|all] [amd64|arm64|all]
 #        (默认 all all; 单架构集群指定一个可省一半)
+#  镜像源不可达(docker.io 拉不动)时, 用环境变量指向内网 mirror:
+#        UBUNTU_IMAGE_PREFIX=dce-boot.io/library/ubuntu \
+#        EULER_IMAGE=dce-boot.io/openeuler/openeuler:22.03-lts-sp4 \
+#        bash offline/download-lb-offline.sh
+#        某发行版镜像拉不到只会跳过并提示, 不影响其它发行版继续。
 # =============================================================================
 set -e
 
@@ -29,8 +34,11 @@ ARCH_ARG="${2:-all}"
 case "$ARCH_ARG" in amd64|arm64|all) ;; *) echo "架构参数须为 amd64|arm64|all"; exit 1 ;; esac
 
 LB_PKGS="haproxy keepalived"
-KYLIN_IMAGE="hxsoong/kylin:v10-sp3"
-EULER_IMAGE="openeuler/openeuler:22.03-lts-sp4"
+# 镜像源可用环境变量覆盖(内网/docker.io 不可达时指向可达 mirror, 如 dce-boot.io/...):
+#   KYLIN_IMAGE=... EULER_IMAGE=... UBUNTU_IMAGE_PREFIX=dce-boot.io/library/ubuntu bash offline/download-lb-offline.sh
+KYLIN_IMAGE="${KYLIN_IMAGE:-hxsoong/kylin:v10-sp3}"
+EULER_IMAGE="${EULER_IMAGE:-openeuler/openeuler:22.03-lts-sp4}"
+UBUNTU_IMAGE_PREFIX="${UBUNTU_IMAGE_PREFIX:-ubuntu}"   # 拼成 <prefix>:22.04 / <prefix>:24.04
 
 command -v docker >/dev/null 2>&1 || { echo "缺 docker(脚本用容器按架构精确拉包), 请先安装"; exit 1; }
 
@@ -62,7 +70,7 @@ dl_rpm() {
     yum install -y -q dnf-plugins-core >/dev/null 2>&1 || true
     yum config-manager --set-enabled EPOL >/dev/null 2>&1 || true
     yum install --downloadonly --downloaddir=/tmp/download $LB_PKGS -y >/dev/null 2>&1 || true
-  "
+  " || echo " ⚠️  $4 [$3] 容器运行失败(镜像拉取/网络?), 跳过 —— 见文末 mirror 说明"
   pack "$tmp" "$OUT/lb_${4}_${3}.tar.gz"
 }
 
@@ -70,14 +78,14 @@ dl_rpm() {
 dl_deb() {
   local tmp="$OUT/.tmp_ubuntu${4}_${3}"; rm -rf "$tmp"; mkdir -p "$tmp"
   echo "========== ubuntu$4 [$2 -> $3] haproxy+keepalived =========="
-  docker run --rm --platform "linux/$2" -v "$tmp":/tmp/download ubuntu:"$1" sh -c "
+  docker run --rm --platform "linux/$2" -v "$tmp":/tmp/download "${UBUNTU_IMAGE_PREFIX}":"$1" sh -c "
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
     apt-get install -y -qq apt-utils >/dev/null
     cd /tmp/download
     apt-get download \$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances $LB_PKGS | grep '^\w' | sort -u) 2>/dev/null || true
     apt-get download $LB_PKGS 2>/dev/null || true
-  "
+  " || echo " ⚠️  ubuntu$4 [$3] 容器运行失败(镜像拉取/网络?), 跳过 —— 见文末 mirror 说明"
   pack "$tmp" "$OUT/lb_ubuntu${4}_${3}.tar.gz"
 }
 
@@ -99,4 +107,11 @@ esac
 echo -e "\n=========================================================="
 echo " 完成! haproxy/keepalived 离线包在: $OUT/"
 echo " 供 haproxy-ha 角色离线安装(nginx-ha 走 bundled 二进制, 与此无关)。"
+echo "----------------------------------------------------------"
+echo " 若某发行版显示 ⚠️ 跳过, 多半是该基础镜像 docker.io 不可达。可:"
+echo "   - 只下你集群用到的发行版:  bash $0 kylin"
+echo "   - 或用可达 mirror 覆盖镜像源, 例如:"
+echo "       UBUNTU_IMAGE_PREFIX=dce-boot.io/library/ubuntu \\"
+echo "       EULER_IMAGE=dce-boot.io/openeuler/openeuler:22.03-lts-sp4 \\"
+echo "       bash $0"
 echo "=========================================================="
