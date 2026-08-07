@@ -57,12 +57,12 @@ download_ubuntu_ansible() {
 
             cd /tmp/download
 
-            echo ' -> 正在分析最新版依赖并递归下载（请稍候）...'
-            # 采用你原本强大的依赖追踪能力，递归抓取该系统最新版核心依赖
-            apt-get download \$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances $OFFLINE_PKGS | grep '^\w' | sort -u) 2>errors.txt
-
-            # 确保最新版包本身强制下载
-            apt-get download $OFFLINE_PKGS 2>>errors.txt
+            echo ' -> 正在下载 ansible 及其【缺失依赖】...'
+            # 只下 ansible + 容器(基础镜像)里没有的依赖, 用 --download-only 让 apt 只补差量。
+            # 不用 apt-cache depends --recurse: 那会把整棵依赖树(含节点本就自带的 libc6/python3 等)全拉下来, 徒增体积。
+            apt-get install -y --download-only $OFFLINE_PKGS 2>errors.txt
+            # apt 把 deb 下到缓存目录, 平铺搬到打包目录
+            cp -f /var/cache/apt/archives/*.deb /tmp/download/ 2>>errors.txt
 
             echo ' -> 正在生成本地 Packages 离线索引...'
             apt-ftparchive packages . > Packages
