@@ -1,0 +1,31 @@
+---
+# 交付收尾: 从所有节点清除【Ansible 控制机】root 的免密公钥。
+# 场景: 控制机(跑 ansible 这台)为免密登录各节点, 把自己的 id_rsa.pub 塞进了每个
+#       节点的 /root/.ssh/authorized_keys(单向: 控制机 -> 各节点)。交付时需撤掉这把钥匙。
+#
+# 与 ssh-passwordless-remove 的区别:
+#   - ssh-passwordless-remove : 解除【节点之间】N×N 互信(删每个被管节点自己的公钥);
+#   - 本 playbook             : 只删【控制机这一把】公钥(控制机通常不在 inventory 里,
+#                               所以那个反向脚本删不到它)。
+#
+# ⚠️ 注意: 跑完控制机对各节点的免密即失效, 之后再连需要密码。请作为交付【最后一步】执行,
+#          之前若还要跑别的 playbook, 先跑完再清。
+#
+# 用法: ansible-playbook clean-control-key.yaml
+#       控制机公钥路径可覆盖: -e control_pubkey_file=/root/.ssh/id_rsa.pub
+- name: 清除控制机免密公钥(交付收尾)
+  hosts: cluster
+  become: yes
+  gather_facts: no
+  vars:
+    control_pubkey_file: /root/.ssh/id_rsa.pub
+  tasks:
+    - name: 从各节点 authorized_keys 移除控制机公钥
+      authorized_key:
+        user: root
+        state: absent
+        key: "{{ lookup('file', control_pubkey_file) }}"
+
+    - name: 提示
+      debug:
+        msg: "控制机公钥已从本节点 authorized_keys 移除。控制机对本节点的免密登录即刻失效。"
