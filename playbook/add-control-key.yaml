@@ -1,6 +1,6 @@
 ---
 # 交付前置: 建立【控制机 -> 各节点】单向免密——把控制机 root 公钥下发到所有节点。
-# 与 clean-control-key.yaml(删)成对。注意: 这跟 ssh-passwordless(节点↔节点 N×N 互信)不是一回事。
+# 与 remove-control-key.yaml(删)成对。注意: 这跟 ssh-passwordless(节点↔节点 N×N 互信)不是一回事。
 # 前提: 控制机已有 /root/.ssh/id_rsa.pub; 首次控制机还没免密时带 -k 输密码执行。
 # 用法: ansible-playbook add-control-key.yaml
 #       控制机公钥路径可覆盖: -e control_pubkey_file=/root/.ssh/id_rsa.pub
