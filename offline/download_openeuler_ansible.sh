@@ -38,7 +38,7 @@ download_by_arch() {
     mkdir -p "$tmp_save_dir"
     mkdir -p "$BASE_DIR"
 
-    # 核心：用指定 platform 镜像, 开 EPOL 源(openEuler 的 ansible 在此), yumdownloader 抓全量依赖
+    # 核心：用指定 platform 镜像, 开 EPOL 源(openEuler 的 ansible 在此), yum install --downloadonly 下 ansible 及缺失依赖
     docker run --rm \
         --platform "linux/$arch" \
         -v "$tmp_save_dir":/tmp/download \
@@ -50,11 +50,9 @@ download_by_arch() {
 
             cd /tmp/download
 
-            echo ' -> 正在分析依赖并进行【全量递归下载】（防止离线时缺包）...'
-            # --resolve 解析依赖，--alldeps 强制把容器已有的包也下载一份，--destdir 指定目录
-            yumdownloader --resolve --alldeps --destdir=/tmp/download $OFFLINE_PKGS -y -q >/dev/null 2>&1
-
-            # 双重保险，防止个别包漏掉
+            echo ' -> 正在解析并下载 ansible 及其【缺失依赖】...'
+            # 只用 yum install --downloadonly: 下 ansible + 容器里没有的依赖。
+            # 不加 --alldeps, 免得把节点本就自带的 glibc/python3 等基础库也拉进来(徒增体积、还可能顺带升级基础库)。
             yum install --downloadonly --downloaddir=/tmp/download $OFFLINE_PKGS -y -q >/dev/null 2>&1
         "
 
