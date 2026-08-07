@@ -1,0 +1,35 @@
+---
+# 交付前置: 建立【控制机 -> 各节点】单向免密——把控制机 root 公钥下发到所有节点。
+# 与 clean-control-key.yaml(删)成对。注意: 这跟 ssh-passwordless(节点↔节点 N×N 互信)不是一回事。
+# 前提: 控制机已有 /root/.ssh/id_rsa.pub; 首次控制机还没免密时带 -k 输密码执行。
+# 用法: ansible-playbook add-control-key.yaml
+#       控制机公钥路径可覆盖: -e control_pubkey_file=/root/.ssh/id_rsa.pub
+- name: 下发控制机免密公钥到各节点
+  hosts: cluster
+  become: yes
+  gather_facts: no
+  vars:
+    control_pubkey_file: /root/.ssh/id_rsa.pub
+  tasks:
+    - name: 校验控制机公钥存在(在控制机本地看)
+      delegate_to: localhost
+      run_once: true
+      stat:
+        path: "{{ control_pubkey_file }}"
+      register: _ctrl_pub
+
+    - name: 控制机公钥不存在则报错
+      run_once: true
+      assert:
+        that: _ctrl_pub.stat.exists
+        fail_msg: "控制机 {{ control_pubkey_file }} 不存在; 先 ssh-keygen 生成, 或用 -e control_pubkey_file= 指定正确路径"
+
+    - name: 把控制机公钥加入各节点 authorized_keys
+      authorized_key:
+        user: root
+        state: present
+        key: "{{ lookup('file', control_pubkey_file) }}"
+
+    - name: 提示
+      debug:
+        msg: "控制机公钥已写入本节点 authorized_keys; 控制机现可免密登录本节点。"
