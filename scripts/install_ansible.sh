@@ -3,7 +3,8 @@
 # 离线安装 Ansible: 在目标主机上自动识别【系统 + 架构】, 选对应离线包安装
 #   支持: Kylin V10 / openEuler / Ubuntu 22.04 / Ubuntu 24.04, x86_64 / arm64
 #   用法: bash install_ansible.sh [离线包目录]
-#         不给目录时, 自动在脚本同级的 ansible-pkg-install/ 或脚本目录里找 ansible_*.tar.gz
+#         不给目录时, 自动在以下位置找 ansible_*.tar.gz:
+#           脚本同级/ansible-pkg-install、仓库 offline/ansible-pkg-install、脚本同级
 # ==========================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -42,7 +43,7 @@ echo " -> 匹配离线包前缀: ${PKG_PREFIX}.tar.gz"
 # ---------- 3. 定位离线包 ----------
 PKG_DIR="$1"
 if [ -z "$PKG_DIR" ]; then
-    for d in "$SCRIPT_DIR/ansible-pkg-install" "$SCRIPT_DIR"; do
+    for d in "$SCRIPT_DIR/ansible-pkg-install" "$SCRIPT_DIR/../offline/ansible-pkg-install" "$SCRIPT_DIR"; do
         if [ -f "$d/${PKG_PREFIX}.tar.gz" ]; then PKG_DIR="$d"; break; fi
     done
 fi
