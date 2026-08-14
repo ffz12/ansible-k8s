@@ -215,9 +215,10 @@ metadata:
   labels: { app: minio }
 spec:
   type: ClusterIP
-  # 建议把实际分到的 IP 显式写回来存档,防止 Service 重建后漂移
-  # (csi-s3 的 endpoint 若用 ClusterIP,IP 变了已有挂载会全失效)
-  # clusterIP: 10.233.46.93
+  # 写死 ClusterIP:csi-s3 的 endpoint 直接用它(见 minio-csi-s3.md 4.1),重建不漂移、不需要 keepalived/VIP。
+  # (csi-s3 的 endpoint 由宿主机进程访问,ClusterIP 一变已有挂载全失效,所以必须写死)
+  # 换环境改成你集群 service-CIDR 内的空闲 IP。
+  clusterIP: 10.233.46.93
   selector: { app: minio }
   ports:
   - { name: api, port: 9000, targetPort: 9000, protocol: TCP }

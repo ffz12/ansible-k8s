@@ -319,11 +319,13 @@ Starting geesefs using systemd: /var/lib/kubelet/plugins/ru.yandex.s3.csi/geesef
 | 形式 | 可用 | 缺点 |
 |---|---|---|
 | `minio.minio-system.svc.cluster.local:9000` | ❌ | 宿主机解析不了 |
-| ClusterIP `10.233.46.93:9000` | ✅ | Service 重建后 IP 变，已有挂载全失效 |
-| NodePort `<节点IP>:30900` | ✅ | 绑死单节点，该节点故障则挂载全断 |
-| **NodePort + VIP `172.18.0.200:32468`** | ✅ **推荐** | 两个问题都避开 |
+| NodePort `<节点IP>:30900` | ✅ | endpoint 写死某台节点 IP，那台故障则挂载全断 |
+| ClusterIP（随机分配） | ✅ | Service 重建后 IP 变，已有挂载全失效 |
+| **固定 ClusterIP `10.233.46.93:9000`（写死在 Service）** | ✅ **推荐** | 见下 |
 
-VIP 方案最优：keepalived 保证 VIP 可用，kube-proxy 转发到任一 MinIO Pod，两层冗余。
+**推荐固定 ClusterIP，不需要 keepalived/VIP**：geesefs 虽由宿主机 systemd 启动，但**宿主机本身就是 k8s 节点**，kube-proxy 已在本机把每个 ClusterIP 编进 ipvs/iptables，宿主机能直接连 `ClusterIP:9000`（和节点能 ping 通 kube-dns 的 ClusterIP 同理）。只要在 `minio` Service 里把 `clusterIP` **写死**（见 minio.yaml 的 `clusterIP: 10.233.46.93`），它就不再随 Service 重建漂移，也无需额外 NodePort、无需 keepalived；跨节点冗余由 kube-proxy 负责（转发到任一 MinIO Pod）。
+
+> 仅当 geesefs 宿主机**不是** k8s 节点时 ClusterIP 才不可达（本环境不是这种），那时才退回 NodePort；要避免 NodePort 绑死单节点，可再叠加 VIP/外部 LB。本环境用固定 ClusterIP 即可。
 
 ### 4.2 mounter 与 options 必须匹配
 
@@ -390,8 +392,8 @@ type: Opaque
 stringData:
   accessKeyID: <AK>
   secretAccessKey: <SK>
-  # 不能用 Service DNS 名 —— geesefs 由宿主机 systemd 启动,不走 CoreDNS
-  endpoint: http://172.18.0.200:32468
+  # 不能用 Service DNS 名 —— geesefs 由宿主机 systemd 启动,不走 CoreDNS;用写死的 ClusterIP(见 4.1)
+  endpoint: http://10.233.46.93:9000
   region: ""
 ```
 
@@ -553,10 +555,10 @@ mysqldump --all-databases --single-transaction | gzip | \
 |---|---|
 | 控制台 | `http://<节点IP>:30901` |
 | 集群内 S3 | `http://minio.minio-system.svc.cluster.local:9000` |
-| 集群外 S3 | `http://<节点IP>:30900` 或 VIP |
-| **CSI 驱动用** | `http://172.18.0.200:32468`（VIP + NodePort） |
+| 集群外 S3 | `http://<节点IP>:30900` |
+| **CSI 驱动用** | `http://10.233.46.93:9000`（写死的 ClusterIP，见 4.1） |
 
-> CSI 的 endpoint 与其他用途不同 —— 它由宿主机进程访问，不能用 Service DNS 名。
+> CSI 的 endpoint 与其他用途不同 —— 它由宿主机进程访问，不能用 Service DNS 名，用写死的 ClusterIP。
 
 ---
 
@@ -593,7 +595,7 @@ journalctl -u etcd --since "1 hour ago" --no-pager | grep -icE 'took too long|sl
 
 | 优先级 | 事项 |
 |---|---|
-| 高 | Service 的 `clusterIP` 显式写入 yaml 存档，防重建后 IP 漂移 |
+| 高 | ✅ 已做：`minio` Service 的 `clusterIP` 已写死（`10.233.46.93`）——它是 CSI 的 endpoint（4.1），防重建后漂移 |
 | 高 | 提高 MinIO `requests`（cpu 1 → 4，memory 4Gi → 8Gi），`limits.cpu` 定为 8 |
 | 中 | 空间浪费监控，75% 告警、85% 扩容（扩容方式是加新 server pool，不能给现有 pool 加盘） |
 | 中 | 定期 `mc admin` 快照 / 备份策略 |
@@ -849,8 +851,9 @@ metadata:
   labels: { app: minio }
 spec:
   type: ClusterIP
-  # 建议把实际分到的 IP 显式写回来存档,防止 Service 重建后漂移
-  # clusterIP: 10.233.46.93
+  # 写死 ClusterIP:csi-s3 的 endpoint 直接用它(见 4.1),重建不漂移、不需要 keepalived/VIP。
+  # 换环境改成你集群 service-CIDR 内的空闲 IP。
+  clusterIP: 10.233.46.93
   selector: { app: minio }
   ports:
   - { name: api, port: 9000, targetPort: 9000, protocol: TCP }
@@ -987,3 +990,289 @@ spec:
 | `resources` | ✅ | 滚动更新，注意 PDB `minAvailable: 3` 会一台一台来 |
 | `replicas` | ⚠️ | **不能直接加**，扩容要加新 server pool（改 `minio server` 的 URL 参数） |
 | Service / PDB | ✅ | 随便改，但 ClusterIP 变了会导致已有 csi-s3 挂载失效（见 4.1） |
+
+---
+
+## 附录 D — csi-s3 驱动安装清单（v0.43.7）
+
+驱动本体来自 [yandex-cloud/k8s-csi-s3](https://github.com/yandex-cloud/k8s-csi-s3) 的 `deploy/kubernetes/`，git tag **v0.43.7**（镜像 tag 是 `0.43.7`，无 `v`）。下面三份是**已按本环境改好**的：命名空间 `kube-system` → `minio-system`（与 4.4 的 Secret、附录 A 的 `kubectl -n minio-system ...` 巡检命令对齐），三处镜像按 [4.3](#43-镜像同步) 的 sed 规则换成 `harbor.local.clusters/minio/…`。配合 4.4 的 Secret + 4.5 的 StorageClass 一起用。
+
+> **镜像同步**（三个都只在 `cr.yandex`，skopeo 拉到 harbor，均为 amd64 单架构）：
+> `csi-provisioner:v6.2.0` / `csi-s3:0.43.7` / `csi-node-driver-registrar:v2.16.0`。
+> **apply 顺序**：`driver.yaml`（CSIDriver）→ `provisioner.yaml` → `csi-s3.yaml`（DaemonSet）→ 再建 Secret / StorageClass / PVC。
+
+### D.1 CSIDriver（driver.yaml）
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: ru.yandex.s3.csi
+spec:
+  attachRequired: false
+  podInfoOnMount: true
+```
+
+### D.2 provisioner（provisioner.yaml，建桶/建 PVC，跑在 Pod 网络里，用 CoreDNS 没问题）
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: csi-s3-provisioner-sa
+  namespace: minio-system
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: csi-s3-external-provisioner-runner
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "watch", "create", "update", "patch"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: csi-s3-provisioner-role
+subjects:
+  - kind: ServiceAccount
+    name: csi-s3-provisioner-sa
+    namespace: minio-system
+roleRef:
+  kind: ClusterRole
+  name: csi-s3-external-provisioner-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: csi-s3-provisioner
+  namespace: minio-system
+  labels:
+    app: csi-s3-provisioner
+spec:
+  selector:
+    app: csi-s3-provisioner
+  ports:
+    - name: csi-s3-dummy
+      port: 65535
+---
+kind: StatefulSet
+apiVersion: apps/v1
+metadata:
+  name: csi-s3-provisioner
+  namespace: minio-system
+spec:
+  serviceName: "csi-provisioner-s3"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: csi-s3-provisioner
+  template:
+    metadata:
+      labels:
+        app: csi-s3-provisioner
+    spec:
+      serviceAccount: csi-s3-provisioner-sa
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+        - key: CriticalAddonsOnly
+          operator: Exists
+      containers:
+        - name: csi-provisioner
+          image: harbor.local.clusters/minio/csi-provisioner:v6.2.0
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--v=4"
+          env:
+            - name: ADDRESS
+              value: /var/lib/kubelet/plugins/ru.yandex.s3.csi/csi.sock
+          imagePullPolicy: "IfNotPresent"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/kubelet/plugins/ru.yandex.s3.csi
+        - name: csi-s3
+          image: harbor.local.clusters/minio/csi-s3:0.43.7
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--nodeid=$(NODE_ID)"
+            - "--v=4"
+          env:
+            - name: CSI_ENDPOINT
+              value: unix:///var/lib/kubelet/plugins/ru.yandex.s3.csi/csi.sock
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/kubelet/plugins/ru.yandex.s3.csi
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+```
+
+### D.3 node driver（csi-s3.yaml，DaemonSet，每节点一个；geesefs 实际由它在宿主机拉起）
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: csi-s3
+  namespace: minio-system
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: csi-s3
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["get", "list", "watch"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: csi-s3
+subjects:
+  - kind: ServiceAccount
+    name: csi-s3
+    namespace: minio-system
+roleRef:
+  kind: ClusterRole
+  name: csi-s3
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: csi-s3
+  namespace: minio-system
+spec:
+  selector:
+    matchLabels:
+      app: csi-s3
+  template:
+    metadata:
+      labels:
+        app: csi-s3
+    spec:
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+        - operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 300
+      serviceAccount: csi-s3
+      containers:
+        - name: driver-registrar
+          image: harbor.local.clusters/minio/csi-node-driver-registrar:v2.16.0
+          args:
+            - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
+            - "--v=4"
+            - "--csi-address=$(ADDRESS)"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: DRIVER_REG_SOCK_PATH
+              value: /var/lib/kubelet/plugins/ru.yandex.s3.csi/csi.sock
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration/
+        - name: csi-s3
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN"]
+            allowPrivilegeEscalation: true
+          image: harbor.local.clusters/minio/csi-s3:0.43.7
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--nodeid=$(NODE_ID)"
+            - "--v=4"
+          env:
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: stage-dir
+              mountPath: /var/lib/kubelet/plugins/kubernetes.io/csi
+              mountPropagation: "Bidirectional"
+            - name: pods-mount-dir
+              mountPath: /var/lib/kubelet/pods
+              mountPropagation: "Bidirectional"
+            - name: fuse-device
+              mountPath: /dev/fuse
+            - name: systemd-control
+              mountPath: /run/systemd
+      volumes:
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry/
+            type: DirectoryOrCreate
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/ru.yandex.s3.csi
+            type: DirectoryOrCreate
+        - name: stage-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/kubernetes.io/csi
+            type: DirectoryOrCreate
+        - name: pods-mount-dir
+          hostPath:
+            path: /var/lib/kubelet/pods
+            type: Directory
+        - name: fuse-device
+          hostPath:
+            path: /dev/fuse
+        - name: systemd-control
+          hostPath:
+            path: /run/systemd
+            type: DirectoryOrCreate
+```
+
+### D.4 与上游的差异 / 注意
+
+- **命名空间统一 `minio-system`**（SA / StatefulSet / DaemonSet / Service + ClusterRoleBinding 的 `subjects.namespace`），与 4.4 Secret、附录 A 的 `kubectl -n minio-system ...` 对齐。上游默认 `kube-system`，想放回去也行，但 Secret 和巡检命令要跟着改。
+- **三处镜像**按 4.3 的 sed 映射改成 `harbor.local.clusters/minio/…`。
+- **Pod 标签**：provisioner 是 `app=csi-s3-provisioner`，node driver 是 `app=csi-s3`。定位日志：
+  `kubectl -n minio-system logs -l app=csi-s3-provisioner --all-containers` /
+  `kubectl -n minio-system logs -l app=csi-s3 -c csi-s3`。
+- **DaemonSet 的 `privileged` + `SYS_ADMIN` + `/dev/fuse` + `/run/systemd` + `mountPropagation: Bidirectional` 不能删** —— 这些是 geesefs 由宿主机 systemd 起、挂载点双向传播回宿主机的前提（也是本文档为什么 endpoint 不能用 Service DNS 名的根因，见 4.1）。
+- `kubelet` 根目录按默认 `/var/lib/kubelet`；若集群改过（少见），上面所有 `hostPath` 和 socket 路径要跟着改。
