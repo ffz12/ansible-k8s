@@ -9,7 +9,7 @@
 #node001 ansible_host=172.171.0.11
 
 [containerd]
-# 用 containerd 的节点(只列主机名); GPU 节点加 accelerator_type=nvidia/dcu/npu, 纯 CPU 不写
+# 用 containerd 的节点(只列主机名); GPU/加速器节点加 accelerator_type=nvidia/dcu/npu(华为昇腾), 纯 CPU 不写(默认 runc)
 #cpu217
 #cpu218
 #cpu219
@@ -43,8 +43,11 @@
 #cpu217
 
 [docker]
-# 装 docker 的节点(给 Harbor/cri-docker 用); 与 containerd 一致按行内 accelerator_type 区分:
-#   nvidia -> 装 nvidia-container-toolkit; 不设 -> 普通 docker
+# 装 docker 的节点(本项目里 docker 仅给 Harbor 用; k8s 节点跑 containerd 直连,不用 docker)。
+# 按行内 accelerator_type 区分:
+#   accelerator_type=nvidia -> docker + nvidia-container-toolkit(daemon 默认 runtime=nvidia)
+#   不设                     -> 普通 docker
+# ⚠️ docker 侧【只支持 nvidia】; dcu/npu(华为昇腾)只在 containerd 生效,别往这组写 dcu/npu。
 #cpu217
 #a800-node30 accelerator_type=nvidia
 [cri_docker_nodes]
