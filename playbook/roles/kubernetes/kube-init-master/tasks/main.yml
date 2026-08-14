@@ -12,7 +12,7 @@
       - (final_master_list | length) < 2 or (lbvip is defined)
     fail_msg: >-
       检测到 {{ final_master_list | length }} 个 master 但未设置 lbvip。
-      多 master 高可用需要负载均衡 VIP: 请在 inventory [all:vars] 配 lbvip
+      多 master 高可用需要负载均衡 VIP: 请在 inventory/group_vars/all/env.yaml 配 lbvip
       并先跑 haproxy-ha/nginx-ha; 或改为单 master 部署(只放 1 台 [k8s_master])。
     success_msg: "master/LB 预检通过 (master={{ final_master_list | length }}, lbvip={{ lbvip | default('未设置(单 master)') }})"
   run_once: true

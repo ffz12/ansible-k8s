@@ -61,16 +61,10 @@
 [master_to_delete]
 
 [all:vars]
-# 时钟同步 NTP 源
-#chrony_ip=10.5.0.6
-# k8slb 虚拟 IP(VIP); 单 master 可不设(不配 LB), 多 master 高可用才需要
-#lbvip=172.171.0.250
-# VIP 掩码,按实际网段改(如 24)
-#vip_prefix=24
-# CNI 插件: calico(默认) / flannel / cilium
-#kube_network_plugin=calico
-# 离线部署置 true(在线留默认 false 或不设)
-#is_offline=false
+# 集群参数(is_offline / kube_network_plugin / chrony_ip / lbvip / vip_prefix 等)
+# 统一在 inventory/group_vars/all/env.yaml 配置。
+# ⚠ group_vars 优先级高于本文件: 这些变量写在这里会被 env.yaml 覆盖(不生效), 别在这重复写。
+# 本段只保留【连接方式】和少数按主机差异的变量。
 
 # 连接方式:
 # 【还没配 root 免密】用普通用户 + sudo:
