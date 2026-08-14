@@ -1,0 +1,344 @@
+# MinIO 分布式部署 —— cpu03 / cpu05 / cpu07 / cpu08
+#
+# 硬件:每节点 2 块 3.5TB NVMe = 8 drives,裸容量 28TB
+# 纠删码:8 drives 单个 erasure set
+#   EC:4(默认) → 可用 14TB,容忍任意 4 块盘 = 2 个节点故障
+#   EC:2(可选) → 可用 21TB,容忍任意 2 块盘 = 1 个节点故障
+#   本文件用默认 EC:4;想要 EC:2 见文末说明
+#
+# 前置准备(四台节点都做):
+#   1. 确认两块 NVMe 的设备名: lsblk -d -o NAME,SIZE,ROTA,TYPE
+#   2. 格式化并挂载(XFS 是 MinIO 官方推荐):
+#      mkfs.xfs -f /dev/nvmeXn1
+#      mkfs.xfs -f /dev/nvmeYn1
+#      mkdir -p /data/minio/disk0 /data/minio/disk1
+#      # 用 UUID 写入 /etc/fstab,避免重启后设备名漂移:
+#      blkid /dev/nvmeXn1
+#      echo 'UUID=xxx /data/minio/disk0 xfs defaults,noatime 0 2' >> /etc/fstab
+#      echo 'UUID=yyy /data/minio/disk1 xfs defaults,noatime 0 2' >> /etc/fstab
+#      mount -a
+#      chown -R 1000:1000 /data/minio
+#   3. 验证是两个独立挂载点(不是同一文件系统下的两个目录):
+#      df -h /data/minio/disk0 /data/minio/disk1   # Filesystem 列必须不同
+#   4. 镜像推到 harbor: harbor.local.clusters/minio/minio
+#
+# PV 容量按 3.5TB 盘格式化后的实际可用量填,先跑 df -h 确认,再改所有 storage 字段
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-creds
+  namespace: minio-system
+type: Opaque
+stringData:
+  # 部署前务必改掉,密码至少 8 位
+  MINIO_ROOT_USER: "minioadmin"
+  MINIO_ROOT_PASSWORD: "ChangeMe-MinIO-2026"
+---
+# no-provisioner + WaitForFirstConsumer:
+# 让调度器先选节点再绑 PV,避免 Pod 调度到没有对应 PV 的节点
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: minio-local
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+---
+# ==================== PV: cpu03 -> minio-0 ====================
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-cpu03-disk0
+spec:
+  capacity: { storage: 3500Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: minio-local
+  local: { path: /data/minio/disk0 }
+  claimRef: { namespace: minio-system, name: data0-minio-0 }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - { key: kubernetes.io/hostname, operator: In, values: [cpu03] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-cpu03-disk1
+spec:
+  capacity: { storage: 3500Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: minio-local
+  local: { path: /data/minio/disk1 }
+  claimRef: { namespace: minio-system, name: data1-minio-0 }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - { key: kubernetes.io/hostname, operator: In, values: [cpu03] }
+---
+# ==================== PV: cpu05 -> minio-1 ====================
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-cpu05-disk0
+spec:
+  capacity: { storage: 3500Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: minio-local
+  local: { path: /data/minio/disk0 }
+  claimRef: { namespace: minio-system, name: data0-minio-1 }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - { key: kubernetes.io/hostname, operator: In, values: [cpu05] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-cpu05-disk1
+spec:
+  capacity: { storage: 3500Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: minio-local
+  local: { path: /data/minio/disk1 }
+  claimRef: { namespace: minio-system, name: data1-minio-1 }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - { key: kubernetes.io/hostname, operator: In, values: [cpu05] }
+---
+# ==================== PV: cpu07 -> minio-2 ====================
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-cpu07-disk0
+spec:
+  capacity: { storage: 3500Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: minio-local
+  local: { path: /data/minio/disk0 }
+  claimRef: { namespace: minio-system, name: data0-minio-2 }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - { key: kubernetes.io/hostname, operator: In, values: [cpu07] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-cpu07-disk1
+spec:
+  capacity: { storage: 3500Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: minio-local
+  local: { path: /data/minio/disk1 }
+  claimRef: { namespace: minio-system, name: data1-minio-2 }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - { key: kubernetes.io/hostname, operator: In, values: [cpu07] }
+---
+# ==================== PV: cpu08 -> minio-3 ====================
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-cpu08-disk0
+spec:
+  capacity: { storage: 3500Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: minio-local
+  local: { path: /data/minio/disk0 }
+  claimRef: { namespace: minio-system, name: data0-minio-3 }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - { key: kubernetes.io/hostname, operator: In, values: [cpu08] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-cpu08-disk1
+spec:
+  capacity: { storage: 3500Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: minio-local
+  local: { path: /data/minio/disk1 }
+  claimRef: { namespace: minio-system, name: data1-minio-3 }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - { key: kubernetes.io/hostname, operator: In, values: [cpu08] }
+---
+# Headless Service:给每个 Pod 稳定 DNS,MINIO_VOLUMES 靠它做节点发现
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-hl
+  namespace: minio-system
+  labels: { app: minio }
+spec:
+  clusterIP: None
+  # 关键:集群启动时各节点尚未 Ready,需要能互相解析,否则死锁
+  publishNotReadyAddresses: true
+  selector: { app: minio }
+  ports:
+  - { name: api, port: 9000, targetPort: 9000, protocol: TCP }
+  - { name: console, port: 9001, targetPort: 9001, protocol: TCP }
+---
+# 集群内业务访问入口
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio-system
+  labels: { app: minio }
+spec:
+  type: ClusterIP
+  # 建议把实际分到的 IP 显式写回来存档,防止 Service 重建后漂移
+  # (csi-s3 的 endpoint 若用 ClusterIP,IP 变了已有挂载会全失效)
+  # clusterIP: 10.233.46.93
+  selector: { app: minio }
+  ports:
+  - { name: api, port: 9000, targetPort: 9000, protocol: TCP }
+  - { name: console, port: 9001, targetPort: 9001, protocol: TCP }
+---
+# 集群外访问。有 MetalLB 的话把 type 改成 LoadBalancer 并删掉 nodePort
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-np
+  namespace: minio-system
+  labels: { app: minio }
+spec:
+  type: NodePort
+  selector: { app: minio }
+  ports:
+  - { name: api, port: 9000, targetPort: 9000, nodePort: 30900, protocol: TCP }
+  - { name: console, port: 9001, targetPort: 9001, nodePort: 30901, protocol: TCP }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: minio
+  namespace: minio-system
+spec:
+  minAvailable: 3        # EC:4 下最多同时下线 1 个节点
+  selector:
+    matchLabels: { app: minio }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: minio-system
+  labels: { app: minio }
+spec:
+  serviceName: minio-hl
+  replicas: 4
+  # 分布式模式必须并行启动 —— 串行会互相等待形成死锁
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels: { app: minio }
+  template:
+    metadata:
+      labels: { app: minio }
+    spec:
+      # local PV 已把 Pod 钉死在各自节点,这里是双保险
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels: { app: minio }
+            topologyKey: kubernetes.io/hostname
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: minio
+        image: harbor.local.clusters/minio/minio:RELEASE.2025-04-22T22-12-26Z
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          exec minio server \
+            http://minio-{0...3}.minio-hl.minio-system.svc.cluster.local/data{0...1} \
+            --console-address ":9001"
+        env:
+        - name: MINIO_ROOT_USER
+          valueFrom: { secretKeyRef: { name: minio-creds, key: MINIO_ROOT_USER } }
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom: { secretKeyRef: { name: minio-creds, key: MINIO_ROOT_PASSWORD } }
+        # 控制台经 NodePort 访问时需要,否则登录后跳转地址错误
+        - name: MINIO_BROWSER_REDIRECT_URL
+          value: "http://cpu03:30901"
+        - name: MINIO_PROMETHEUS_AUTH_TYPE
+          value: "public"
+        # 想要 EC:2(可用 21TB,容忍 1 节点)就取消下面两行注释。
+        # 注意:只在首次初始化时生效,已有数据的集群改了不会重新编码
+        # - name: MINIO_STORAGE_CLASS_STANDARD
+        #   value: "EC:2"
+        ports:
+        - { name: api, containerPort: 9000 }
+        - { name: console, containerPort: 9001 }
+        volumeMounts:
+        - { name: data0, mountPath: /data0 }
+        - { name: data1, mountPath: /data1 }
+        # 吞吐与 limits.cpu 近似线性:8 核约 4.4 GB/s 混合吞吐,4 核减半。
+        # requests 不要留 1 核 —— QoS 会变 Burstable,cpu03 上还跑着 etcd
+        resources:
+          requests: { cpu: "4", memory: 8Gi }
+          limits:   { cpu: "8", memory: 64Gi }
+        # 探针一律用 /health/live —— 它只看本进程。
+        # 不要用 /health/cluster 做 liveness:滚动更新期间集群短暂不满仲裁,
+        # 会导致所有 Pod 被连环重启
+        livenessProbe:
+          httpGet: { path: /minio/health/live, port: 9000 }
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+        readinessProbe:
+          httpGet: { path: /minio/health/live, port: 9000 }
+          initialDelaySeconds: 20
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 3
+        startupProbe:
+          httpGet: { path: /minio/health/live, port: 9000 }
+          periodSeconds: 10
+          failureThreshold: 30
+  volumeClaimTemplates:
+  - metadata: { name: data0 }
+    spec:
+      accessModes: [ReadWriteOnce]
+      storageClassName: minio-local
+      resources: { requests: { storage: 3500Gi } }
+  - metadata: { name: data1 }
+    spec:
+      accessModes: [ReadWriteOnce]
+      storageClassName: minio-local
+      resources: { requests: { storage: 3500Gi } }
