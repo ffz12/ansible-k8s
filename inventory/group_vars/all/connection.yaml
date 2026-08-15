@@ -1,0 +1,41 @@
+# ============================================================================
+#  connection.yaml —— 连接身份「自动探测」(入库; 与 env.yaml 的 bootstrap_* 凭据配合)
+#
+#  每台独立判定:
+#    connect_as: auto  → 控制机能免密 ssh 到目标 root ? root 直连 : 普通用户 + sudo
+#    connect_as: root  → 强制 root 直连(已全部免密时用)
+#    connect_as: sudo  → 强制 普通用户 + sudo(用 bootstrap_*)
+#  connect_as 默认 auto, 在 env.yaml 覆盖。
+#
+#  前提 / 说明:
+#    - 密码回退(sudo 分支)需要【控制机】装 sshpass。
+#    - root 探测走「控制机当前用户」的 ssh key: 先跑 add-control-key.yml 下发控制机公钥后,
+#      auto 才会判成 root。没下发前 auto 自动走 用户+sudo —— 正好用于首次下发免密。
+#    - bootstrap_user / bootstrap_ssh_pass / bootstrap_become_pass 在 env.yaml 配(见示例)。
+#      root 全程免密时这几个可不填(lazy: 只有回退到 sudo 分支才会用到)。
+#    - ansible_python_interpreter / ansible_ssh_common_args 仍在 hosts [all:vars] 配, 不受本文件影响。
+#  彻底关掉自动探测: 删掉本文件, 回到 hosts/[all:vars] 手工配 ansible_user 等。
+# ============================================================================
+
+connect_as: auto          # 可被 env.yaml 覆盖
+
+# 控制机 → 目标 root 免密是否可用(BatchMode 不交互, 4s 超时; 通=yes 否=no)
+_root_login_ok: >-
+  {{ lookup('pipe',
+     'ssh -o BatchMode=yes -o ConnectTimeout=4 -o StrictHostKeyChecking=no'
+     ~ ' -o UserKnownHostsFile=/dev/null root@'
+     ~ (ansible_host | default(inventory_hostname))
+     ~ ' true >/dev/null 2>&1 && echo yes || echo no') }}
+
+# 最终是否用 root(auto 且探测通, 或强制 root)
+_use_root: >-
+  {{ connect_as == 'root'
+     or (connect_as == 'auto' and _root_login_ok == 'yes') }}
+
+# —— 推导出的连接参数 ——
+ansible_user: "{{ 'root' if (_use_root | bool) else bootstrap_user }}"
+ansible_become: "{{ not (_use_root | bool) }}"
+ansible_become_method: sudo
+# 密码仅在有 bootstrap_* 时才带(root 全程免密→omit→纯密钥); root 分支即便带上, ssh 也先走密钥
+ansible_ssh_pass: "{{ bootstrap_ssh_pass | default(omit) }}"
+ansible_become_pass: "{{ bootstrap_become_pass | default(bootstrap_ssh_pass | default(omit)) }}"

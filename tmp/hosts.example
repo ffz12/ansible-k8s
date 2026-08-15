@@ -67,12 +67,11 @@
 # 本段只保留【连接方式】和少数按主机差异的变量。
 
 # 连接方式:
-# 【还没配 root 免密】用普通用户 + sudo:
-#ansible_user=user
-#ansible_ssh_pass=Admin@123+
-#ansible_become=true
-#ansible_become_method=sudo
-#ansible_become_pass=Admin@123+
-#ansible_python_interpreter=/usr/bin/python3
-#ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-# 【已提供 root 且免密】上面 ssh_pass / become* 那几行可省
+# 身份(root 直连 / 普通用户+sudo)由 group_vars/all/connection.yaml 【自动探测】:
+#   控制机能免密到 root → root 直连; 否则 → 普通用户+sudo。
+#   回退用的 bootstrap_user / bootstrap_ssh_pass / bootstrap_become_pass 及 connect_as 在 env.yaml 配。
+#   想强制: env.yaml 里 connect_as=root 或 sudo。
+# 所以这里【不用】再写 ansible_user / ansible_ssh_pass / ansible_become*(写了也会被 connection.yaml 覆盖)。
+# 下面两项(python 解释器 / ssh 参数)按需保留在这里:
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
