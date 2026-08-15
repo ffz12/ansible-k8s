@@ -1,0 +1,222 @@
+---
+# ============================================================================
+#  qdlt-check/tasks/main.yaml —— 只读体检(不修改任何配置)
+# ============================================================================
+
+- name: 下发采集脚本到临时目录
+  copy:
+    src: qdlt-collect.sh
+    dest: /tmp/qdlt-collect.sh
+    mode: '0755'
+  changed_when: false
+
+- name: 执行只读采集
+  command: bash /tmp/qdlt-collect.sh
+  register: qdlt_raw
+  changed_when: false
+
+- name: 解析采集结果
+  set_fact:
+    f: "{{ qdlt_raw.stdout | from_json }}"
+
+- name: 清理临时脚本
+  file:
+    path: /tmp/qdlt-collect.sh
+    state: absent
+  changed_when: false
+
+# ============================================================================
+#  逐项判定 —— 每条 {item, expect, actual, verdict}
+#  verdict: PASS / FAIL / WARN / SKIP
+# ============================================================================
+
+- name: 生成判定结果
+  set_fact:
+    qdlt_results: >-
+      {{
+      [
+        {'cat':'操作系统','item':'OS 版本','expect':'Ubuntu 22.04.3~22.04.5',
+         'actual': f.os_pretty ~ ' (' ~ (f.os_point | default('?')) ~ ')',
+         'verdict': ('PASS' if (f.os_point | default('')) is match(qdlt_expect_os_pattern) else 'FAIL')},
+
+        {'cat':'操作系统','item':'内核版本','expect':'5.15.0-181 ~ 5.15.0-999',
+         'actual': f.kernel,
+         'verdict': ('PASS' if f.kernel is match(qdlt_expect_kernel_pattern) else 'FAIL')},
+
+        {'cat':'操作系统','item':'内核 GRUB 固定','expect':'GRUB_DEFAULT 指向具体内核项 + apt-mark hold',
+         'actual': 'GRUB_DEFAULT=' ~ (f.grub_default | default('未设置') | trim) ~ ' | hold: ' ~ (f.kernel_hold | default('无')),
+         'verdict': ('PASS' if ((f.kernel_hold | default('')) | length > 0
+                                and (f.grub_default | default('')) | trim not in ['', '0'])
+                     else 'WARN')},
+
+        {'cat':'操作系统','item':'时区','expect': qdlt_expect_timezone,
+         'actual': f.timezone | default(''),
+         'verdict': ('PASS' if (f.timezone | default('')) == qdlt_expect_timezone else 'FAIL')},
+
+        {'cat':'操作系统','item':'时间同步服务','expect':'chrony active 且已同步',
+         'actual': 'chrony=' ~ (f.chrony_active | default('?')) ~ ' NTPSync=' ~ (f.ntp_sync | default('?'))
+                   ~ ' offset=' ~ (f.chrony_offset | default('?')),
+         'verdict': ('PASS' if (f.chrony_active | default('')) == 'active' else 'FAIL')},
+
+        {'cat':'操作系统','item':'cloud-init 关闭','expect':'disabled / masked / 未安装',
+         'actual': f.cloudinit | default(''),
+         'verdict': ('PASS' if ((f.cloudinit | default('')) is search('disabled|masked|not-installed')) else 'FAIL')},
+
+        {'cat':'操作系统','item':'apt 自动更新关闭','expect':'apt-daily 定时器 0 个, unattended 未启用',
+         'actual': 'apt-daily 定时器=' ~ (f.apt_timers | default('?')) ~ ' unattended=' ~ (f.unattended | default('?')),
+         'verdict': ('PASS' if ((f.apt_timers | default('9') | int) == 0
+                                and (f.unattended | default('')) not in ['enabled'])
+                     else 'FAIL')},
+
+        {'cat':'操作系统','item':'统一登录账号','expect': qdlt_expect_user ~ ' 存在且无其他一般用户',
+         'actual': '一般用户: ' ~ (f.normal_users | default('') | trim),
+         'verdict': ('PASS' if ((f.normal_users | default('')).split() | reject('equalto', qdlt_expect_user) | list | length == 0
+                                and qdlt_expect_user in (f.normal_users | default('')))
+                     else ('WARN' if qdlt_expect_user in (f.normal_users | default('')) else 'FAIL'))},
+
+        {'cat':'BIOS','item':'vt-d / IOMMU 关闭','expect':'IOMMU 未启用',
+         'actual': 'DMAR enabled 命中=' ~ (f.iommu_dmar | default('?')) ~ ' iommu_groups=' ~ (f.iommu_groups | default('?'))
+                   ~ ' | cmdline: ' ~ (f.cmdline | default('') | regex_search('\S*iommu\S*') | default('无 iommu 参数', true)),
+         'verdict': ('PASS' if ((f.iommu_dmar | default('0') | int) == 0
+                                and (f.iommu_groups | default('0') | int) == 0)
+                     else 'FAIL')},
+
+        {'cat':'BIOS','item':'超线程启用','expect':'Thread(s) per core = 2',
+         'actual': (f.cpu_threads_per_core | default('?')) ~ ' 线程/核, 共 ' ~ (f.cpu_cores | default('?')) ~ ' 逻辑核',
+         'verdict': ('PASS' if (f.cpu_threads_per_core | default('1') | int) >= 2 else 'FAIL')},
+
+        {'cat':'BIOS','item':'子 NUMA 关闭','expect':'NUMA 节点数 = CPU socket 数(整机 2 numa)',
+         'actual': 'NUMA=' ~ (f.numa_nodes | default('?')) ~ ' Socket=' ~ (f.cpu_sockets | default('?')),
+         'verdict': ('PASS' if (f.numa_nodes | default('0') | int) == (f.cpu_sockets | default('-1') | int) else 'FAIL')},
+
+        {'cat':'BIOS','item':'CPU 供电性能模式','expect':'所有核心 governor = performance',
+         'actual': 'available=[' ~ (f.gov_available | default('NA')) ~ '] current=[' ~ (f.gov_current | default('NA') | trim(',')) ~ ']',
+         'verdict': ('PASS' if (f.gov_current | default('') | trim(',')) == 'performance'
+                     else ('WARN' if (f.gov_available | default('')) == '' else 'FAIL'))},
+
+        {'cat':'BIOS','item':'TurboBoost 启用','expect':'no_turbo=0 或 boost=1(至少一个文件存在)',
+         'actual': 'no_turbo=' ~ (f.boost_no_turbo | default('NA')) ~ ' boost=' ~ (f.boost_flag | default('NA')),
+         'verdict': ('PASS' if ((f.boost_no_turbo | default('NA')) == '0' or (f.boost_flag | default('NA')) == '1')
+                     else ('FAIL' if ((f.boost_no_turbo | default('NA')) != 'NA' or (f.boost_flag | default('NA')) != 'NA')
+                           else 'WARN'))},
+
+        {'cat':'PCIe','item':'ACSCtl 全部关闭','expect':'SrcValid+ 计数 = 0',
+         'actual': (f.acs_enabled_count | default('?')) ~ ' / ' ~ (f.acs_total_count | default('?')) ~ ' 个 ACSCtl 处于开启',
+         'verdict': ('PASS' if (f.acs_enabled_count | default('1') | int) == 0 else 'FAIL')},
+
+        {'cat':'PCIe','item':'PCIe 链路无降速','expect':'无 downgraded 链路',
+         'actual': 'downgraded=' ~ (f.pcie_downgrade | default('?')) ~ ' | Gen5 x16 链路数=' ~ (f.pcie_gen5_x16 | default('?')),
+         'verdict': ('PASS' if (f.pcie_downgrade | default('1') | int) == 0 else 'WARN')},
+
+        {'cat':'磁盘','item':'根分区文件系统','expect':'ext4, 占用系统盘剩余全部空间',
+         'actual': f.sys_disk_root | default(''),
+         'verdict': ('PASS' if (f.root_fstype | default('')) == 'ext4' else 'FAIL')},
+
+        {'cat':'磁盘','item':'系统盘 RAID','expect':'有硬件 RAID 卡则 RAID1; 无则单盘且不用软 RAID',
+         'actual': 'RAID卡: ' ~ (f.raid_ctrl | default('无') | trim(';') | default('无', true))
+                   ~ ' | mdraid: ' ~ (f.md_raid | default('无') | trim | default('无', true)),
+         'verdict': ('FAIL' if ((f.md_raid | default('') | trim) | length > 0) else 'WARN')},
+
+        {'cat':'磁盘','item':'数据盘保持裸盘','expect':'无分区 / 无 LVM / 无 RAID / 无文件系统',
+         'actual': ('检出非裸盘: ' ~ (f.data_disk_dirty | trim)) if ((f.data_disk_dirty | default('') | trim) | length > 0)
+                   else '全部数据盘为裸盘',
+         'verdict': ('FAIL' if ((f.data_disk_dirty | default('') | trim) | length > 0) else 'PASS')},
+
+        {'cat':'网络','item':'带内 bond 配置','expect':'mode 4 802.3ad, hash layer3+4',
+         'actual': (f.bond_detail | default('') | trim) if ((f.bond_detail | default('') | trim) | length > 0) else '未发现 bond',
+         'verdict': ('PASS' if ((f.bond_detail | default('') is search(qdlt_expect_bond_mode))
+                                and (f.bond_detail | default('') is search('layer3\+4')))
+                     else 'FAIL')},
+
+        {'cat':'网络','item':'未使用 VLAN 子接口','expect':'系统内无 vlan 接口',
+         'actual': (f.vlan_ifaces | default('') | trim) if ((f.vlan_ifaces | default('') | trim) | length > 0) else '无',
+         'verdict': ('FAIL' if ((f.vlan_ifaces | default('') | trim) | length > 0) else 'PASS')},
+
+        {'cat':'网络','item':'默认路由在主带内网卡','expect':'默认路由唯一且走 bond',
+         'actual': f.default_route | default('') | trim(';'),
+         'verdict': ('PASS' if ((f.default_route | default('') is search('bond'))
+                                and ((f.default_route | default('')).split(';') | select('search', 'default') | list | length == 1))
+                     else 'WARN')},
+
+        {'cat':'网络','item':'带内/带外 IP 末段一致','expect':'带内与 BMC 地址最后一段相同',
+         'actual': '带内=' ~ (qdlt_mgmt_ip | default('?')) ~ ' 带外(ipmitool)=' ~ (f.ipmi_lan | default('未取到')),
+         'verdict': ('PASS' if ((f.ipmi_lan | default('')) | length > 0
+                                and (f.ipmi_lan | default('.')).split('.')[3] | default('x')
+                                    == (qdlt_mgmt_ip | default('...')).split('.')[3])
+                     else 'WARN')},
+
+        {'cat':'RDMA','item':'RDMA 设备与 hca_id 命名','expect':'计算网 mlx5_0~mlx5_7, 存储网另行命名(如 mlx5_8/mlx5_20)',
+         'actual': (f.rdma_devs | default('无') | trim(',')) ~ ' | ' ~ (f.rdma_detail | default('') | trim),
+         'verdict': ('SKIP' if ((f.rdma_devs | default('') | trim(',')) | length == 0)
+                     else ('PASS' if (f.rdma_devs | default('') is search('mlx5_0,')) else 'WARN'))},
+
+        {'cat':'RDMA','item':'OFED / DOCA 版本','expect':'CX8/BF3 → DOCA_OFED 3.2.2 LTS; 纯 CX7 及以下 → 5.8-7.0.6.1 或 24.10-4.1.4.0',
+         'actual': 'ofed_info=' ~ (f.ofed_version | default('未安装')) ~ ' | doca=' ~ (f.doca_version | default('无') | trim(',')),
+         'verdict': ('SKIP' if ((f.rdma_devs | default('') | trim(',')) | length == 0)
+                     else ('PASS' if (qdlt_expect_ofed_any | select('in', (f.ofed_version | default('')) ~ (f.doca_version | default(''))) | list | length > 0)
+                           else 'FAIL'))},
+
+        {'cat':'GPU','item':'GPU 驱动版本','expect': qdlt_expect_gpu_driver ~ ' + 同版本 fabricmanager + persistenced',
+         'actual': 'driver=' ~ (f.gpu_driver | default('?')) ~ ' fabricmanager=' ~ (f.fabricmgr | default('?'))
+                   ~ ' persistenced=' ~ (f.persistenced | default('?')),
+         'verdict': ('SKIP' if not (qdlt_check_gpu | bool)
+                     else ('PASS' if (f.gpu_driver | default('')) == qdlt_expect_gpu_driver else 'FAIL'))},
+
+        {'cat':'GPU','item':'GPU VBIOS 版本','expect':'B300 ≥ ' ~ qdlt_expect_vbios_min,
+         'actual': (f.gpu_vbios | default('') | trim(',')) | default('未取到', true),
+         'verdict': ('SKIP' if not (qdlt_check_gpu | bool)
+                     else ('FAIL' if ((f.gpu_vbios | default('') | trim(',')) | length == 0)
+                           else ('PASS' if ((f.gpu_vbios | trim(',')).split(',')
+                                            | map('trim') | reject('equalto', '')
+                                            | map('upper')
+                                            | select('lt', qdlt_expect_vbios_min | upper)
+                                            | list | length == 0)
+                                 else 'FAIL')))},
+
+        {'cat':'GPU','item':'CUDA 未安装','expect':'交付标准要求不安装 CUDA',
+         'actual': f.cuda_toolkit | default('未安装'),
+         'verdict': ('FAIL' if ((f.cuda_toolkit | default('') | trim) | length > 0) else 'PASS')},
+
+        {'cat':'共享存储','item':'共享存储挂载','expect':'高性能→/gpfs, 大容量→/hgpfs, 其他→/gpfs02 起; 且开机自动挂载',
+         'actual': '已挂载: ' ~ (f.mounts_shared | default('无') | trim(';') | default('无', true))
+                   ~ ' | fstab: ' ~ (f.fstab_shared | default('无') | trim(';') | default('无', true)),
+         'verdict': ('SKIP' if (qdlt_expect_mounts | length == 0)
+                     else ('PASS' if (qdlt_expect_mounts | reject('in', f.mounts_shared | default('')) | list | length == 0)
+                           else 'FAIL'))},
+
+        {'cat':'软件包','item':'ipmitool 已安装','expect':'已安装',
+         'actual': f.ipmitool | default('?'),
+         'verdict': ('PASS' if ((f.ipmitool | default('')) != 'not-installed') else 'FAIL')},
+
+        {'cat':'软件包','item':'防火墙 ufw 关闭','expect':'inactive',
+         'actual': f.ufw_state | default('?'),
+         'verdict': ('PASS' if ((f.ufw_state | default('')) != 'active') else 'WARN')},
+
+        {'cat':'一致性','item':'硬件基线(跨节点比对)','expect':'全集群 CPU/内存/BIOS/GPU 型号完全一致',
+         'actual': 'CPU=' ~ (f.cpu_model | default('?') | trim) ~ ' | 内存=' ~ (f.mem_total_gb | default('?')) ~ 'GB/'
+                   ~ (f.mem_dimms | default('?')) ~ '条/' ~ (f.mem_vendor | default('?') | trim(','))
+                   ~ ' | BIOS=' ~ (f.bios_version | default('?')) ~ ' | 机型=' ~ (f.sys_product | default('?')),
+         'verdict':'INFO'}
+      ]
+      }}
+
+- name: 输出本机体检结果
+  debug:
+    msg: >-
+      [{{ inventory_hostname }}] {{ item.verdict }} | {{ item.cat }} / {{ item.item }}
+      → 实际: {{ item.actual }}
+  loop: "{{ qdlt_results }}"
+  loop_control:
+    label: "{{ item.verdict }} {{ item.item }}"
+  when: qdlt_verbose | default(false) | bool
+
+- name: 本机不合规项汇总
+  debug:
+    msg: >-
+      {{ ('✅ ' ~ inventory_hostname ~ ' 全部检查项通过')
+         if (qdlt_results | selectattr('verdict', 'in', ['FAIL', 'WARN']) | list | length == 0)
+         else (inventory_hostname ~ ' 不合规 '
+               ~ (qdlt_results | selectattr('verdict','equalto','FAIL') | list | length) ~ ' 项 / 待确认 '
+               ~ (qdlt_results | selectattr('verdict','equalto','WARN') | list | length) ~ ' 项: '
+               ~ (qdlt_results | selectattr('verdict','in',['FAIL','WARN'])
+                  | map(attribute='item') | join(', '))) }}

@@ -1,0 +1,21 @@
+---
+# ============================================================================
+#  packages.yaml —— 交付标准要求的软件包(ipmitool 为明确必装项)
+# ============================================================================
+
+- name: 安装交付标准要求的软件包
+  apt:
+    name: "{{ qdlt_packages }}"
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+  register: qdlt_pkg_install
+  retries: 2
+  delay: 5
+  until: qdlt_pkg_install is succeeded
+
+- name: 确认 ipmitool 可用
+  command: ipmitool -V
+  register: qdlt_ipmitool_ver
+  changed_when: false
+  failed_when: qdlt_ipmitool_ver.rc != 0

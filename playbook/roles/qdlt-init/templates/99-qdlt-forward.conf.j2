@@ -1,0 +1,25 @@
+# 由 Ansible qdlt-init 生成 —— 青岛联通交付标准: 日志输出至日志审计系统
+# ubuntu 系统需输出: auth.log、syslog、lastlog
+{% set tgt = ('@@' if qdlt_log_proto == 'tcp' else '@') ~ qdlt_log_server ~ ':' ~ qdlt_log_port %}
+
+# ---- auth.log(认证日志) ----
+auth,authpriv.*   {{ tgt }}
+
+# ---- syslog(系统日志) ----
+*.*;auth,authpriv.none   {{ tgt }}
+
+# ---- lastlog(二进制文件, 用 imfile 以文本方式跟随登录记录) ----
+module(load="imfile" mode="inotify")
+input(type="imfile"
+      File="/var/log/wtmp"
+      Tag="lastlog"
+      Severity="info"
+      Facility="local1")
+local1.*   {{ tgt }}
+
+# 转发队列: 审计系统不可达时先落盘, 避免阻塞本机日志
+$ActionQueueFileName qdltfwd
+$ActionQueueMaxDiskSpace 1g
+$ActionQueueSaveOnShutdown on
+$ActionQueueType LinkedList
+$ActionResumeRetryCount -1

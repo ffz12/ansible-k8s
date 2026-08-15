@@ -1,0 +1,68 @@
+---
+# ============================================================================
+#  qdlt-report —— 汇总 qdlt-check 的采集结果, 在控制机生成 Markdown/CSV 报告
+#  本角色 run_once 执行, 只写控制机本地文件, 不碰目标节点。
+# ============================================================================
+
+- name: 收集本次成功采集到结果的节点(跳过 unreachable/失败的)
+  set_fact:
+    qdlt_hosts: >-
+      {{ ansible_play_hosts_all | map('extract', hostvars)
+         | selectattr('qdlt_results', 'defined')
+         | map(attribute='inventory_hostname') | list }}
+
+- name: 校验有可汇总的数据
+  assert:
+    that: qdlt_hosts | length > 0
+    fail_msg: >-
+      没有任何节点采集到结果, 无法生成报告。
+      请检查 qdlt-check 阶段是否全部失败。
+
+- name: 生成报告时间戳
+  set_fact:
+    qdlt_report_time: "{{ '%Y-%m-%d %H:%M:%S' | strftime }}"
+    qdlt_report_stamp: "{{ '%Y%m%d-%H%M%S' | strftime }}"
+
+- name: 创建报告目录
+  file:
+    path: "{{ qdlt_report_dir }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+  become: no
+
+- name: 生成 Markdown 报告
+  template:
+    src: report.md.j2
+    dest: "{{ qdlt_report_dir }}/qdlt-check-{{ qdlt_report_stamp }}.md"
+    mode: '0644'
+  delegate_to: localhost
+  become: no
+
+- name: 生成 CSV 报告
+  template:
+    src: report.csv.j2
+    dest: "{{ qdlt_report_dir }}/qdlt-check-{{ qdlt_report_stamp }}.csv"
+    mode: '0644'
+  delegate_to: localhost
+  become: no
+
+- name: 统计全局不合规项
+  set_fact:
+    qdlt_total_fail: >-
+      {{ qdlt_hosts | map('extract', hostvars, 'qdlt_results') | flatten
+         | selectattr('verdict', 'equalto', 'FAIL') | list | length }}
+    qdlt_total_warn: >-
+      {{ qdlt_hosts | map('extract', hostvars, 'qdlt_results') | flatten
+         | selectattr('verdict', 'equalto', 'WARN') | list | length }}
+
+- name: 汇总结论
+  debug:
+    msg:
+      - "==================== 青岛联通交付标准体检 ===================="
+      - "检查节点: {{ qdlt_hosts | length }} 台 —— {{ qdlt_hosts | join(', ') }}"
+      - "不符合项(FAIL): {{ qdlt_total_fail }} 条"
+      - "待确认项(WARN): {{ qdlt_total_warn }} 条"
+      - "报告(Markdown): {{ qdlt_report_dir }}/qdlt-check-{{ qdlt_report_stamp }}.md"
+      - "报告(CSV)     : {{ qdlt_report_dir }}/qdlt-check-{{ qdlt_report_stamp }}.csv"
+      - "============================================================"

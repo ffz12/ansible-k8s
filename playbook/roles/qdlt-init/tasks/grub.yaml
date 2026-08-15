@@ -1,0 +1,128 @@
+---
+# ============================================================================
+#  grub.yaml —— 交付标准: 内核版本 5.15.0-181 ~ 5.15.0-999,
+#               且「需要通过配置 grub 做固定, 避免系统重启后发生变更」
+#
+#  做法: 1) 从 grub.cfg 解析当前运行内核对应的 menuentry id
+#        2) 写入 GRUB_DEFAULT=<该 id>, 关闭 saved/submenu 漂移
+#        3) apt-mark hold 当前内核相关包, 防被升级掉
+#  ⚠ 改 GRUB 有风险: 每一步都先备份, 且写入后校验 grub.cfg 里确实含该 id;
+#    校验不过会中止并还原, 不会留下半吊子配置。
+# ============================================================================
+
+- name: 读取当前运行内核版本
+  set_fact:
+    qdlt_kernel: "{{ ansible_kernel }}"
+
+- name: 校验内核版本是否在交付标准要求区间(5.15.0-181 ~ 5.15.0-999)
+  debug:
+    msg: >-
+      {{ '✅ 内核 ' ~ qdlt_kernel ~ ' 在交付标准区间内'
+         if (qdlt_kernel is match('^5\.15\.0-(1[89][0-9]|[2-9][0-9]{2})'))
+         else '⚠ 内核 ' ~ qdlt_kernel ~ ' 不在交付标准要求的 5.15.0-181~5.15.0-999 区间, 需先升级/降级内核' }}
+
+- name: 确认已安装对应内核的 vmlinuz
+  stat:
+    path: "/boot/vmlinuz-{{ qdlt_kernel }}"
+  register: qdlt_vmlinuz
+
+- name: 锁定内核相关包, 防 apt 升级
+  shell: |
+    set -o pipefail
+    VER=$(echo "{{ qdlt_kernel }}" | cut -d'-' -f1,2)
+    PKGS=$(dpkg --get-selections | awk '$2=="install"{print $1}' \
+           | grep -E "^linux-(image|headers|modules|modules-extra|tools)-(${VER}|generic)" || true)
+    if [ -n "$PKGS" ]; then
+      apt-mark hold $PKGS
+    else
+      echo "未找到匹配 ${VER} 的内核包"
+    fi
+  args:
+    executable: /bin/bash
+  register: qdlt_kernel_hold
+  changed_when: "'set on hold' in qdlt_kernel_hold.stdout"
+
+- name: 输出内核锁定结果
+  debug:
+    var: qdlt_kernel_hold.stdout_lines
+
+# ---------------- GRUB 固定启动项 ----------------
+
+- name: 从 grub.cfg 解析当前内核对应的 menuentry id
+  shell: |
+    set -o pipefail
+    KVER="{{ qdlt_kernel }}"
+    CFG=/boot/grub/grub.cfg
+    # 顶层 menuentry(通常是 Ubuntu 默认项)
+    TOP=$(grep -m1 "^menuentry " "$CFG" | sed -n "s/.*\\\$menuentry_id_option '\([^']*\)'.*/\1/p")
+    # submenu(Advanced options)id
+    SUB=$(grep -m1 "^submenu " "$CFG" | sed -n "s/.*\\\$menuentry_id_option '\([^']*\)'.*/\1/p")
+    # submenu 内匹配当前内核版本、且非 recovery 的条目 id
+    ENT=$(grep "menuentry_id_option" "$CFG" \
+          | grep -- "$KVER" | grep -v recovery \
+          | sed -n "s/.*\\\$menuentry_id_option '\([^']*\)'.*/\1/p" | head -n1)
+    if [ -n "$SUB" ] && [ -n "$ENT" ]; then
+      echo "${SUB}>${ENT}"
+    elif [ -n "$ENT" ]; then
+      echo "$ENT"
+    else
+      echo "$TOP"
+    fi
+  args:
+    executable: /bin/bash
+  register: qdlt_grub_entry
+  changed_when: false
+
+- name: 校验解析到了有效的 GRUB 启动项 id
+  assert:
+    that: qdlt_grub_entry.stdout | trim | length > 0
+    fail_msg: "未能从 /boot/grub/grub.cfg 解析出启动项 id, 中止 GRUB 修改以免机器无法启动"
+
+- name: 解析结果
+  debug:
+    msg: "GRUB_DEFAULT 将设置为: {{ qdlt_grub_entry.stdout | trim }}"
+
+- name: 备份 /etc/default/grub
+  copy:
+    src: /etc/default/grub
+    dest: "/etc/default/grub.qdlt.bak"
+    remote_src: yes
+    force: no          # 只备份一次原始版本, 后续重跑不覆盖
+    mode: '0644'
+
+- name: 写入 GRUB 固定启动项配置
+  lineinfile:
+    path: /etc/default/grub
+    regexp: "^#?{{ item.k }}="
+    line: "{{ item.k }}={{ item.v }}"
+    state: present
+    backup: yes
+  loop:
+    # 固定到解析出的具体内核条目, 避免装了新内核后默认项漂移
+    - { k: 'GRUB_DEFAULT', v: "\"{{ qdlt_grub_entry.stdout | trim }}\"" }
+    # 关闭 saved 模式(saved 会记住上次选择, 与"固定"冲突)
+    - { k: 'GRUB_SAVEDEFAULT', v: 'false' }
+  notify: update grub
+
+- name: 立即刷新 grub.cfg
+  command: update-grub
+  register: qdlt_update_grub
+  changed_when: true
+
+- name: 校验 grub.cfg 中确实存在该启动项 id
+  shell: |
+    set -o pipefail
+    ID="{{ (qdlt_grub_entry.stdout | trim).split('>') | last }}"
+    grep -q -- "$ID" /boot/grub/grub.cfg && echo ok || echo missing
+  args:
+    executable: /bin/bash
+  register: qdlt_grub_verify
+  changed_when: false
+
+- name: GRUB 固定结果校验
+  assert:
+    that: qdlt_grub_verify.stdout | trim == 'ok'
+    fail_msg: >-
+      ❌ grub.cfg 中找不到设置的启动项 id, 请立即人工检查
+      /etc/default/grub (原始备份在 /etc/default/grub.qdlt.bak) 后再重启!
+    success_msg: "✅ GRUB 已固定到内核 {{ qdlt_kernel }}"

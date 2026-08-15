@@ -1,0 +1,62 @@
+---
+# ============================================================================
+#  hostname.yaml —— 交付标准主机名规范
+#    CPU 管理节点: CPU-[ip地址最后一段, 3位]      例: CPU-229
+#    GPU 算力节点: GPU-[SU号]-[ip最后一段, 3位]   例: GPU-SU2-056
+#      SU 号依据服务器上连的计算网 Leaf 交换机组的顺序决定 → 需在 inventory 逐台指定 qdlt_su
+#  ⚠ 若集群提供 GPFS 存储, 主机名必须先于 GPFS 客户端安装完成配置。
+# ============================================================================
+
+- name: 解析带内 IP 最后一段(补足 3 位)
+  set_fact:
+    qdlt_ip_last: "{{ '%03d' | format(qdlt_mgmt_ip.split('.')[3] | int) }}"
+
+- name: 【GPU 节点】校验已指定 SU 号
+  assert:
+    that:
+      - qdlt_su | string | length > 0
+      - qdlt_su | string is match('^[0-9]+$')
+    fail_msg: >-
+      GPU 节点 {{ inventory_hostname }} 未指定 qdlt_su。
+      请在 inventory 中按上连计算网 Leaf 交换机组顺序填写, 例如:
+      GPU-SU2-056 ansible_host=10.82.4.56 qdlt_su=2
+  when: qdlt_node_role == 'gpu'
+
+- name: 按交付标准生成目标主机名
+  set_fact:
+    qdlt_target_hostname: >-
+      {{ ('GPU-SU' ~ (qdlt_su | string) ~ '-' ~ qdlt_ip_last)
+         if qdlt_node_role == 'gpu'
+         else ('CPU-' ~ qdlt_ip_last) }}
+
+- name: 目标主机名
+  debug:
+    msg: >-
+      节点类型={{ qdlt_node_role | upper }},
+      带内IP={{ qdlt_mgmt_ip }},
+      当前主机名={{ ansible_hostname }},
+      目标主机名={{ qdlt_target_hostname }}
+
+- name: 设置主机名
+  hostname:
+    name: "{{ qdlt_target_hostname }}"
+
+- name: 同步 /etc/hosts 中的 127.0.1.1 记录(避免 sudo 解析告警)
+  lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s'
+    line: "127.0.1.1 {{ qdlt_target_hostname }}"
+    state: present
+    backup: yes
+
+- name: 写入集群内全部节点的 hosts 解析
+  blockinfile:
+    path: /etc/hosts
+    marker: "# Ansible qdlt hosts {mark}"
+    backup: yes
+    create: yes
+    block: |
+      {% for h in (groups['qdlt'] | default([])) | sort %}
+      {{ hostvars[h].qdlt_mgmt_ip | default(hostvars[h].ansible_host) | default('') }} {{ h }}
+      {% endfor %}
+  when: (groups['qdlt'] | default([])) | length > 0

@@ -1,0 +1,4 @@
+---
+# qdlt-report —— 报告输出目录(控制机本地)
+qdlt_report_dir: "{{ playbook_dir }}/../reports"
+qdlt_expect_time_skew: 15

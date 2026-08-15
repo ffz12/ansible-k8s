@@ -1,0 +1,89 @@
+---
+# ============================================================================
+#  user.yaml —— 交付标准: 系统登录账户使用统一账密, 用户名指定为 wwxq,
+#               且系统上不存在其他一般用户
+#
+#  ⚠ 密码必须外部传入(建议 ansible-vault, 或 -e qdlt_user_password=xxx),
+#    禁止把明文写进 git。
+#  ⚠ 多余用户默认【只报告不删除】, 确认后再置 qdlt_remove_extra_users=true。
+# ============================================================================
+
+- name: 【前置】必须提供 qdlt_user_password
+  assert:
+    that:
+      - qdlt_user_password is defined
+      - qdlt_user_password | length > 0
+    fail_msg: >-
+      未提供 qdlt_user_password。请用 ansible-vault 变量文件,
+      或命令行 -e "qdlt_user_password=xxxx" 传入统一登录密码。
+
+- name: 创建统一登录账号 {{ qdlt_user }}
+  user:
+    name: "{{ qdlt_user }}"
+    shell: "{{ qdlt_user_shell }}"
+    create_home: yes
+    password: "{{ qdlt_user_password | password_hash('sha512', 65534 | random(seed=inventory_hostname ~ qdlt_user) | string) }}"
+    update_password: always
+    state: present
+  # password_hash 每次生成不同 salt 会导致永远 changed;
+  # 用 inventory_hostname 派生固定 seed 保证幂等。
+  no_log: true
+
+- name: 解除账号锁定与密码过期
+  command: "{{ item }}"
+  loop:
+    - "passwd -u {{ qdlt_user }}"
+    - "chage -M 99999 -m 0 -I -1 -E -1 {{ qdlt_user }}"
+  changed_when: false
+  failed_when: false
+
+- name: 赋予 {{ qdlt_user }} sudo 权限
+  copy:
+    dest: "/etc/sudoers.d/90-{{ qdlt_user }}"
+    content: |
+      # 由 Ansible qdlt-init 写入(青岛联通交付标准: 统一登录账号)
+      {{ qdlt_user }} ALL=(ALL) {{ 'NOPASSWD:ALL' if qdlt_user_sudo_nopasswd | bool else 'ALL' }}
+    owner: root
+    group: root
+    mode: '0440'
+    validate: 'visudo -cf %s'
+
+# ---------------- 多余一般用户盘点 ----------------
+
+- name: 盘点 uid>=1000 的一般用户
+  shell: |
+    set -o pipefail
+    awk -F: '$3 >= 1000 && $3 < 65534 {print $1}' /etc/passwd
+  args:
+    executable: /bin/bash
+  register: qdlt_normal_users
+  changed_when: false
+
+- name: 计算需要清理的多余用户
+  set_fact:
+    qdlt_extra_users: >-
+      {{ qdlt_normal_users.stdout_lines
+         | difference(qdlt_protected_users)
+         | difference([ansible_user | default('')]) }}
+
+- name: 输出多余一般用户盘点结果
+  debug:
+    msg: >-
+      {{ '✅ 除 ' ~ qdlt_user ~ ' 外无多余一般用户, 符合交付标准'
+         if qdlt_extra_users | length == 0
+         else '⚠ 检出多余一般用户: ' ~ (qdlt_extra_users | join(', '))
+              ~ ' —— 交付标准要求系统上不存在其他一般用户。'
+              ~ ('本次将删除(qdlt_remove_extra_users=true)'
+                 if qdlt_remove_extra_users | bool
+                 else '当前仅报告未删除; 人工确认后置 qdlt_remove_extra_users=true 再跑') }}
+
+- name: 删除多余一般用户(含家目录, 不可逆)
+  user:
+    name: "{{ item }}"
+    state: absent
+    remove: yes
+    force: yes
+  loop: "{{ qdlt_extra_users }}"
+  when:
+    - qdlt_remove_extra_users | bool
+    - qdlt_extra_users | length > 0

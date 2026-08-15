@@ -1,0 +1,37 @@
+---
+# ============================================================================
+#  syslog.yaml —— 交付标准「配置日志收集」
+#    ubuntu 系统: 输出 auth.log、syslog、lastlog 至日志审计系统
+#  默认关闭(qdlt_do_syslog=false), 需先在 env 中填 qdlt_log_server 再开。
+#  ⚠ 只加 rsyslog 转发规则, 不改任何网络配置。
+# ============================================================================
+
+- name: 【前置】必须提供日志审计系统地址
+  assert:
+    that:
+      - qdlt_log_server is defined
+      - qdlt_log_server | length > 0
+    fail_msg: "开启 qdlt_do_syslog 需要先设置 qdlt_log_server(日志审计系统地址)"
+
+- name: 安装 rsyslog
+  apt:
+    name: rsyslog
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: 写入日志转发规则
+  template:
+    src: 99-qdlt-forward.conf.j2
+    dest: /etc/rsyslog.d/99-qdlt-forward.conf
+    owner: root
+    group: root
+    mode: '0644'
+    validate: 'rsyslogd -N1 -f %s'
+  notify: restart rsyslog
+
+- name: 启用 rsyslog
+  systemd:
+    name: rsyslog
+    state: started
+    enabled: yes

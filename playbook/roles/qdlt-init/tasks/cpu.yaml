@@ -1,0 +1,124 @@
+---
+# ============================================================================
+#  cpu.yaml —— 交付标准「供电配置 / boost 配置」
+#    - cpu 供电策略维持性能模式(BIOS 配不了就在系统内配服务)
+#    - 确认 cpu 启用 TurboBoost
+#  校验命令(与交付标准一致):
+#    cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors
+#    cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor | sort | uniq
+#    cat /sys/devices/system/cpu/cpufreq/boost
+#    cat /sys/devices/system/cpu/intel_pstate/no_turbo
+# ============================================================================
+
+- name: 探测 cpufreq 是否可用
+  stat:
+    path: /sys/devices/system/cpu/cpu0/cpufreq
+  register: qdlt_cpufreq
+
+- name: 无 cpufreq 接口时提示(通常为 BIOS 已锁性能模式或驱动未加载)
+  debug:
+    msg: >-
+      ⚠ 未发现 /sys/devices/system/cpu/cpu0/cpufreq,
+      无法在系统内设置 governor。请确认 BIOS 已配置为最高性能模式
+      (关闭 C-state、关闭节能、启用 TurboBoost)。
+  when: not qdlt_cpufreq.stat.exists
+
+- name: 配置 CPU 性能模式
+  block:
+    - name: 读取可用 governor 列表
+      command: cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors
+      register: qdlt_govs
+      changed_when: false
+
+    - name: 校验 performance governor 可用
+      assert:
+        that: "'performance' in qdlt_govs.stdout"
+        fail_msg: >-
+          可用 governor 中没有 performance: {{ qdlt_govs.stdout }}
+          —— 需要在 BIOS 中改为最高性能模式(或加载 intel_pstate/acpi-cpufreq)。
+
+    - name: 安装 cpufrequtils(提供 cpufreq-info / cpufreq-set)
+      apt:
+        name: cpufrequtils
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+      failed_when: false
+
+    - name: 写入 governor 常驻服务(重启后仍生效)
+      template:
+        src: qdlt-cpu-performance.service.j2
+        dest: "/etc/systemd/system/{{ qdlt_cpu_service }}"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: reload systemd
+
+    - name: 启用并启动 governor 服务
+      systemd:
+        name: "{{ qdlt_cpu_service }}"
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+
+    - name: 校验所有核心的 governor
+      shell: |
+        set -o pipefail
+        cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor | sort | uniq
+      args:
+        executable: /bin/bash
+      register: qdlt_gov_now
+      changed_when: false
+
+    - name: governor 校验结果(交付标准要求输出仅有 performance)
+      assert:
+        that: qdlt_gov_now.stdout_lines | unique == ['performance']
+        fail_msg: "❌ governor 不统一或非 performance: {{ qdlt_gov_now.stdout_lines }}"
+        success_msg: "✅ 全部核心 governor = performance"
+  when: qdlt_cpufreq.stat.exists
+
+# ---------------- TurboBoost ----------------
+
+- name: 探测 TurboBoost 控制接口
+  stat:
+    path: "{{ item }}"
+  loop:
+    - /sys/devices/system/cpu/intel_pstate/no_turbo
+    - /sys/devices/system/cpu/cpufreq/boost
+  register: qdlt_boost_paths
+
+- name: 启用 TurboBoost —— intel_pstate 方式(no_turbo 写 0)
+  copy:
+    dest: /sys/devices/system/cpu/intel_pstate/no_turbo
+    content: "0"
+    unsafe_writes: yes
+  when: qdlt_boost_paths.results[0].stat.exists
+  failed_when: false
+
+- name: 启用 TurboBoost —— acpi-cpufreq 方式(boost 写 1)
+  copy:
+    dest: /sys/devices/system/cpu/cpufreq/boost
+    content: "1"
+    unsafe_writes: yes
+  when: qdlt_boost_paths.results[1].stat.exists
+  failed_when: false
+
+- name: 读取 TurboBoost 当前状态
+  shell: |
+    set -o pipefail
+    for f in /sys/devices/system/cpu/intel_pstate/no_turbo \
+             /sys/devices/system/cpu/cpufreq/boost; do
+      [ -f "$f" ] && echo "$f = $(cat $f)"
+    done
+    exit 0
+  args:
+    executable: /bin/bash
+  register: qdlt_boost_state
+  changed_when: false
+
+- name: TurboBoost 状态(no_turbo 应为 0 / boost 应为 1)
+  debug:
+    msg: >-
+      {{ qdlt_boost_state.stdout_lines
+         if qdlt_boost_state.stdout_lines | length > 0
+         else '⚠ 两个 TurboBoost 接口文件均不存在 —— 交付标准要求至少有一个存在, 需在 BIOS 检查 TurboBoost' }}

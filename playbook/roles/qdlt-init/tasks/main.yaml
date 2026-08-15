@@ -1,0 +1,55 @@
+---
+# ============================================================================
+#  qdlt-init/tasks/main.yaml —— 青岛联通交付标准 OS 初始化(纯软件配置)
+#  ⚠ 不改任何网络配置(netplan/bond/vlan/hca_id/策略路由/IP), 网络项见 qdlt-check
+# ============================================================================
+
+- name: 【前置】仅支持 Debian/Ubuntu 系
+  assert:
+    that: ansible_os_family == 'Debian'
+    fail_msg: >-
+      qdlt-init 按交付标准只针对 Ubuntu 22.04 编写,
+      当前系统为 {{ ansible_distribution }} {{ ansible_distribution_version }}。
+
+- name: 【前置】交付标准要求 Ubuntu 22.04.3 ~ 22.04.5(不符只告警, 不中断)
+  debug:
+    msg: >-
+      ⚠ 当前 {{ ansible_distribution }} {{ ansible_distribution_version }}
+      不在交付标准要求的 Ubuntu 22.04.3~22.04.5 范围内, 请确认。
+  when: ansible_distribution_version is not match('^22\.04')
+
+- import_tasks: packages.yaml
+  when: qdlt_do_pkgs | bool
+  tags: [qdlt, pkgs]
+
+- import_tasks: time.yaml
+  when: qdlt_do_time | bool
+  tags: [qdlt, time]
+
+- import_tasks: cloudinit.yaml
+  when: qdlt_do_cloudinit | bool
+  tags: [qdlt, cloudinit]
+
+- import_tasks: apt.yaml
+  when: qdlt_do_apt | bool
+  tags: [qdlt, apt]
+
+- import_tasks: user.yaml
+  when: qdlt_do_user | bool
+  tags: [qdlt, user]
+
+- import_tasks: cpu.yaml
+  when: qdlt_do_cpu | bool
+  tags: [qdlt, cpu]
+
+- import_tasks: hostname.yaml
+  when: qdlt_do_hostname | bool
+  tags: [qdlt, hostname]
+
+- import_tasks: grub.yaml
+  when: qdlt_do_grub | bool
+  tags: [qdlt, grub]
+
+- import_tasks: syslog.yaml
+  when: qdlt_do_syslog | bool
+  tags: [qdlt, syslog]

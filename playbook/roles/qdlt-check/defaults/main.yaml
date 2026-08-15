@@ -1,0 +1,38 @@
+---
+# ============================================================================
+#  qdlt-check —— 青岛联通交付标准「只读体检」
+#
+#  本角色【绝不修改任何配置】, 只采集与判定, 产出:
+#    - 每台节点的逐项 PASS/FAIL/WARN 明细
+#    - 控制机本地汇总报告 {{ qdlt_report_dir }}/qdlt-check-<日期>.{md,csv}
+#
+#  覆盖交付标准中「不能自动改」的项:
+#    OS/内核版本、系统盘 RAID1+ext4、数据盘裸盘、bond mode4 hash 3+4、
+#    RDMA hca_id 命名、ACSCtl、GPU 驱动/VBIOS、OFED 版本、PCIe 链路、
+#    带内带外 IP 末段一致、共享存储挂载、设备一致性
+# ============================================================================
+
+# 控制机上报告的落地目录
+qdlt_report_dir: "{{ playbook_dir }}/../reports"
+
+# ---------------- 交付标准的期望值(按项目实际调整) ----------------
+qdlt_expect_os_pattern: '^22\.04\.[3-5]$'          # Ubuntu 22.04.3 ~ 22.04.5
+qdlt_expect_kernel_pattern: '^5\.15\.0-(1[89][0-9]|[2-9][0-9]{2})'  # 5.15.0-181 ~ 999
+qdlt_expect_timezone: UTC
+qdlt_expect_user: wwxq
+qdlt_expect_gpu_driver: "590.48.01"
+qdlt_expect_vbios_min: "97.10.64.00.0C"            # B300 VBIOS 版本下限
+qdlt_expect_bond_mode: "802.3ad"
+qdlt_expect_bond_hash: "layer3+4"
+qdlt_expect_time_skew: 15                          # 秒
+# OFED: 含 CX8/BF3 用 DOCA_OFED 3.2.2 LTS; 纯 CX7 及以下用 5.8-7.0.6.1 或 24.10-4.1.4.0
+qdlt_expect_ofed_any:
+  - "3.2.2"
+  - "5.8-7.0.6.1"
+  - "24.10-4.1.4.0"
+# 共享存储挂载点(交付标准: 高性能 /gpfs, 大容量 /hgpfs, 其他 /gpfs02 起)
+qdlt_expect_mounts: []
+# 例: [ /gpfs, /hgpfs ]
+
+# GPU 相关项是否检查(CPU 管理节点自动跳过)
+qdlt_check_gpu: "{{ qdlt_node_role | default('cpu') == 'gpu' }}"

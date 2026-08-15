@@ -1,0 +1,72 @@
+---
+# ============================================================================
+#  qdlt-init —— 青岛联通项目《交付标准》操作系统环境初始化
+#
+#  作用域: 只做「纯软件配置」。
+#  ⚠ 本角色【完全不碰网络】: 不改 netplan / bond / vlan / RDMA hca_id /
+#    策略路由 / 网卡驱动 / IP。这些项由 qdlt-check 角色只读体检出报告,
+#    人工按报告处置。
+#
+#  与 init 角色的关系: 本角色在 init 之后跑, 会【覆盖】init 的两处冲突:
+#    1) init 强制时区 Asia/Shanghai → 本角色按交付标准改回 UTC
+#    2) init 只 apt-mark hold 内核  → 本角色补 GRUB 固定启动项
+# ============================================================================
+
+# ---------------- 总开关(逐项可关) ----------------
+qdlt_do_time: true            # 时区 UTC + chrony 时间同步(误差 <15s)
+qdlt_do_cloudinit: true       # 彻底关闭 cloud-init
+qdlt_do_apt: true             # 关闭 apt 自动更新(含 mask apt-daily 定时器)
+qdlt_do_user: true            # 创建统一登录账号 wwxq
+qdlt_do_cpu: true             # governor=performance + TurboBoost
+qdlt_do_pkgs: true            # 安装 ipmitool 等交付要求的软件包
+qdlt_do_hostname: true        # 按 GPU-SU<n>-<xxx> / CPU-<xxx> 规范设置主机名
+qdlt_do_grub: true            # GRUB 固定当前内核, 防重启后内核变更
+qdlt_do_syslog: false         # 日志外送日志审计系统(需先填 qdlt_log_server)
+
+# ---------------- 时间 ----------------
+qdlt_timezone: UTC            # 交付标准: 统一 UTC 时区
+qdlt_ntp_servers:             # 交付标准放行的 NTP: ntp.ntsc.ac.cn / ntp.aliyun.com
+  - ntp.aliyun.com
+  - ntp.ntsc.ac.cn
+qdlt_time_max_offset: 15      # 交付标准: 集群内最大时间差 15 秒
+
+# ---------------- 统一登录账号 ----------------
+qdlt_user: wwxq
+# ⚠ 必填(建议 ansible-vault 或 -e 传入, 别明文进 git):
+#   qdlt_user_password: "明文密码"
+qdlt_user_shell: /bin/bash
+qdlt_user_sudo_nopasswd: false   # true=sudo 免密; 交付标准未要求, 默认保持需要密码
+# 交付标准要求「系统上不存在其他一般用户」。默认只【报告】不删除,
+# 确认无误后再置 true 执行删除(会 remove=yes 连家目录一起删, 不可逆)。
+qdlt_remove_extra_users: false
+qdlt_protected_users:            # 永不删除的账号(除 uid<1000 的系统账号外)
+  - "{{ qdlt_user }}"
+  - ubuntu
+  - root
+
+# ---------------- 主机名 ----------------
+# 角色: gpu / cpu。默认按 inventory 组自动判定(在 qdlt_gpu 组内即 gpu)。
+qdlt_node_role: "{{ 'gpu' if inventory_hostname in (groups['qdlt_gpu'] | default([])) else 'cpu' }}"
+# GPU 节点的 SU 号(按上连计算网 Leaf 交换机组顺序), 在 inventory 里逐台指定:
+#   GPU-SU1-056 ansible_host=10.82.4.56 qdlt_su=1
+qdlt_su: ""
+# 用于取「最后一段」的带内 IP; 默认取 inventory 里的 ansible_host
+qdlt_mgmt_ip: "{{ ansible_host | default(ansible_default_ipv4.address) }}"
+
+# ---------------- 软件包 ----------------
+qdlt_packages:
+  - ipmitool          # 交付标准明确要求
+  - chrony            # 时间同步
+  - pciutils          # lspci, 体检 ACSCtl 用
+  - ethtool
+  - dmidecode
+  - numactl
+
+# ---------------- CPU 性能 ----------------
+qdlt_cpu_governor: performance
+qdlt_cpu_service: qdlt-cpu-performance.service
+
+# ---------------- 日志审计外送(qdlt_do_syslog=true 时生效) ----------------
+# qdlt_log_server: "10.82.4.200"
+qdlt_log_port: 514
+qdlt_log_proto: udp          # udp=@  tcp=@@

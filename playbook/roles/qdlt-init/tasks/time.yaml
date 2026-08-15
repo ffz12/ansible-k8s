@@ -1,0 +1,69 @@
+---
+# ============================================================================
+#  time.yaml —— 时间配置
+#  交付标准: 全集群系统时间统一对齐, 最大时间差 <15 秒, 统一使用 UTC 时区
+#  ⚠ 本文件会覆盖 init 角色 common.yaml 里的 Asia/Shanghai 设置
+# ============================================================================
+
+- name: 查询当前时区
+  command: timedatectl show -p Timezone --value
+  register: qdlt_tz_now
+  changed_when: false
+
+- name: 设置时区为 {{ qdlt_timezone }}
+  command: "timedatectl set-timezone {{ qdlt_timezone }}"
+  when: qdlt_tz_now.stdout | trim != qdlt_timezone
+
+- name: 关闭 systemd-timesyncd(与 chrony 抢占 NTP 端口)
+  systemd:
+    name: systemd-timesyncd
+    state: stopped
+    enabled: no
+    masked: yes
+  failed_when: false
+
+- name: 写入 chrony 配置
+  template:
+    src: chrony.conf.j2
+    dest: /etc/chrony/chrony.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+  notify: restart chrony
+
+- name: 启用并启动 chrony
+  systemd:
+    name: chrony
+    state: started
+    enabled: yes
+    daemon_reload: yes
+
+- name: 立即触发一次强制对时(makestep)
+  command: chronyc makestep
+  register: qdlt_makestep
+  changed_when: false
+  failed_when: false
+
+- name: 等待 chrony 完成源选择
+  pause:
+    seconds: 5
+  when: qdlt_makestep.rc == 0
+
+- name: 采集时间同步状态
+  shell: |
+    set -o pipefail
+    chronyc tracking 2>/dev/null | awk -F': *' '/System time/{print $2}'
+  args:
+    executable: /bin/bash
+  register: qdlt_time_offset
+  changed_when: false
+  failed_when: false
+
+- name: 时间同步偏差检查(交付标准要求 <{{ qdlt_time_max_offset }} 秒)
+  debug:
+    msg: >-
+      时区={{ qdlt_timezone }};
+      chrony System time: {{ qdlt_time_offset.stdout | default('未取到') | trim }}
+      {{ '(⚠ 刚配好可能尚未收敛, 稍后用 chronyc tracking 复查)'
+         if (qdlt_time_offset.stdout | default('')) == '' else '' }}

@@ -1,0 +1,22 @@
+# ============================================================================
+#  /etc/chrony/chrony.conf —— 由 Ansible qdlt-init 角色生成, 请勿手工修改
+#  交付标准: 集群时间统一对齐, 最大差 {{ qdlt_time_max_offset }} 秒, UTC 时区
+# ============================================================================
+
+{% for s in qdlt_ntp_servers %}
+server {{ s }} iburst
+{% endfor %}
+
+# 记录系统时钟快慢速率
+driftfile /var/lib/chrony/chrony.drift
+
+# 前三次更新若偏差 >1 秒则直接步进校正(而非缓慢 slew), 保证快速对齐
+makestep 1.0 3
+
+# 同步硬件 RTC, 保证重启后时间不跑偏
+rtcsync
+
+# 允许步进的最大修正量(不限制, 交付初期机器时间可能差很多)
+maxupdateskew 100.0
+
+logdir /var/log/chrony
