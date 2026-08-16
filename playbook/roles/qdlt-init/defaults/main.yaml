@@ -24,11 +24,19 @@ qdlt_do_grub: true            # GRUB 固定当前内核, 防重启后内核变�
 qdlt_do_syslog: false         # 日志外送日志审计系统(需先填 qdlt_log_server)
 
 # ---------------- 时间 ----------------
-qdlt_timezone: UTC            # 交付标准: 统一 UTC 时区
-qdlt_ntp_servers:             # 交付标准放行的 NTP: ntp.ntsc.ac.cn / ntp.aliyun.com
+# 交付标准第 3 页要求「统一使用 UTC 时区」, 故默认值保持 UTC。
+# 项目实际要用别的时区(如 Asia/Shanghai)时, 【在 inventory/group_vars/all/env.yaml 覆盖】,
+# 不要改这里 —— 让偏离交付标准的地方显式落在项目配置里, 便于交付时说明。
+# 时区只影响显示, 不影响对时精度与跨节点时间差。
+qdlt_timezone: UTC
+# NTP 源: 默认公网源需要防火墙放行 udp 123; 机房有内网 NTP 的请改成内网地址。
+# 交付标准公网放行清单含 ntp.ntsc.ac.cn / ntp.aliyun.com udp123, 但仅在特定情形适用。
+qdlt_ntp_servers:
   - ntp.aliyun.com
   - ntp.ntsc.ac.cn
 qdlt_time_max_offset: 15      # 交付标准: 集群内最大时间差 15 秒
+qdlt_sync_wait: 60            # 等待 chrony 实际同步上的最长秒数
+qdlt_fail_on_unsynced: true   # 超时仍未同步则报错中止(置 false 只告警)
 
 # ---------------- 统一登录账号 ----------------
 qdlt_user: wwxq

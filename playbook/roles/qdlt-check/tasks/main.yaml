@@ -53,10 +53,16 @@
          'actual': f.timezone | default(''),
          'verdict': ('PASS' if (f.timezone | default('')) == qdlt_expect_timezone else 'FAIL')},
 
-        {'cat':'操作系统','item':'时间同步服务','expect':'chrony active 且已同步',
+        {'cat':'操作系统','item':'时间同步服务','expect':'chrony active 且已实际同步(NTPSynchronized=yes)',
          'actual': 'chrony=' ~ (f.chrony_active | default('?')) ~ ' NTPSync=' ~ (f.ntp_sync | default('?'))
-                   ~ ' offset=' ~ (f.chrony_offset | default('?')),
-         'verdict': ('PASS' if (f.chrony_active | default('')) == 'active' else 'FAIL')},
+                   ~ ' offset=' ~ (f.chrony_offset | default('?') | trim | default('未取到', true))
+                   ~ ' 源=' ~ (f.chrony_source | default('') | trim | default('无', true))
+                   ~ (' | ⚠ 服务在跑但一次都没同步上, 检查 NTP 源可达性(chronyc sources -v)'
+                      if ((f.chrony_active | default('')) == 'active'
+                          and (f.ntp_sync | default('')) != 'yes') else ''),
+         'verdict': ('PASS' if ((f.chrony_active | default('')) == 'active'
+                                and (f.ntp_sync | default('')) == 'yes')
+                     else 'FAIL')},
 
         {'cat':'操作系统','item':'cloud-init 关闭','expect':'disabled / masked / 未安装',
          'actual': f.cloudinit | default(''),

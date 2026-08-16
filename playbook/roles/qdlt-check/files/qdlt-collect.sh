@@ -10,8 +10,19 @@
 set -u
 
 # JSON 字符串转义
-esc() { printf '%s' "${1-}" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/ /g' | tr -d '\000-\010\013\014\016-\037'; }
+#  ⚠ 换行必须先折成空格再删控制字符 —— 否则任何多行输出都会把单行 JSON 撑破。
+#    典型来源: `grep -c xxx || echo 0`(grep 无匹配时既打印 0 又返回码 1, 于是
+#    echo 0 也执行, 输出变成两行), 以及一个字段里跑多条命令的情况。
+esc() {
+  printf '%s' "${1-}" \
+    | tr '\n\r\t' '   ' \
+    | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
+    | tr -d '\000-\037' \
+    | sed -e 's/  */ /g' -e 's/^ //' -e 's/ $//'
+}
 kv()  { printf '"%s":"%s",' "$1" "$(esc "${2-}")"; }
+# 计数专用: 只取第一行、且只保留数字, 避免 grep -c 的双输出问题
+kvn() { printf '"%s":"%s",' "$1" "$(printf '%s' "${2-}" | head -1 | tr -cd '0-9')"; }
 
 printf '{'
 
@@ -43,7 +54,7 @@ if [ -x /usr/bin/cloud-init ]; then
 else
   kv cloudinit "not-installed"
 fi
-kv apt_timers    "$(systemctl list-timers --all 2>/dev/null | grep -c 'apt-daily' || echo 0)"
+kvn apt_timers   "$(systemctl list-timers --all 2>/dev/null | grep -c 'apt-daily')"
 kv apt_periodic  "$(grep -hoE '"[01]"' /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null | tr -d '"' | tr '\n' ' ')"
 kv unattended    "$(systemctl is-enabled unattended-upgrades 2>/dev/null || echo absent)"
 
@@ -65,7 +76,7 @@ kv cpu_mhz_now    "$(awk -F': *' '/cpu MHz/{s+=$2; n++} END{if(n)printf "%.0f", 
 
 # ---------------- 内存 ----------------
 kv mem_total_gb  "$(awk '/MemTotal/{printf "%.0f", $2/1024/1024}' /proc/meminfo 2>/dev/null)"
-kv mem_dimms     "$(dmidecode -t memory 2>/dev/null | grep -c '^\s*Size:.*[0-9]\+ *[MG]B' || echo NA)"
+kvn mem_dimms    "$(dmidecode -t memory 2>/dev/null | grep -c '^\s*Size:.*[0-9]\+ *[MG]B')"
 kv mem_vendor    "$(dmidecode -t memory 2>/dev/null | awk -F': *' '/Manufacturer/{if($2!="NO DIMM" && $2!="")print $2}' | sort -u | tr '\n' ',')"
 kv mem_speed     "$(dmidecode -t memory 2>/dev/null | awk -F': *' '/Configured Memory Speed|Configured Clock Speed/{if($2!="Unknown")print $2}' | sort -u | tr '\n' ',')"
 kv swap_on       "$(swapon --show=NAME --noheadings 2>/dev/null | tr '\n' ',')"
@@ -77,8 +88,8 @@ kv sys_product   "$(dmidecode -s system-product-name 2>/dev/null)"
 kv sys_vendor    "$(dmidecode -s system-manufacturer 2>/dev/null)"
 kv sys_sn        "$(dmidecode -s system-serial-number 2>/dev/null)"
 # vt-d/iommu 应关闭
-kv iommu_dmar    "$(dmesg 2>/dev/null | grep -ci 'DMAR: IOMMU enabled' || echo 0)"
-kv iommu_groups  "$(ls /sys/kernel/iommu_groups 2>/dev/null | wc -l)"
+kvn iommu_dmar   "$(dmesg 2>/dev/null | grep -ci 'DMAR: IOMMU enabled')"
+kvn iommu_groups "$(ls /sys/kernel/iommu_groups 2>/dev/null | wc -l)"
 kv cmdline       "$(cat /proc/cmdline 2>/dev/null)"
 
 # ---------------- 磁盘 ----------------
@@ -117,7 +128,7 @@ kv bond_detail   "$BONDINFO"
 kv vlan_ifaces   "$(ip -o link show type vlan 2>/dev/null | awk -F': ' '{printf "%s ", $2}')"
 kv default_route "$(ip route show default 2>/dev/null | tr '\n' ';')"
 kv ip_addrs      "$(ip -o -4 addr show 2>/dev/null | awk '{printf "%s=%s ", $2, $4}')"
-kv rule_count    "$(ip rule show 2>/dev/null | grep -vc '^\(0\|32766\|32767\):' || echo 0)"
+kvn rule_count   "$(ip rule show 2>/dev/null | grep -vc '^\(0\|32766\|32767\):')"
 kv route_tables  "$(ip rule show 2>/dev/null | tr '\n' ';')"
 
 # ---------------- RDMA ----------------
@@ -144,13 +155,13 @@ kv mlx_pkg       "$(dpkg -l 2>/dev/null | awk '/mlnx-ofed|mlnx-tools/{print $2"=
 # ---------------- GPU ----------------
 if command -v nvidia-smi >/dev/null 2>&1; then
   kv gpu_driver  "$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)"
-  kv gpu_count   "$(nvidia-smi -L 2>/dev/null | wc -l)"
+  kvn gpu_count  "$(nvidia-smi -L 2>/dev/null | wc -l)"
   kv gpu_model   "$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | sort -u | tr '\n' ',')"
   kv gpu_vbios   "$(nvidia-smi --query-gpu=vbios_version --format=csv,noheader 2>/dev/null | sort -u | tr '\n' ',')"
   kv gpu_persist "$(nvidia-smi --query-gpu=persistence_mode --format=csv,noheader 2>/dev/null | sort -u | tr '\n' ',')"
   kv gpu_ecc_err "$(nvidia-smi --query-gpu=ecc.errors.uncorrected.volatile.total --format=csv,noheader 2>/dev/null | sort -u | tr '\n' ',')"
   kv gpu_topo    "$(nvidia-smi topo -m 2>/dev/null | head -20 | tr '\n' ';' | tr -s ' ')"
-  kv fabricmgr   "$(systemctl is-active nvidia-fabricmanager 2>/dev/null; dpkg -l 2>/dev/null | awk '/nvidia-fabricmanager/{print $3}' | head -1)"
+  kv fabricmgr   "svc=$(systemctl is-active nvidia-fabricmanager 2>/dev/null || echo unknown) pkg=$(dpkg -l 2>/dev/null | awk '/nvidia-fabricmanager/{print $3; exit}')"
   kv persistenced "$(systemctl is-active nvidia-persistenced 2>/dev/null)"
 else
   kv gpu_driver "not-installed"
@@ -159,13 +170,13 @@ fi
 kv cuda_toolkit  "$(dpkg -l 2>/dev/null | awk '/^ii +cuda-toolkit/{print $2"="$3}' | head -1)"
 
 # ---------------- PCIe: ACSCtl 必须全关 ----------------
-ACS_ON=$(lspci -vvv 2>/dev/null | grep ACSCtl | grep -c 'SrcValid+' || echo 0)
-ACS_TOTAL=$(lspci -vvv 2>/dev/null | grep -c ACSCtl || echo 0)
-kv acs_enabled_count "$ACS_ON"
-kv acs_total_count   "$ACS_TOTAL"
+ACS_ON=$(lspci -vvv 2>/dev/null | grep ACSCtl | grep -c 'SrcValid+')
+ACS_TOTAL=$(lspci -vvv 2>/dev/null | grep -c ACSCtl)
+kvn acs_enabled_count "$ACS_ON"
+kvn acs_total_count   "$ACS_TOTAL"
 # PCIe 链路速率(Gen5 = 32GT/s)
-kv pcie_gen5_x16 "$(lspci -vvv 2>/dev/null | grep -c 'LnkSta:.*32GT/s.*Width x16' || echo 0)"
-kv pcie_downgrade "$(lspci -vvv 2>/dev/null | grep -c 'LnkSta:.*(downgraded)' || echo 0)"
+kvn pcie_gen5_x16 "$(lspci -vvv 2>/dev/null | grep -c 'LnkSta:.*32GT/s.*Width x16')"
+kvn pcie_downgrade "$(lspci -vvv 2>/dev/null | grep -c 'LnkSta:.*(downgraded)')"
 
 # ---------------- 共享存储挂载 ----------------
 kv mounts_shared "$(findmnt -rn -t gpfs,nfs,nfs4,lustre,fuse.glusterfs,ceph -o TARGET,SOURCE,FSTYPE 2>/dev/null | tr '\n' ';')"
@@ -178,7 +189,7 @@ kv ipmi_lan      "$(ipmitool lan print 2>/dev/null | awk -F': *' '/IP Address  /
 kv ufw_state     "$(systemctl is-active ufw 2>/dev/null)"
 kv selinux       "$(getenforce 2>/dev/null || echo NA)"
 kv kernel_hold   "$(apt-mark showhold 2>/dev/null | tr '\n' ',')"
-kv grub_default  "$(grep -E '^GRUB_DEFAULT=' /etc/default/grub 2>/dev/null | cut -d= -f2-)"
+kv grub_default  "$(grep -E '^GRUB_DEFAULT=' /etc/default/grub 2>/dev/null | head -1 | cut -d= -f2-)"
 kv limits_nofile "$(grep -hE '^\*.*nofile' /etc/security/limits.conf 2>/dev/null | tr '\n' ';')"
 
 # 末尾补一个哨兵键, 消除最后的逗号
