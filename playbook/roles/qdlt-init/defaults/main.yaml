@@ -109,15 +109,22 @@ qdlt_su: ""
 qdlt_mgmt_ip: "{{ ansible_host | default(ansible_default_ipv4.address) }}"
 
 # 主机名命名策略:
+#   inventory —— 以 inventory 里写的主机名为准(清单是唯一事实来源)。
+#                inventory 写 cpu-001 → 机器主机名就设成 cpu-001。
+#                GPU 节点在 inventory 里直接写成 GPU-SU1-056 即可, 不用再算 IP 末段。
 #   ip       —— 按交付标准由带内 IP 末段生成: CPU-<末段3位> / GPU-SU<n>-<末段3位>
 #                例 10.82.4.229 → CPU-229; 10.82.4.56 + qdlt_su=1 → GPU-SU1-056
 #   explicit —— 用 inventory 里显式写的 qdlt_hostname(没写就保持现有主机名不动)
-#   keep     —— 完全不改主机名(只写 /etc/hosts 解析)
+#   keep     —— 完全不改主机名, 保持【机器上现有】的名字(只写 /etc/hosts 解析)
 #
-# ⚠ 已投产、主机名是自定义序号的集群(如 cpu-001 / maascpu-011)千万别用 ip:
-#   cpu-001(192.168.1.111) 会被改成 CPU-111, 名字和序号对不上, 还会连带影响
-#   k8s node name、GPFS、监控里已有的标识。这类集群用 explicit 或 keep。
-qdlt_hostname_policy: ip
+# ⚠ keep 和 inventory 容易混: keep 保的是【机器现状】, inventory 保的是【清单】。
+#   现网机器叫 CPU-111 而 inventory 写 cpu-001 时:
+#     keep      → 机器仍是 CPU-111(不动机器, 清单只是标识)
+#     inventory → 机器被改成 cpu-001(按清单纠正机器)
+#
+# 默认用 inventory: 清单里写什么, 机器就叫什么, 最直观也最不容易出意外 ——
+# ip 策略会把 cpu-001(192.168.1.111) 改成 CPU-111, 与运维习惯的序号对不上。
+qdlt_hostname_policy: inventory
 # policy=explicit 时的目标主机名, 在 inventory 里逐台写:
 #   cpu-001 ansible_host=192.168.1.111 qdlt_hostname=cpu-001
 qdlt_hostname: ""

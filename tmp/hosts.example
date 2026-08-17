@@ -89,19 +89,21 @@ qdlt_gpu
 #    [qdlt_gpu]  GPU 算力节点
 #
 #  ⚠ 这里写的名字只是 inventory 里的【标识】, 不等于会被设置的主机名。
-#    实际主机名由各组 vars 里的 qdlt_hostname_policy 决定:
-#      keep     不改主机名(已投产集群用这个) —— 本次青岛管理节点即为此
-#      ip       按交付标准从带内 IP 末段生成 CPU-<末段3位> / GPU-SU<n>-<末段3位>
-#      explicit 用逐台写的 qdlt_hostname
-#    所以【已投产的机器请按现有主机名原样写】(cpu-001 这样), 别写成 CPU-111,
-#    否则 ansible 连上去发现名字对不上, /etc/hosts 里也会写错。
-#    只有还没定名字的新裸机, 才适合直接写成交付标准的目标名 + policy=ip。
+#    实际主机名由各组 vars 里的 qdlt_hostname_policy 决定, 本项目用 inventory:
+#      inventory 以【这里写的名字】为准 —— 清单写 cpu-001, 机器就被设成 cpu-001
+#                (本项目默认。清单是唯一事实来源, 机器上原来叫什么都按清单纠正)
+#      ip        按交付标准从带内 IP 末段生成 CPU-<末段3位> / GPU-SU<n>-<末段3位>
+#      keep      完全不改主机名, 保持机器上现有的名字
+#      explicit  用逐台写的 qdlt_hostname
+#    ⚠ 用 inventory 策略时【这里写的名字就是最终主机名】, 所以要写成你希望机器
+#      叫的样子: 已投产的按现有序号写(cpu-001), 新裸机直接写交付标准目标名
+#      (GPU-SU1-056)。名字只能用字母/数字/减号, 不能是 IP、不能带下划线或点。
 #  ⚠ qdlt_su 依据服务器上连的计算网 Leaf 交换机组顺序决定, 必须对照接线表逐台填,
 #    猜不出来; policy=ip 的 GPU 节点漏填会在 hostname 步骤直接 assert 中止。
 # ============================================================================
 
 [qdlt_cpu]
-# 青岛现网管理节点(主机名沿用现有序号, 不按 IP 末段改名 → 见下方 policy)
+# 青岛现网管理节点。⚠ 这里写的名字就是【机器最终的主机名】(policy=inventory)
 cpu-001 ansible_host=192.168.1.111
 cpu-002 ansible_host=192.168.1.112
 cpu-004 ansible_host=192.168.1.114
@@ -110,7 +112,7 @@ cpu-008 ansible_host=192.168.1.118
 maascpu-011 ansible_host=192.168.1.121
 
 [qdlt_gpu]
-# 新进场裸机, 还没定主机名 → 直接写成交付标准的目标名 + policy=ip(见下)
+# 新进场裸机 → 直接写成交付标准的目标名(policy=inventory 会按这个名字设置)
 #GPU-SU1-056 ansible_host=10.82.4.56  qdlt_su=1
 #GPU-SU1-057 ansible_host=10.82.4.57  qdlt_su=1
 #GPU-SU2-058 ansible_host=10.82.4.58  qdlt_su=2
@@ -121,14 +123,18 @@ qdlt_gpu
 
 [qdlt_cpu:vars]
 qdlt_node_role=cpu
-# 管理节点主机名已是自定义序号(cpu-001/maascpu-011), 保持不动。
-# 若按交付标准由 IP 末段生成(CPU-111 这种), 改成 qdlt_hostname_policy=ip
-qdlt_hostname_policy=keep
+# 主机名【以上面 [qdlt_cpu] 里写的名字为准】: 清单写 cpu-001, 机器就设成 cpu-001。
+# 现网这几台机器上的名字是 CPU-111/CPU-114 这种(cpu-008 甚至被误设成了 wwxq),
+# 与清单不一致, 本策略会按清单把它们纠正过来。
+# 其他取值: ip=按 IP 末段生成 CPU-111 / keep=保持机器现有名字不动 / explicit=另写 qdlt_hostname
+qdlt_hostname_policy=inventory
 
 [qdlt_gpu:vars]
 qdlt_node_role=gpu
-# GPU 节点按交付标准命名: GPU-SU<qdlt_su>-<IP末段3位>
-qdlt_hostname_policy=ip
+# 同上, 以清单里写的名字为准 —— 所以 [qdlt_gpu] 段里【直接写成交付标准的目标名】
+#   GPU-SU1-056 ansible_host=10.82.4.56 qdlt_su=1
+# 这样就不必让 playbook 去算 IP 末段(要算就改成 qdlt_hostname_policy=ip)。
+qdlt_hostname_policy=inventory
 
 # 注: 【故意没有 [qdlt:vars] 段】—— python 解释器 / ssh 参数只写在下面 [all:vars] 一处。
 #   ansible 的 all 组包含 inventory 里的每一台机器, qdlt 这些节点自然继承, 不用重复写。
