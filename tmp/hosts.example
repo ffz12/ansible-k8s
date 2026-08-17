@@ -1,46 +1,63 @@
 # inventory 主机清单模板 —— 复制为 inventory/hosts 并按实际填写(去掉行首 #)
-# 约定: ansible_host 及自定义变量【只在 [cluster] 写一次】, 其余组只列主机名(同名=同一台)
+# 约定: ansible_host 及自定义变量【只在主机第一次出现的组里写一次】, 其余组只列主机名(同名=同一台)
+#      一台机器要被某个 playbook 命中, 就把它加进对应的组; 组名就是"标签"。
+#      不想重复抄主机名时用 [组名:children] 把整组并进去(见 [cluster:children])。
 
 [cluster]
 # 所有节点; ansible_host 只在这里定义; 可带 ipmi_ip / storage_ip 等自定义变量
+# 本项目的机器写在下面的 [qdlt_cpu] / [qdlt_gpu], 通过 [cluster:children] 并进来,
+# 所以这里【不用】再抄一遍。非青岛项目的散机才直接写在这。
 #cpu217 ansible_host=172.171.0.217
-#cpu218 ansible_host=172.171.0.218
-#cpu219 ansible_host=172.171.0.219
 #node001 ansible_host=172.171.0.11
+
+[cluster:children]
+# 把 qdlt 两个组整体并入 [cluster] —— 这样 init.yaml / ssh-passwordless.yaml /
+# harbor-trust.yaml / mount-nvme.yaml 等按 [cluster] 取组的 playbook 才有主机可跑。
+# 用 :children 而不是把 6 台再抄一遍: 以后增删机器只改 [qdlt_cpu] 一处, 不会两边漂。
+qdlt_cpu
+qdlt_gpu
+
+# ---------------------------------------------------------------------------
+#  下面这些组是【按角色】的, 不能用 :children 一把并进来 —— 谁当 master、谁装
+#  etcd、谁跑 LB 是部署决策。6 台管理节点已按名字预置成注释, 按实际角色取消
+#  注释即可(名字要和 [qdlt_cpu] 里完全一致, ansible_host 不用重复写)。
+# ---------------------------------------------------------------------------
 
 [containerd]
 # 用 containerd 的节点(只列主机名); GPU/加速器节点加 accelerator_type=nvidia/dcu/npu(华为昇腾), 纯 CPU 不写(默认 runc)
-#cpu217
-#cpu218
-#cpu219
-#node001
+#cpu-001
+#cpu-002
+#cpu-004
+#cpu-005
+#cpu-008
 
 [k8s_master]
 # 控制平面(建议奇数台); 多 master 需配 lbvip + 跑 LB(见 [k8slb])
-#cpu217
-#cpu218
-#cpu219
+#cpu-001
+#cpu-002
+#cpu-004
 
 [k8s_node]
 # worker 节点
-#node001
+#cpu-005
+#cpu-008
 
 [etcd]
 # 外置 etcd(建议 3/5 台奇数; 可与 master 共机)
-#cpu217
-#cpu218
-#cpu219
+#cpu-001
+#cpu-002
+#cpu-004
 
 [k8slb]
 # haproxy+keepalived LB(多 master 才需要; 常与 master 共机)
 # 只列主机名; VIP 网卡自动按 ansible_host 探测, 无需 host_ip
-#cpu217
-#cpu218
-#cpu219
+#cpu-001
+#cpu-002
+#cpu-004
 
 [harbor]
 # Harbor 节点(在线从公共 mirror 拉镜像时可不部署)
-#cpu217
+#cpu-008
 
 [docker]
 # 装 docker 的节点(本项目里 docker 仅给 Harbor 用; k8s 节点跑 containerd 直连,不用 docker)。
@@ -48,8 +65,9 @@
 #   accelerator_type=nvidia -> docker + nvidia-container-toolkit(daemon 默认 runtime=nvidia)
 #   不设                     -> 普通 docker
 # ⚠️ docker 侧【只支持 nvidia】; dcu/npu(华为昇腾)只在 containerd 生效,别往这组写 dcu/npu。
-#cpu217
+#cpu-008
 #a800-node30 accelerator_type=nvidia
+
 [cri_docker_nodes]
 # cri-dockerd 已弃用,留空
 
@@ -59,6 +77,9 @@
 [etcd_to_add]
 [etcd_to_delete]
 [master_to_delete]
+
+# ⚠ [gpu] 组【故意不与 qdlt_gpu 关联】: gpu-init.yaml / gpu-update.yaml 会装
+#   GPU 驱动并可能升内核, 本项目 GPU 节点只跑 qdlt-init, 别让它们被误命中。
 
 # ============================================================================
 #  青岛联通项目交付(qdlt-init / qdlt-check)—— 不跑该项目就整段留空
