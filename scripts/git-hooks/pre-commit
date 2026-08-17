@@ -63,7 +63,41 @@ is_placeholder() {
     local v="$1"
     [ -z "$v" ] && return 0
     printf '%s' "$v" | grep -qE '^(""|'"''"'|xxx+|XXX+|<.*>|\{\{.*\}\}|.*(在此填写|请填|填写|改成|示例|明文密码|你的|自己的).*)$' && return 0
+    # {{ ... }} 里可能跨行(YAML 折叠标量), 只要值整体是一个 Jinja 表达式就算占位符
+    printf '%s' "$v" | grep -qE '^\{\{.*\}\}$' && return 0
     return 1
+}
+
+# YAML 折叠/字面标量: `key: >-` / `|-` / `>` / `|` 后面的值在【下面几行缩进块】里。
+# 只看 key 那一行会把 ">-" 本身当成 2 个字符的密码 —— 必须先把块折起来。
+# 用 awk 把 "PW_KEY: <块标量指示符>" 折成单行 "PW_KEY: <块内容>"。
+fold_block_scalars() {
+    awk -v keys="$PW_KEYS" '
+    function flush() { if (pend != "") { print pend " " buf; pend=""; buf="" } }
+    {
+        line = $0
+        # 正在收集块内容: 缩进比 key 深就继续拼, 否则结束
+        if (pend != "") {
+            if (line ~ /^[[:space:]]*$/) { next }
+            match(line, /^[[:space:]]*/)
+            if (RLENGTH > keyindent) {
+                s = line; sub(/^[[:space:]]+/, "", s)
+                buf = (buf == "" ? s : buf " " s)
+                next
+            }
+            flush()
+        }
+        # 新的 "key: >-" / "key: |" 形式
+        if (line ~ "^[[:space:]]*(" keys ")[[:space:]]*:[[:space:]]*[|>][-+]?[[:space:]]*$") {
+            match(line, /^[[:space:]]*/); keyindent = RLENGTH
+            pend = line; sub(/[[:space:]]*[|>][-+]?[[:space:]]*$/, ":", pend)
+            sub(/::$/, ":", pend)
+            buf = ""
+            next
+        }
+        print line
+    }
+    END { flush() }'
 }
 
 for f in "${STAGED[@]}"; do
@@ -74,8 +108,10 @@ for f in "${STAGED[@]}"; do
         # 跳过注释行(# 或 //)
         printf '%s' "$line" | grep -qE '^\s*(#|//)' && continue
         # 取 : 或 = 右边的值, 去掉引号和行尾注释
-        val=$(printf '%s' "$line" \
-              | sed -E 's/^[^:=]*[:=][[:space:]]*//; s/[[:space:]]*#.*$//' \
+        # 注: 行尾注释只在【值不含 {{ }}】时剥, 否则 "{{ a | default('#x') }}" 会被截断
+        val=$(printf '%s' "$line" | sed -E 's/^[^:=]*[:=][[:space:]]*//')
+        printf '%s' "$val" | grep -q '{{' || val=$(printf '%s' "$val" | sed -E 's/[[:space:]]*#.*$//')
+        val=$(printf '%s' "$val" \
               | sed -E 's/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/' \
               | sed -E 's/[[:space:]]+$//')
         if ! is_placeholder "$val"; then
@@ -85,7 +121,8 @@ for f in "${STAGED[@]}"; do
             key=$(printf '%s' "$line" | sed -E 's/[[:space:]]*([A-Za-z_]+)[[:space:]]*[:=].*/\1/')
             printf '  %s : %s = <%d 个字符, 非占位符>\n' "$f" "$key" "${#val}"
         fi
-    done < <(git show ":$f" 2>/dev/null | grep -nE "^[[:space:]]*($PW_KEYS)[[:space:]]*[:=]" | sed 's/^[0-9]*://')
+    done < <(git show ":$f" 2>/dev/null | fold_block_scalars \
+             | grep -E "^[[:space:]]*($PW_KEYS)[[:space:]]*[:=]")
 done
 
 if [ "$fail" -ne 0 ]; then

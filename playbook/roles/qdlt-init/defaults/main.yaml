@@ -59,8 +59,14 @@ qdlt_fail_on_unsynced: true   # 超时仍未同步则报错中止(置 false 只�
 
 # ---------------- 统一登录账号 ----------------
 qdlt_user: wwxq
-# ⚠ 必填(建议 ansible-vault 或 -e 传入, 别明文进 git):
-#   qdlt_user_password: "明文密码"
+# 密码默认从【控制机环境变量】取, 不落任何文件 —— 这样就不需要 secrets 文件,
+# 也不存在"忘了 gitignore 就把密码提上去"的风险。
+#   export QDLT_USER_PASSWORD='明文密码'
+#   ansible-playbook playbook/qdlt-init.yaml
+# 环境变量没设时也可以 -e 覆盖(会进 shell history, 只适合临时):
+#   ansible-playbook playbook/qdlt-init.yaml -e "qdlt_user_password=xxx"
+# 两者都没有 → user.yaml 的前置 assert 直接中止。
+qdlt_user_password: "{{ lookup('env', 'QDLT_USER_PASSWORD') }}"
 qdlt_user_shell: /bin/bash
 qdlt_user_sudo_nopasswd: false   # true=sudo 免密; 交付标准未要求, 默认保持需要密码
 # 交付标准要求「系统上不存在其他一般用户」。默认只【报告】不删除,
@@ -78,8 +84,11 @@ qdlt_protected_users:            # 永不删除的账号(除 uid<1000 的系统�
 #     -e qdlt_do_root_password=true
 # ⚠ 本角色【不修改 sshd 配置】, 只在设完后打印 sshd -T 的实际策略供人工判断。
 qdlt_do_root_password: false
-# root 密码, 默认复用统一登录密码(交付标准: 统一账密)。想分开设就单独赋值。
-qdlt_root_password: "{{ qdlt_user_password | default('') }}"
+# root 密码。默认复用统一登录密码(交付标准: 统一账密);
+# 想给 root 单独设别的密码: export QDLT_ROOT_PASSWORD='另一个密码'
+qdlt_root_password: >-
+  {{ lookup('env', 'QDLT_ROOT_PASSWORD') | default('', true)
+     or qdlt_user_password | default('') }}
 
 # ---------------- 主机名 ----------------
 # 角色: gpu / cpu。默认按 inventory 组自动判定(在 qdlt_gpu 组内即 gpu)。

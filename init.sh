@@ -12,7 +12,6 @@ echo "开始初始化项目配置文件..."
 files=(
     "./tmp/hosts.example:inventory/hosts"
     "./tmp/env.yaml.example:inventory/group_vars/all/env.yaml"
-    "./tmp/qdlt-secrets.yml.example:inventory/qdlt-secrets.yml"
 )
 
 for pair in "${files[@]}"; do
@@ -60,21 +59,26 @@ fi
 
 echo "初始化完成。请根据实际环境修改 inventory/ 目录下的配置文件。"
 
-# 青岛联通交付项目额外提醒: GPU 节点要逐台填 SU 号
-if [ -f inventory/qdlt-secrets.yml ]; then
+# 青岛联通交付项目额外提醒: 密码走环境变量, GPU 节点要逐台填 SU 号
+if [ -d playbook/roles/qdlt-init ]; then
     echo
     echo -e "${RED}[待办]${NC} 跑青岛联通交付(qdlt-*)前还需要:"
-    echo "  vim inventory/hosts                          # 填 [qdlt_cpu]/[qdlt_gpu]; GPU 必须逐台填 qdlt_su"
-    echo "  vim inventory/qdlt-secrets.yml               # 填统一登录账号 wwxq 的密码"
+    echo "  vim inventory/hosts                # 填 [qdlt_cpu]/[qdlt_gpu]; GPU 必须逐台填 qdlt_su"
+    echo "  export QDLT_USER_PASSWORD='密码'   # 统一登录账号 wwxq 的密码, 不落文件"
     echo
-    echo "  密码本项目按明文保存, 不加密。但 inventory/qdlt-secrets.yml 已在 .gitignore 里,"
-    echo "  ${RED}不要 git add -f${NC} —— 进了 git 历史就删不掉了(改密码也删不掉旧的)。"
-    echo "  已装 pre-commit 钩子做兜底拦截; 误报时用 git commit --no-verify 放行。"
-    # 真进了库就明确报出来: 不加密没问题, 入库不行
-    if git -C . ls-files --error-unmatch inventory/qdlt-secrets.yml >/dev/null 2>&1; then
+    echo "  密码走【环境变量】, 不再有 secrets 文件 —— 不落盘、不进 git。"
+    echo "  ${RED}别用 sudo ansible-playbook${NC} —— sudo 默认清环境变量, 密码会取不到。"
+    echo "  playbook 自带 become: yes, 普通用户直接跑即可; 非要 sudo 就用 sudo -E。"
+    # 历史遗留: 旧版 init.sh 生成过 secrets 文件, 里面是明文密码, 提醒删掉
+    if [ -f inventory/qdlt-secrets.yml ]; then
         echo
-        echo -e "${RED}[严重]${NC} inventory/qdlt-secrets.yml 已被 git 跟踪! 明文密码进库了。"
-        echo "  立即处置: git rm --cached inventory/qdlt-secrets.yml && git commit"
-        echo "  (已推送过的话, 旧提交里还留着, 需要改密码或改写历史)"
+        echo -e "${RED}[清理]${NC} 发现旧版遗留的 inventory/qdlt-secrets.yml(明文密码)。"
+        echo "  现在密码走环境变量, 该文件已不再使用, 建议删除:"
+        echo "    rm inventory/qdlt-secrets.yml"
+        echo "  ⚠ 它在 inventory/ 目录下, ansible 会把它当 YAML inventory 一并解析(留着有副作用)。"
+        if git -C . ls-files --error-unmatch inventory/qdlt-secrets.yml >/dev/null 2>&1; then
+            echo -e "  ${RED}[严重]${NC} 且它已被 git 跟踪! 明文密码进库了。"
+            echo "    git rm --cached inventory/qdlt-secrets.yml && git commit"
+        fi
     fi
 fi

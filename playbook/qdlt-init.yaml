@@ -12,23 +12,25 @@
 #  执行顺序建议:
 #    1) ansible-playbook playbook/qdlt-check.yaml                  # 改之前先存档现状
 #    2) ansible-playbook playbook/init.yaml                        # 通用基线(可选)
-#    3) ansible-playbook playbook/qdlt-init.yaml -e @secrets.yml   # 本 playbook
+#    3) ansible-playbook playbook/qdlt-init.yaml                   # 本 playbook
 #    4) ansible-playbook playbook/qdlt-check.yaml                  # 改之后复查出交付报告
 #
 #  用法:
-#    # 密码从 inventory/qdlt-secrets.yml 传入(明文保存, 但该文件已 gitignore, 不得入库)
-#    ansible-playbook playbook/qdlt-init.yaml -e @inventory/qdlt-secrets.yml
-#    # 或临时:
-#    ansible-playbook playbook/qdlt-init.yaml -e "qdlt_user_password=xxxx"
+#    # 密码从【控制机环境变量】取, 不落文件、不进 git、不留 shell history
+#    export QDLT_USER_PASSWORD='统一登录密码'
+#    ansible-playbook playbook/qdlt-init.yaml
 #
 #    # 先空跑看会改什么(强烈建议)
-#    ansible-playbook playbook/qdlt-init.yaml -e "qdlt_user_password=xxxx" --check --diff
+#    ansible-playbook playbook/qdlt-init.yaml --check --diff
 #
-#    # 只跑某一类(tags: pkgs/time/cloudinit/apt/user/cpu/hostname/grub/syslog)
-#    ansible-playbook playbook/qdlt-init.yaml -e "qdlt_user_password=xxxx" --tags time,cpu
+#    # 只跑某一类(tags: pkgs/time/cloudinit/apt/user/cpu/swap/acs/hostname/grub/syslog)
+#    ansible-playbook playbook/qdlt-init.yaml --tags time,cpu
 #
 #    # 跳过风险最高的 GRUB 改动
-#    ansible-playbook playbook/qdlt-init.yaml -e "qdlt_user_password=xxxx" --skip-tags grub
+#    ansible-playbook playbook/qdlt-init.yaml --skip-tags grub
+#
+#  ⚠ 别用 sudo ansible-playbook —— sudo 默认清环境变量, 密码会取不到。
+#    本 playbook 自带 become: yes, 直接以普通用户跑即可; 非要 sudo 就用 sudo -E。
 # ============================================================================
 
 - name: 青岛联通交付标准 —— 操作系统环境初始化
