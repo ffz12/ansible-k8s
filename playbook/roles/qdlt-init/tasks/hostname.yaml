@@ -1,15 +1,32 @@
 ---
 # ============================================================================
-#  hostname.yaml —— 交付标准主机名规范
-#    CPU 管理节点: CPU-[ip地址最后一段, 3位]      例: CPU-229
-#    GPU 算力节点: GPU-[SU号]-[ip最后一段, 3位]   例: GPU-SU2-056
-#      SU 号依据服务器上连的计算网 Leaf 交换机组的顺序决定 → 需在 inventory 逐台指定 qdlt_su
+#  hostname.yaml —— 主机名规范
+#
+#  qdlt_hostname_policy 决定怎么命名(见 defaults/main.yaml):
+#    ip       交付标准写法, 由带内 IP 末段生成
+#               CPU 管理节点: CPU-[ip末段, 3位]        例: CPU-229
+#               GPU 算力节点: GPU-SU[SU号]-[ip末段3位]  例: GPU-SU2-056
+#               SU 号依据服务器上连的计算网 Leaf 交换机组顺序 → inventory 逐台指定 qdlt_su
+#    explicit 用 inventory 里显式写的 qdlt_hostname
+#    keep     不改主机名, 只写 /etc/hosts 解析
+#
+#  ⚠ 已投产集群若主机名是自定义序号(cpu-001 / maascpu-011 这种), 用 ip 策略会把
+#    名字改成 CPU-<IP末段>, 与序号对不上, 且影响 k8s node name / GPFS / 监控标识。
+#    这类集群在 group_vars 里设 qdlt_hostname_policy: keep(或 explicit)。
 #  ⚠ 若集群提供 GPFS 存储, 主机名必须先于 GPFS 客户端安装完成配置。
 # ============================================================================
+
+- name: 校验命名策略取值合法
+  assert:
+    that: qdlt_hostname_policy in ['ip', 'explicit', 'keep']
+    fail_msg: >-
+      qdlt_hostname_policy={{ qdlt_hostname_policy }} 不合法,
+      只能是 ip / explicit / keep。
 
 - name: 解析带内 IP 最后一段(补足 3 位)
   set_fact:
     qdlt_ip_last: "{{ '%03d' | format(qdlt_mgmt_ip.split('.')[3] | int) }}"
+  when: qdlt_hostname_policy == 'ip'
 
 - name: 【GPU 节点】校验已指定 SU 号
   assert:
@@ -19,27 +36,38 @@
     fail_msg: >-
       GPU 节点 {{ inventory_hostname }} 未指定 qdlt_su。
       请在 inventory 中按上连计算网 Leaf 交换机组顺序填写, 例如:
-      GPU-SU2-056 ansible_host=10.82.4.56 qdlt_su=2
-  when: qdlt_node_role == 'gpu'
+      GPU-SU2-058 ansible_host=10.82.4.58 qdlt_su=2
+  when:
+    - qdlt_hostname_policy == 'ip'
+    - qdlt_node_role == 'gpu'
 
-- name: 按交付标准生成目标主机名
+- name: 生成目标主机名
   set_fact:
     qdlt_target_hostname: >-
-      {{ ('GPU-SU' ~ (qdlt_su | string) ~ '-' ~ qdlt_ip_last)
-         if qdlt_node_role == 'gpu'
-         else ('CPU-' ~ qdlt_ip_last) }}
+      {%- if qdlt_hostname_policy == 'keep' -%}
+      {{ ansible_hostname }}
+      {%- elif qdlt_hostname_policy == 'explicit' -%}
+      {{ qdlt_hostname | default('', true) | trim | default(ansible_hostname, true) }}
+      {%- elif qdlt_node_role == 'gpu' -%}
+      GPU-SU{{ qdlt_su | string }}-{{ qdlt_ip_last }}
+      {%- else -%}
+      CPU-{{ qdlt_ip_last }}
+      {%- endif -%}
 
 - name: 目标主机名
   debug:
     msg: >-
       节点类型={{ qdlt_node_role | upper }},
+      命名策略={{ qdlt_hostname_policy }},
       带内IP={{ qdlt_mgmt_ip }},
       当前主机名={{ ansible_hostname }},
-      目标主机名={{ qdlt_target_hostname }}
+      目标主机名={{ qdlt_target_hostname }}{{
+        ' (保持不变)' if qdlt_target_hostname == ansible_hostname else ' ← 将被修改' }}
 
 - name: 设置主机名
   hostname:
     name: "{{ qdlt_target_hostname }}"
+  when: qdlt_target_hostname != ansible_hostname
 
 - name: 同步 /etc/hosts 中的 127.0.1.1 记录(避免 sudo 解析告警)
   lineinfile:
@@ -57,6 +85,6 @@
     create: yes
     block: |
       {% for h in (groups['qdlt'] | default([])) | sort %}
-      {{ hostvars[h].qdlt_mgmt_ip | default(hostvars[h].ansible_host) | default('') }} {{ h }}
+      {{ hostvars[h].qdlt_mgmt_ip | default(hostvars[h].ansible_host) | default('') }} {{ hostvars[h].qdlt_target_hostname | default(h) }}
       {% endfor %}
   when: (groups['qdlt'] | default([])) | length > 0

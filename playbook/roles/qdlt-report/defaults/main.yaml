@@ -2,3 +2,10 @@
 # qdlt-report —— 报告输出目录(控制机本地)
 qdlt_report_dir: "{{ playbook_dir }}/../reports"
 qdlt_expect_time_skew: 15
+
+# 报告文件名。默认固定名 → 反复体检时【原地覆盖】, 不会堆一堆时间戳文件。
+# 想留档某一次: -e qdlt_report_name=qdlt-check-验收定稿
+# 想恢复每次一个新文件: -e "qdlt_report_name=qdlt-check-{{ qdlt_report_stamp }}"
+qdlt_report_name: qdlt-check
+# 覆盖前是否把上一份备份成 <名字>.bak.md/.csv(只留最近一份, 不累积)
+qdlt_report_keep_prev: true

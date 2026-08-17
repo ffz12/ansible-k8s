@@ -110,9 +110,12 @@
          'actual': (f.acs_enabled_count | default('?')) ~ ' / ' ~ (f.acs_total_count | default('?')) ~ ' 个 ACSCtl 处于开启',
          'verdict': ('PASS' if (f.acs_enabled_count | default('1') | int) == 0 else 'FAIL')},
 
-        {'cat':'PCIe','item':'PCIe 链路无降速','expect':'无 downgraded 链路',
-         'actual': 'downgraded=' ~ (f.pcie_downgrade | default('?')) ~ ' | Gen5 x16 链路数=' ~ (f.pcie_gen5_x16 | default('?')),
-         'verdict': ('PASS' if (f.pcie_downgrade | default('1') | int) == 0 else 'WARN')},
+        {'cat':'PCIe','item':'PCIe 链路无降速','expect':'无 downgraded 链路' ~ (', 且有 Gen5 x16 链路' if (qdlt_check_pcie_gen5 | bool) else ''),
+         'actual': 'downgraded=' ~ (f.pcie_downgrade | default('?')) ~ ' | Gen5 x16 链路数=' ~ (f.pcie_gen5_x16 | default('?'))
+                   ~ ('' if (qdlt_check_pcie_gen5 | bool)
+                      else ' | 本节点非 GPU 算力节点, Gen5 要求不适用(qdlt_check_pcie_gen5=false)'),
+         'verdict': ('SKIP' if not (qdlt_check_pcie_gen5 | bool)
+                     else ('PASS' if (f.pcie_downgrade | default('1') | int) == 0 else 'WARN'))},
 
         {'cat':'磁盘','item':'根分区文件系统','expect':'ext4, 占用系统盘剩余全部空间',
          'actual': f.sys_disk_root | default(''),
@@ -124,15 +127,22 @@
          'verdict': ('FAIL' if ((f.md_raid | default('') | trim) | length > 0) else 'WARN')},
 
         {'cat':'磁盘','item':'数据盘保持裸盘','expect':'无分区 / 无 LVM / 无 RAID / 无文件系统',
-         'actual': ('检出非裸盘: ' ~ (f.data_disk_dirty | trim)) if ((f.data_disk_dirty | default('') | trim) | length > 0)
-                   else '全部数据盘为裸盘',
-         'verdict': ('FAIL' if ((f.data_disk_dirty | default('') | trim) | length > 0) else 'PASS')},
+         'actual': ('本节点非 GPU 算力节点, 裸盘要求不适用(盘在正常使用中) | 检出: '
+                    ~ (f.data_disk_dirty | default('无') | trim | default('无', true)))
+                   if not (qdlt_check_bare_disk | bool)
+                   else (('检出非裸盘: ' ~ (f.data_disk_dirty | trim))
+                         if ((f.data_disk_dirty | default('') | trim) | length > 0)
+                         else '全部数据盘为裸盘'),
+         'verdict': ('SKIP' if not (qdlt_check_bare_disk | bool)
+                     else ('FAIL' if ((f.data_disk_dirty | default('') | trim) | length > 0) else 'PASS'))},
 
         {'cat':'网络','item':'带内 bond 配置','expect':'mode 4 802.3ad, hash layer3+4',
-         'actual': (f.bond_detail | default('') | trim) if ((f.bond_detail | default('') | trim) | length > 0) else '未发现 bond',
-         'verdict': ('PASS' if ((f.bond_detail | default('') is search(qdlt_expect_bond_mode))
-                                and (f.bond_detail | default('') is search('layer3\+4')))
-                     else 'FAIL')},
+         'actual': (f.bond_detail | default('') | trim) if ((f.bond_detail | default('') | trim) | length > 0)
+                   else '未发现 bond(交付标准要求带内做 bond mode4, 需网络侧配合, 本工具不改网络)',
+         'verdict': ('WARN' if ((f.bond_detail | default('') | trim) | length == 0)
+                     else ('PASS' if ((f.bond_detail | default('') is search(qdlt_expect_bond_mode))
+                                      and (f.bond_detail | default('') is search('layer3\+4')))
+                           else 'FAIL'))},
 
         {'cat':'网络','item':'未使用 VLAN 子接口','expect':'系统内无 vlan 接口',
          'actual': (f.vlan_ifaces | default('') | trim) if ((f.vlan_ifaces | default('') | trim) | length > 0) else '无',
@@ -145,20 +155,35 @@
                      else 'WARN')},
 
         {'cat':'网络','item':'带内/带外 IP 末段一致','expect':'带内与 BMC 地址最后一段相同',
-         'actual': '带内=' ~ (qdlt_mgmt_ip | default('?')) ~ ' 带外(ipmitool)=' ~ (f.ipmi_lan | default('未取到')),
-         'verdict': ('PASS' if ((f.ipmi_lan | default('')) | length > 0
-                                and (f.ipmi_lan | default('.')).split('.')[3] | default('x')
-                                    == (qdlt_mgmt_ip | default('...')).split('.')[3])
-                     else 'WARN')},
+         'actual': '带内=' ~ (qdlt_mgmt_ip | default('') | trim | default('未取到', true))
+                   ~ ' 带外(ipmitool)=' ~ (f.ipmi_lan | default('') | trim | default('未取到', true))
+                   ~ (' | ipmitool 未安装或无 BMC 访问权限, 无法比对' if ((f.ipmi_lan | default('') | trim) | length == 0) else ''),
+         'verdict': ('WARN' if ((f.ipmi_lan | default('') | trim) | length == 0
+                                or (qdlt_mgmt_ip | default('') | trim) | length == 0)
+                     else ('PASS' if ((f.ipmi_lan | trim).split('.') | last
+                                      == (qdlt_mgmt_ip | trim).split('.') | last)
+                           else 'FAIL'))},
 
         {'cat':'RDMA','item':'RDMA 设备与 hca_id 命名','expect':'计算网 mlx5_0~mlx5_7, 存储网另行命名(如 mlx5_8/mlx5_20)',
-         'actual': (f.rdma_devs | default('无') | trim(',')) ~ ' | ' ~ (f.rdma_detail | default('') | trim),
-         'verdict': ('SKIP' if ((f.rdma_devs | default('') | trim(',')) | length == 0)
+         'actual': (f.rdma_devs | default('无') | trim(',')) ~ ' | ' ~ (f.rdma_detail | default('') | trim)
+                   ~ ((' | 仅 ' ~ ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length) | string
+                       ~ ' 个 RDMA 设备(<' ~ (qdlt_rdma_compute_min_devs | string)
+                       ~ '), 判定为非计算节点, 命名规范不适用')
+                      if ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length
+                          < (qdlt_rdma_compute_min_devs | int)) else ''),
+         'verdict': ('SKIP' if ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length
+                                < (qdlt_rdma_compute_min_devs | int))
                      else ('PASS' if (f.rdma_devs | default('') is search('mlx5_0,')) else 'WARN'))},
 
         {'cat':'RDMA','item':'OFED / DOCA 版本','expect':'CX8/BF3 → DOCA_OFED 3.2.2 LTS; 纯 CX7 及以下 → 5.8-7.0.6.1 或 24.10-4.1.4.0',
-         'actual': 'ofed_info=' ~ (f.ofed_version | default('未安装')) ~ ' | doca=' ~ (f.doca_version | default('无') | trim(',')),
-         'verdict': ('SKIP' if ((f.rdma_devs | default('') | trim(',')) | length == 0)
+         'actual': 'ofed_info=' ~ (f.ofed_version | default('') | trim | default('未安装', true))
+                   ~ ' | doca=' ~ (f.doca_version | default('') | trim(',') | default('无', true))
+                   ~ ((' | 仅 ' ~ ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length) | string
+                       ~ ' 个 RDMA 设备, 判定为非计算节点; 期望版本是按计算网卡(CX7/CX8)写的, 不适用')
+                      if ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length
+                          < (qdlt_rdma_compute_min_devs | int)) else ''),
+         'verdict': ('SKIP' if ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length
+                                < (qdlt_rdma_compute_min_devs | int))
                      else ('PASS' if (qdlt_expect_ofed_any | select('in', (f.ofed_version | default('')) ~ (f.doca_version | default(''))) | list | length > 0)
                            else 'FAIL'))},
 

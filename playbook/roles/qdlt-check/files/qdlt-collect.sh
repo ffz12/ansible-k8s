@@ -49,14 +49,18 @@ if [ -x /usr/bin/cloud-init ]; then
   if [ -f /etc/cloud/cloud-init.disabled ]; then
     kv cloudinit "disabled(标记文件存在)"
   else
-    kv cloudinit "$(systemctl is-enabled cloud-init.service 2>/dev/null || echo unknown)"
+    CI_EN=$(systemctl is-enabled cloud-init.service 2>/dev/null | head -1)
+    kv cloudinit "${CI_EN:-unknown}"
   fi
 else
   kv cloudinit "not-installed"
 fi
 kvn apt_timers   "$(systemctl list-timers --all 2>/dev/null | grep -c 'apt-daily')"
 kv apt_periodic  "$(grep -hoE '"[01]"' /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null | tr -d '"' | tr '\n' ' ')"
-kv unattended    "$(systemctl is-enabled unattended-upgrades 2>/dev/null || echo absent)"
+# ⚠ is-enabled 在 disabled 时也返回非 0 码, 直接 `|| echo absent` 会两条都输出
+#   (变成 "disabled absent"), 故只在完全无输出时才补 absent。
+UNATT=$(systemctl is-enabled unattended-upgrades 2>/dev/null | head -1)
+kv unattended    "${UNATT:-absent}"
 
 # ---------------- 用户 ----------------
 kv normal_users  "$(awk -F: '$3>=1000 && $3<65534 {printf "%s ", $1}' /etc/passwd)"
