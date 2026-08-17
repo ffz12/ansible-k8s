@@ -58,10 +58,17 @@ done
 # ---------------------------------------------------------------------------
 PW_KEYS='qdlt_user_password|qdlt_root_password|bootstrap_ssh_pass|bootstrap_become_pass|ansible_ssh_pass|ansible_password|ansible_become_pass|harbor_admin_password'
 
-# 占位符特征: 中文说明 / xxx / 在此填写 / 空串 / {{ 变量 }} / 纯注释行
+# 厂商公开的默认口令白名单。这些是文档里印着的初始密码, 不是"泄露"——
+# Harbor12345 是 Harbor 官方 harbor.yml 里的默认 admin 密码, root123 同理是
+# 本仓库模板一直以来的示例值(都带"建议改"注释, 部署时必须改掉)。
+# ⚠ 白名单只放【全网公开的固定默认值】, 别往里加真实环境用过的密码。
+KNOWN_DEFAULTS='Harbor12345|root123|admin123|Changeme123|changeme|password'
+
+# 占位符特征: 中文说明 / xxx / 在此填写 / 空串 / {{ 变量 }} / 纯注释行 / 厂商默认口令
 is_placeholder() {
     local v="$1"
     [ -z "$v" ] && return 0
+    printf '%s' "$v" | grep -qE '^('"$KNOWN_DEFAULTS"')$' && return 0
     printf '%s' "$v" | grep -qE '^(""|'"''"'|xxx+|XXX+|<.*>|\{\{.*\}\}|.*(在此填写|请填|填写|改成|示例|明文密码|你的|自己的).*)$' && return 0
     # {{ ... }} 里可能跨行(YAML 折叠标量), 只要值整体是一个 Jinja 表达式就算占位符
     printf '%s' "$v" | grep -qE '^\{\{.*\}\}$' && return 0

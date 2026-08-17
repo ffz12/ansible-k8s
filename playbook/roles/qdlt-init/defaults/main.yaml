@@ -48,14 +48,23 @@ qdlt_acs_strict: false
 # 不要改这里 —— 让偏离交付标准的地方显式落在项目配置里, 便于交付时说明。
 # 时区只影响显示, 不影响对时精度与跨节点时间差。
 qdlt_timezone: UTC
-# NTP 源: 默认公网源需要防火墙放行 udp 123; 机房有内网 NTP 的请改成内网地址。
-# 交付标准公网放行清单含 ntp.ntsc.ac.cn / ntp.aliyun.com udp123, 但仅在特定情形适用。
+# NTP 源。【复用仓库既有的 chrony_ip】—— init 角色的 chrony.conf.j2 用的就是它,
+# 在 inventory/group_vars/all/env.yaml 里配。这样换 NTP 源只改 chrony_ip 一处,
+# 不会 init 和 qdlt-init 两边配得不一样。
+#   ⚠ 别在 env.yaml 里再写一份 qdlt_ntp_servers —— 那就又变成两处要维护了。
+# 要给 qdlt 单独配多个源做冗余时才覆盖本变量(显式值优先, 会盖掉 chrony_ip):
+#   qdlt_ntp_servers: [10.82.4.1, 10.82.4.2]
+# 交付标准公网放行清单含 ntp.ntsc.ac.cn / ntp.aliyun.com udp123, 但仅在特定情形适用;
+# chrony_ip 没配时回落到前者。
 qdlt_ntp_servers:
-  - ntp.aliyun.com
-  - ntp.ntsc.ac.cn
+  - "{{ chrony_ip | default('ntp.aliyun.com', true) }}"
 qdlt_time_max_offset: 15      # 交付标准: 集群内最大时间差 15 秒
 qdlt_sync_wait: 60            # 等待 chrony 实际同步上的最长秒数
-qdlt_fail_on_unsynced: true   # 超时仍未同步则报错中止(置 false 只告警)
+# 超时仍未同步是否中止。true=fail 中止, false=打一条醒目告警继续跑(qdlt-check 侧仍判 FAIL)。
+# ⚠ 这里失败是"没锁定上外部 NTP 源", 不等于"节点之间时间不齐" —— 交付标准要的是后者。
+#   置 false 前先确认跨节点差在 qdlt_time_max_offset 秒内:
+#     ansible qdlt -m shell -a 'date -u +%FT%T'
+qdlt_fail_on_unsynced: true
 
 # ---------------- 统一登录账号 ----------------
 qdlt_user: wwxq

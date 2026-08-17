@@ -93,3 +93,29 @@
   when:
     - qdlt_fail_on_unsynced | bool
     - (qdlt_sync_state.stdout | default('') | trim) != 'yes'
+
+# 上面那个 fail 被关掉(qdlt_fail_on_unsynced=false)时, 别让它变成【静默跳过】——
+# 否则 GRUB/账号/CPU 全配完了, 回头没人记得这台机器的时间源是瓢的。
+# 这里响亮打一条, 并且明确它是【遗留项】, 交付时要处置。
+# 注: qdlt-check 侧对本项仍然判 FAIL(ntp_sync != yes), 报告里会带出来, 不会漏。
+- name: ⚠ 时间未同步(已按 qdlt_fail_on_unsynced=false 放行, 但记为遗留项)
+  debug:
+    msg: |
+      ⚠⚠⚠ 时间同步【未通过】, 但已配置为不中断, 后续步骤继续执行。⚠⚠⚠
+
+      现象: chrony 在跑, 但 {{ qdlt_sync_wait }} 秒内一次都没锁定任何源 (NTPSynchronized=no)。
+      当前 NTP 源: {{ qdlt_ntp_servers | join(', ') }}
+
+      这【不等于】节点之间时间不一致 —— 交付标准要的是「集群最大时间差
+      <{{ qdlt_time_max_offset }} 秒」, 各节点原有时间可能本来就是齐的。
+      核对一下再决定要不要着急:
+        ansible qdlt -m shell -a 'date -u +%FT%T'
+
+      但它确实【不符合交付标准】里对时的要求, 必须作为遗留项处置:
+        1) 机房有内网 NTP → group_vars/all/env.yaml 设 qdlt_ntp_servers 后重跑 --tags time
+           (本项目可用 maascpu-011 / MAAS 节点一般自带 chrony 并对下服务, 先确认)
+        2) 走公网 → 放行 udp 123 到 {{ qdlt_ntp_servers | join(', ') }}
+        3) 确认无源可用 → 在交付材料里作为偏离项列出, 并说明各节点时间差实测值
+  when:
+    - not (qdlt_fail_on_unsynced | bool)
+    - (qdlt_sync_state.stdout | default('') | trim) != 'yes'
