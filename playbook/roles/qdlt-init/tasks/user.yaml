@@ -6,8 +6,10 @@
 #  ⚠ 密码从控制机环境变量 QDLT_USER_PASSWORD 取(见 defaults/main.yaml),
 #    禁止把明文写进 git。
 #  ⚠ 多余用户默认【只报告不删除】, 确认后再置 qdlt_remove_extra_users=true。
-#  ⚠ root 密码默认【不修改】(qdlt_do_root_password=false)。改 root 密码风险高:
-#    改错了、或改完 sshd 不允许密码登录, 可能把自己关在门外。要改就显式打开。
+#  ⚠ root 密码默认【也设成同一个密码】(qdlt_do_root_password=true) —— 交付标准
+#    要求"统一账密", root 也算登录账户。改 root 密码不可逆, 但只要不是靠 root
+#    【密码】连进来的(密钥/免密不受影响), 就没有把自己关在门外的风险。
+#    要保留机器原有 root 密码: -e qdlt_do_root_password=false
 # ============================================================================
 
 - name: 【前置】必须提供 qdlt_user_password
@@ -68,10 +70,12 @@
       | 密码已设置(与统一登录密码一致)
 
 # ---------------- root 密码 ----------------
-# 交付标准要求「系统登录账户使用统一账密」。是否把 root 也统一成同一个密码,
-# 由 qdlt_do_root_password 控制, 默认 false ——
-#   改 root 密码本身不可逆(旧密码无法找回), 且若 sshd 禁止 root 密码登录,
-#   改了也用不上; 但真被锁在门外时又只能靠带外 KVM。故要求显式开启。
+# 交付标准要求「系统登录账户使用统一账密」, root 也算登录账户, 故默认一并统一
+# (qdlt_do_root_password=true)。密码取 qdlt_root_password, 它默认回落到
+# qdlt_user_password —— 所以 export QDLT_USER_PASSWORD 之后不用再多设任何东西。
+# ⚠ 改 root 密码不可逆(旧密码找不回)。要关掉: -e qdlt_do_root_password=false
+#   什么时候该关: 这台是靠 root【密码】(bootstrap_ssh_pass)连进来的 —— 改完
+#   ansible 自己就连不上了。root 免密/密钥登录不受影响, 可放心改。
 - name: 设置 root 密码
   user:
     name: root

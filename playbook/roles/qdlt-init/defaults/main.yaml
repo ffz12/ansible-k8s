@@ -96,12 +96,16 @@ qdlt_protected_users:            # 永不删除的账号(除 uid<1000 的系统�
   - root
 
 # ---------------- root 密码 ----------------
-# 是否把 root 密码也设成统一登录密码。默认 false:
-#   改 root 密码不可逆(旧密码找不回), 且多数机器 sshd 本来就禁止 root 密码登录,
-#   改了也用不上; 万一配合 sshd 改动出错, 只能靠带外 KVM 救。所以要求显式开启:
-#     -e qdlt_do_root_password=true
-# ⚠ 本角色【不修改 sshd 配置】, 只在设完后打印 sshd -T 的实际策略供人工判断。
-qdlt_do_root_password: false
+# 是否把 root 密码也设成统一登录密码。默认 true ——
+# 交付标准要求「系统登录账户使用统一账密」, root 也算登录账户, 所以一并统一;
+# 而且不用再记 -e 参数, export QDLT_USER_PASSWORD 之后直接跑就全配好了。
+# ⚠ 改 root 密码【不可逆】(旧密码找不回)。下面两种情况要关掉(-e qdlt_do_root_password=false):
+#   1) 这台是靠 bootstrap_ssh_pass 用【root 密码】连进来的 —— 改完 ansible 自己
+#      就连不上了, 得同步改 env.yaml。(root 免密/密钥登录不受影响, 可放心改)
+#   2) 机器交给别人管、不该动 root 凭据。
+# ⚠ 本角色【不修改 sshd 配置】, 只在设完后打印 sshd -T 的实际策略供人工判断 ——
+#   多数机器 PermitRootLogin=prohibit-password, 设了密码也不能拿它 ssh 进来。
+qdlt_do_root_password: true
 # root 密码。默认复用统一登录密码(交付标准: 统一账密);
 # 想给 root 单独设别的密码: export QDLT_ROOT_PASSWORD='另一个密码'
 qdlt_root_password: >-
