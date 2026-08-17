@@ -64,12 +64,19 @@
 #  青岛联通项目交付(qdlt-init / qdlt-check)—— 不跑该项目就整段留空
 #
 #    [qdlt]      本次交付的全部节点(qdlt-init / qdlt-check 都跑这个组)
-#    [qdlt_cpu]  CPU 管理节点 → 主机名 CPU-<IP末段3位>            例 CPU-229
-#    [qdlt_gpu]  GPU 算力节点 → 主机名 GPU-SU<n>-<IP末段3位>      例 GPU-SU2-056
+#    [qdlt_cpu]  CPU 管理节点
+#    [qdlt_gpu]  GPU 算力节点
 #
+#  ⚠ 这里写的名字只是 inventory 里的【标识】, 不等于会被设置的主机名。
+#    实际主机名由各组 vars 里的 qdlt_hostname_policy 决定:
+#      keep     不改主机名(已投产集群用这个) —— 本次青岛管理节点即为此
+#      ip       按交付标准从带内 IP 末段生成 CPU-<末段3位> / GPU-SU<n>-<末段3位>
+#      explicit 用逐台写的 qdlt_hostname
+#    所以【已投产的机器请按现有主机名原样写】(cpu-001 这样), 别写成 CPU-111,
+#    否则 ansible 连上去发现名字对不上, /etc/hosts 里也会写错。
+#    只有还没定名字的新裸机, 才适合直接写成交付标准的目标名 + policy=ip。
 #  ⚠ qdlt_su 依据服务器上连的计算网 Leaf 交换机组顺序决定, 必须对照接线表逐台填,
-#    猜不出来; GPU 节点漏填会在 qdlt-init 的 hostname 步骤直接 assert 中止。
-#  ⚠ 这几个组与上面的组彼此独立; 主机名建议直接写成交付标准要求的目标名, 便于核对。
+#    猜不出来; policy=ip 的 GPU 节点漏填会在 hostname 步骤直接 assert 中止。
 # ============================================================================
 
 [qdlt_cpu]
@@ -82,6 +89,7 @@ cpu-008 ansible_host=192.168.1.118
 maascpu-011 ansible_host=192.168.1.121
 
 [qdlt_gpu]
+# 新进场裸机, 还没定主机名 → 直接写成交付标准的目标名 + policy=ip(见下)
 #GPU-SU1-056 ansible_host=10.82.4.56  qdlt_su=1
 #GPU-SU1-057 ansible_host=10.82.4.57  qdlt_su=1
 #GPU-SU2-058 ansible_host=10.82.4.58  qdlt_su=2

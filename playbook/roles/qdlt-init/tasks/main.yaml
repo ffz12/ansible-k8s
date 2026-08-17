@@ -42,6 +42,14 @@
   when: qdlt_do_cpu | bool
   tags: [qdlt, cpu]
 
+- import_tasks: swap.yaml
+  when: qdlt_do_swap | bool
+  tags: [qdlt, swap]
+
+- import_tasks: acs.yaml
+  when: qdlt_do_acs | bool
+  tags: [qdlt, acs]
+
 - import_tasks: hostname.yaml
   when: qdlt_do_hostname | bool
   tags: [qdlt, hostname]

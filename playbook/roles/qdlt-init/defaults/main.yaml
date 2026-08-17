@@ -18,10 +18,29 @@ qdlt_do_cloudinit: true       # 彻底关闭 cloud-init
 qdlt_do_apt: true             # 关闭 apt 自动更新(含 mask apt-daily 定时器)
 qdlt_do_user: true            # 创建统一登录账号 wwxq
 qdlt_do_cpu: true             # governor=performance + TurboBoost
+qdlt_do_swap: true            # 永久关闭 swap(swapoff + fstab + mask unit + sysctl)
+qdlt_do_acs: false            # 关闭所有 PCIe 设备 ACSCtl(写 PCI 配置空间, 需显式开启)
 qdlt_do_pkgs: true            # 安装 ipmitool 等交付要求的软件包
 qdlt_do_hostname: true        # 按 GPU-SU<n>-<xxx> / CPU-<xxx> 规范设置主机名
 qdlt_do_grub: true            # GRUB 固定当前内核, 防重启后内核变更
 qdlt_do_syslog: false         # 日志外送日志审计系统(需先填 qdlt_log_server)
+
+# ---------------- swap ----------------
+# vm.swappiness 落盘到 /etc/sysctl.d/99-qdlt-swap.conf(sysctl -w 重启会丢)
+qdlt_swappiness: 0
+# 是否连 swap 文件/分区本身一起删除。【不可逆】, 默认只停用不删除。
+qdlt_swap_remove_file: false
+# qdlt_swap_remove_file=true 时要删的文件(分区不在此列, 分区请人工处置)
+qdlt_swap_files:
+  - /swap.img
+  - /swapfile
+
+# ---------------- PCIe ACSCtl ----------------
+# 关闭脚本落地路径(systemd 服务也引用这个变量)
+qdlt_acs_script_path: /usr/local/sbin/qdlt-acs-disable.sh
+# true = 回验发现仍有设备 ACSCtl 未关闭时直接中止。
+# 默认 false: 这类寄存器常被固件锁定, 只能在 BIOS 里关, 不该让整个 playbook 挂掉。
+qdlt_acs_strict: false
 
 # ---------------- 时间 ----------------
 # 交付标准第 3 页要求「统一使用 UTC 时区」, 故默认值保持 UTC。
@@ -51,6 +70,16 @@ qdlt_protected_users:            # 永不删除的账号(除 uid<1000 的系统�
   - "{{ qdlt_user }}"
   - ubuntu
   - root
+
+# ---------------- root 密码 ----------------
+# 是否把 root 密码也设成统一登录密码。默认 false:
+#   改 root 密码不可逆(旧密码找不回), 且多数机器 sshd 本来就禁止 root 密码登录,
+#   改了也用不上; 万一配合 sshd 改动出错, 只能靠带外 KVM 救。所以要求显式开启:
+#     -e qdlt_do_root_password=true
+# ⚠ 本角色【不修改 sshd 配置】, 只在设完后打印 sshd -T 的实际策略供人工判断。
+qdlt_do_root_password: false
+# root 密码, 默认复用统一登录密码(交付标准: 统一账密)。想分开设就单独赋值。
+qdlt_root_password: "{{ qdlt_user_password | default('') }}"
 
 # ---------------- 主机名 ----------------
 # 角色: gpu / cpu。默认按 inventory 组自动判定(在 qdlt_gpu 组内即 gpu)。

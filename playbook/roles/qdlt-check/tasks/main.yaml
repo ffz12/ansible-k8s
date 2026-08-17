@@ -74,6 +74,32 @@
                                 and (f.unattended | default('')) not in ['enabled'])
                      else 'FAIL')},
 
+        {'cat':'操作系统','item':'swap 永久关闭','expect':'当前无启用 swap + fstab 无 swap 条目 + swap unit 未 enabled + swappiness 已落盘',
+         'actual': '当前启用=' ~ (f.swap_on | default('') | trim(',') | default('无', true))
+                   ~ ' | fstab 未注释 swap 条目=' ~ (f.swap_fstab | default('?'))
+                   ~ ' | swap.target=' ~ (f.swap_target | default('?') | trim | default('未知', true))
+                   ~ ' | swappiness=' ~ (f.swappiness | default('?'))
+                   ~ ('(已落盘)' if ((f.swappiness_persisted | default('0') | int) > 0) else '(仅运行时, 重启丢失)')
+                   ~ ((' | ⚠ 当前虽已关闭, 但 '
+                       ~ (('fstab 里还有 ' ~ (f.swap_fstab | string) ~ ' 条 swap 条目; ')
+                          if ((f.swap_fstab | default('0') | int) > 0) else '')
+                       ~ ('swap.target 仍为 enabled; ' if ((f.swap_target | default('') | trim) == 'enabled') else '')
+                       ~ '重启后会自动挂回')
+                      if ((f.swap_on | default('') | trim(',') | length == 0)
+                          and ((f.swap_fstab | default('0') | int) > 0
+                               or (f.swap_target | default('') | trim) == 'enabled')) else '')
+                   ~ ((' | swap.target 未 mask(static 是 Ubuntu 默认值): 当前没有 swap 条目所以挂不回来, '
+                       ~ '但 systemd-gpt-auto-generator 仍可能按 GPT 分区类型自动生成 .swap unit, '
+                       ~ '建议 mask(qdlt-init 的 swap 步骤会做)')
+                      if ((f.swap_on | default('') | trim(',') | length == 0)
+                          and (f.swap_fstab | default('0') | int) == 0
+                          and (f.swap_target | default('') | trim) == 'static') else ''),
+         'verdict': ('FAIL' if ((f.swap_on | default('') | trim(',') | length > 0)
+                                or (f.swap_fstab | default('0') | int) > 0)
+                     else ('WARN' if ((f.swap_target | default('') | trim) in ['enabled', 'static']
+                                      or (f.swappiness_persisted | default('0') | int) == 0)
+                           else 'PASS'))},
+
         {'cat':'操作系统','item':'统一登录账号','expect': qdlt_expect_user ~ ' 存在且无其他一般用户',
          'actual': '一般用户: ' ~ (f.normal_users | default('') | trim),
          'verdict': ('PASS' if ((f.normal_users | default('')).split() | reject('equalto', qdlt_expect_user) | list | length == 0

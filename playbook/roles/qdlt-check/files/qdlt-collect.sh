@@ -84,6 +84,13 @@ kvn mem_dimms    "$(dmidecode -t memory 2>/dev/null | grep -c '^\s*Size:.*[0-9]\
 kv mem_vendor    "$(dmidecode -t memory 2>/dev/null | awk -F': *' '/Manufacturer/{if($2!="NO DIMM" && $2!="")print $2}' | sort -u | tr '\n' ',')"
 kv mem_speed     "$(dmidecode -t memory 2>/dev/null | awk -F': *' '/Configured Memory Speed|Configured Clock Speed/{if($2!="Unknown")print $2}' | sort -u | tr '\n' ',')"
 kv swap_on       "$(swapon --show=NAME --noheadings 2>/dev/null | tr '\n' ',')"
+# 永久性判定: fstab 里未注释的 swap 条目(第3列=swap) + swap unit 是否 masked
+#   只看 swapon 会误判 —— 手工 swapoff -a 后当前是空的, 但重启就回来了。
+kvn swap_fstab   "$(awk '$1 !~ /^#/ && $1 != "" && $3 == "swap"' /etc/fstab 2>/dev/null | wc -l)"
+kv swap_units    "$(systemctl list-unit-files --type=swap --no-legend 2>/dev/null | awk '{printf "%s=%s ", $1, $2}')"
+kv swap_target   "$(systemctl is-enabled swap.target 2>/dev/null | head -1)"
+kv swappiness    "$(cat /proc/sys/vm/swappiness 2>/dev/null)"
+kvn swappiness_persisted "$(grep -rlsE '^\s*vm\.swappiness' /etc/sysctl.conf /etc/sysctl.d/ 2>/dev/null | wc -l)"
 
 # ---------------- BIOS / 整机 ----------------
 kv bios_vendor   "$(dmidecode -s bios-vendor 2>/dev/null)"
