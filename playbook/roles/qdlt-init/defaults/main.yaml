@@ -143,7 +143,7 @@ qdlt_hostname_policy: inventory
 qdlt_hostname: ""
 
 # ---------------- GRUB / 内核固定 ----------------
-# 本角色固定的是【当前正在运行】的内核(ansible_kernel), 所以顺序是:
+# 本角色固定的是【当前正在运行】的内核, 所以顺序是:
 #   装新内核 → reboot 到它 → 再跑 --tags grub
 # 检测到"/boot 里有更新的内核但当前没在跑它"时, GRUB 段【整段跳过, 一步都不做】——
 # 防的是这个真实事故: 人工装好新内核、把 GRUB_DEFAULT 改指向新内核, 但还没重启,
@@ -151,6 +151,10 @@ qdlt_hostname: ""
 # true = 无视上述保护, 强行固定到【当前运行】的内核。
 # 什么时候用: 新内核起不来要回退, 已经引导回旧内核并要把它钉死。
 qdlt_grub_force: false
+# ⚠ 「当前运行内核」由 grub.yaml 每次【实时 uname -r】取得, 不用 ansible_kernel ——
+#   ansible.cfg 配了 fact_caching_timeout=86400, 重启换内核后 24 小时内 fact 仍是
+#   旧版本, 会把 GRUB 钉回旧内核(现网 maascpu-011 就这么被钉回 5.15.0-119 的)。
+#   qdlt-check 侧不受影响: 它的 qdlt-collect.sh 自己跑 uname -r, 也不读 fact 缓存。
 
 # ---------------- 软件包 ----------------
 qdlt_packages:

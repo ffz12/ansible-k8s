@@ -8,11 +8,36 @@
 #        3) apt-mark hold 当前内核相关包, 防被升级掉
 #  ⚠ 改 GRUB 有风险: 每一步都先备份, 且写入后校验 grub.cfg 里确实含该 id;
 #    校验不过会中止并还原, 不会留下半吊子配置。
+#  ⚠ 内核版本【不能用 ansible_kernel】—— ansible.cfg 里配了
+#      gathering = smart / fact_caching = jsonfile / fact_caching_timeout = 86400
+#    重启换了内核后, 24 小时内 ansible 仍拿缓存里的旧版本, 于是把 GRUB 钉回旧内核。
+#    现网 maascpu-011 就这么被钉回 5.15.0-119 的(uname -r 已是 185)。
+#    所以这里【每次实时 uname -r】, 不依赖 fact 缓存, 也不用记着加 --flush-cache。
 # ============================================================================
 
-- name: 读取当前运行内核版本
+- name: 实时读取当前运行内核版本(不用 ansible_kernel, 避开 fact 缓存)
+  command: uname -r
+  register: qdlt_uname
+  changed_when: false
+  check_mode: false
+
+- name: 记录当前运行内核版本
   set_fact:
-    qdlt_kernel: "{{ ansible_kernel }}"
+    qdlt_kernel: "{{ qdlt_uname.stdout | trim }}"
+
+- name: ⚠ fact 缓存里的内核版本与实际不一致(已按实际值处理)
+  debug:
+    msg: |
+      ⚠ ansible fact 缓存过期: 缓存里 ansible_kernel={{ ansible_kernel }},
+        实际 uname -r={{ qdlt_kernel }}。
+
+      本步骤已按【实际值 {{ qdlt_kernel }}】处理, GRUB 不会被钉错。
+      qdlt-check 也不受影响(它的 qdlt-collect.sh 自己跑 uname -r)。
+      但其他角色若引用 ansible_kernel 会拿到旧值, 建议清一次缓存:
+        rm -rf /tmp/.ansible_fact_cache
+      或单次执行加 --flush-cache。
+      (根因: ansible.cfg 配了 fact_caching_timeout=86400, 重启换内核后 24h 内不重采)
+  when: ansible_kernel is defined and ansible_kernel != qdlt_kernel
 
 - name: 校验内核版本是否在交付标准要求区间(5.15.0-181 ~ 5.15.0-999)
   debug:
@@ -26,7 +51,7 @@
     path: "/boot/vmlinuz-{{ qdlt_kernel }}"
   register: qdlt_vmlinuz
 
-# 本角色固定的是【当前正在运行】的内核(ansible_kernel)。所以顺序很重要:
+# 本角色固定的是【当前正在运行】的内核(实时 uname -r)。所以顺序很重要:
 #   装了新内核 → 必须先 reboot 到新内核 → 再跑 --tags grub
 # ⚠ 不加保护的话会出这个事故: 人工装好新内核、把 GRUB_DEFAULT 改指向新内核,
 #   但还没重启(仍在跑旧内核), 这时跑 playbook → 它按【运行中的旧内核】重写
@@ -42,13 +67,19 @@
     executable: /bin/bash
   register: qdlt_newest_kernel
   changed_when: false
+  # 只读命令。--check 下 shell 模块默认跳过 → register 里没有 stdout,
+  # 下一步引用就会 "'dict object' has no attribute 'stdout'" 直接崩。
+  # 让它在 --check 下也真跑, 空跑才能看出这台会不会被待重启保护挡住。
+  check_mode: false
 
 # 只有"最新的那个不是当前运行的"才算待重启; 相等或取不到都按正常走。
+# 用 default('') 兜一层: 万一上一步被跳过(如 --skip-tags 组合、连接异常),
+# 也只是按"没有更新的内核"处理, 不要整个 play 崩掉。
 - name: 判断是否处于「装了新内核但没重启」状态
   set_fact:
     qdlt_kernel_pending: >-
-      {{ (qdlt_newest_kernel.stdout | trim | length > 0)
-         and ((qdlt_newest_kernel.stdout | trim) != qdlt_kernel) }}
+      {{ (qdlt_newest_kernel.stdout | default('') | trim | length > 0)
+         and ((qdlt_newest_kernel.stdout | default('') | trim) != qdlt_kernel) }}
 
 - name: ⚠ 装了更新的内核但还没重启到它 —— 本次【跳过】GRUB 固定, 不覆盖现有配置
   debug:
