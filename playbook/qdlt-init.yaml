@@ -16,8 +16,8 @@
 #    4) ansible-playbook playbook/qdlt-check.yaml                  # 改之后复查出交付报告
 #
 #  用法:
-#    # 密码用 vault 传入(不要明文进 git)
-#    ansible-playbook playbook/qdlt-init.yaml -e @inventory/qdlt-secrets.yml --ask-vault-pass
+#    # 密码从 inventory/qdlt-secrets.yml 传入(明文保存, 但该文件已 gitignore, 不得入库)
+#    ansible-playbook playbook/qdlt-init.yaml -e @inventory/qdlt-secrets.yml
 #    # 或临时:
 #    ansible-playbook playbook/qdlt-init.yaml -e "qdlt_user_password=xxxx"
 #

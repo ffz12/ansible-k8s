@@ -42,13 +42,39 @@ else
     echo -e "[跳过] reports/ 已经存在。"
 fi
 
+# ---------------------------------------------------------------------------
+#  安装 pre-commit 钩子: 拦住明文密码 / 私钥进库
+#  .git/hooks 不受版本控制, 所以钩子源文件放在 scripts/git-hooks/, 这里装进去。
+#  每次跑 init.sh 都会覆盖安装(保证是最新版); 不想要就 git config qdlt.skipSecretScan true
+# ---------------------------------------------------------------------------
+if [ -d .git ] && [ -f scripts/git-hooks/pre-commit ]; then
+    HOOKDIR="$(git rev-parse --git-path hooks 2>/dev/null || echo .git/hooks)"
+    mkdir -p "$HOOKDIR"
+    if cp scripts/git-hooks/pre-commit "$HOOKDIR/pre-commit" 2>/dev/null; then
+        chmod +x "$HOOKDIR/pre-commit"
+        echo -e "${GREEN}[成功]${NC} 已安装 pre-commit 钩子 (拦明文密码/私钥进库)"
+    else
+        echo -e "${RED}[警告]${NC} pre-commit 钩子安装失败, 请手工: cp scripts/git-hooks/pre-commit $HOOKDIR/ && chmod +x $HOOKDIR/pre-commit"
+    fi
+fi
+
 echo "初始化完成。请根据实际环境修改 inventory/ 目录下的配置文件。"
 
-# 青岛联通交付项目额外提醒: 密码文件必须加密, 且 GPU 节点要逐台填 SU 号
-if [ -f inventory/qdlt-secrets.yml ] && ! head -1 inventory/qdlt-secrets.yml | grep -q '^\$ANSIBLE_VAULT'; then
+# 青岛联通交付项目额外提醒: GPU 节点要逐台填 SU 号
+if [ -f inventory/qdlt-secrets.yml ]; then
     echo
     echo -e "${RED}[待办]${NC} 跑青岛联通交付(qdlt-*)前还需要:"
     echo "  vim inventory/hosts                          # 填 [qdlt_cpu]/[qdlt_gpu]; GPU 必须逐台填 qdlt_su"
     echo "  vim inventory/qdlt-secrets.yml               # 填统一登录账号 wwxq 的密码"
-    echo "  ansible-vault encrypt inventory/qdlt-secrets.yml   # ⚠ 明文密码不得入库"
+    echo
+    echo "  密码本项目按明文保存, 不加密。但 inventory/qdlt-secrets.yml 已在 .gitignore 里,"
+    echo "  ${RED}不要 git add -f${NC} —— 进了 git 历史就删不掉了(改密码也删不掉旧的)。"
+    echo "  已装 pre-commit 钩子做兜底拦截; 误报时用 git commit --no-verify 放行。"
+    # 真进了库就明确报出来: 不加密没问题, 入库不行
+    if git -C . ls-files --error-unmatch inventory/qdlt-secrets.yml >/dev/null 2>&1; then
+        echo
+        echo -e "${RED}[严重]${NC} inventory/qdlt-secrets.yml 已被 git 跟踪! 明文密码进库了。"
+        echo "  立即处置: git rm --cached inventory/qdlt-secrets.yml && git commit"
+        echo "  (已推送过的话, 旧提交里还留着, 需要改密码或改写历史)"
+    fi
 fi

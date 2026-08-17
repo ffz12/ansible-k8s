@@ -3,7 +3,7 @@
 #  user.yaml —— 交付标准: 系统登录账户使用统一账密, 用户名指定为 wwxq,
 #               且系统上不存在其他一般用户
 #
-#  ⚠ 密码必须外部传入(建议 ansible-vault, 或 -e qdlt_user_password=xxx),
+#  ⚠ 密码必须外部传入(-e @inventory/qdlt-secrets.yml 或 -e qdlt_user_password=xxx),
 #    禁止把明文写进 git。
 #  ⚠ 多余用户默认【只报告不删除】, 确认后再置 qdlt_remove_extra_users=true。
 #  ⚠ root 密码默认【不修改】(qdlt_do_root_password=false)。改 root 密码风险高:
@@ -16,7 +16,7 @@
       - qdlt_user_password is defined
       - qdlt_user_password | length > 0
     fail_msg: >-
-      未提供 qdlt_user_password。请用 ansible-vault 变量文件,
+      未提供 qdlt_user_password。请用 -e @inventory/qdlt-secrets.yml,
       或命令行 -e "qdlt_user_password=xxxx" 传入统一登录密码。
       注意: 写在 inventory/hosts 里必须放在 [xxx:vars] 段内并用 = 号,
       裸写一行会被 ansible 当成主机名跳过(WARNING: not a valid group definition), 不生效。

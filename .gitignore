@@ -16,6 +16,7 @@ playbook/roles/certs/files/etcd-*/
 # env.yaml 是每套环境的实际配置(由 init.sh 从 tmp/env.yaml.example 生成),不入库
 inventory/group_vars/all/env.yaml
 
-# 青岛联通交付: 统一登录密码等敏感变量(即便 vault 加密也不入库), 及体检报告产物
+# 青岛联通交付: 统一登录密码等敏感变量(本项目按明文保存, 更不能入库), 及体检报告产物
+# ⚠ .gitignore 拦不住 git add -f, 兜底靠 scripts/git-hooks/pre-commit(init.sh 自动装)
 inventory/qdlt-secrets.yml
 reports/
