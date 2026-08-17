@@ -13,7 +13,11 @@
 #    qdlt-acs-disable.service 每次开机重跑。
 #  ⚠ 关 ACS 会降低 PCIe 设备间隔离性, 与 VFIO 直通/IOMMU 分组隔离冲突。
 #    交付标准同时要求关闭 vt-d/IOMMU, 两者方向一致(都为 P2P 性能), 故不矛盾。
-#  ⚠ 默认 qdlt_do_acs=false —— 写 PCI 配置空间属于侵入性操作, 要求显式开启。
+#    但这批机器若要跑虚拟化直通, 就别开: -e qdlt_do_acs=false
+#  ⚠ 默认 qdlt_do_acs=true —— 交付标准明确要求"所有 PCIe 设备 ACSCtl 均已关闭",
+#    不做这一步 qdlt-check 的 PCIe 项会判 FAIL。它是本角色唯一直接写 PCI 配置空间
+#    的步骤, 单独跳过用 --skip-tags acs。
+#    注: CPU 管理节点上没有 GPU, 关 ACS 的实际性能收益接近于零, 纯为合规。
 # ============================================================================
 
 - name: 确保 pciutils 已安装(setpci / lspci)

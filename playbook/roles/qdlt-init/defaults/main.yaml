@@ -19,7 +19,7 @@ qdlt_do_apt: true             # 关闭 apt 自动更新(含 mask apt-daily 定�
 qdlt_do_user: true            # 创建统一登录账号 wwxq
 qdlt_do_cpu: true             # governor=performance + TurboBoost
 qdlt_do_swap: true            # 永久关闭 swap(swapoff + fstab + mask unit + sysctl)
-qdlt_do_acs: false            # 关闭所有 PCIe 设备 ACSCtl(写 PCI 配置空间, 需显式开启)
+qdlt_do_acs: true             # 关闭所有 PCIe 设备 ACSCtl(交付标准要求; 详见下方 ACSCtl 段)
 qdlt_do_pkgs: true            # 安装 ipmitool 等交付要求的软件包
 qdlt_do_hostname: true        # 按 GPU-SU<n>-<xxx> / CPU-<xxx> 规范设置主机名
 qdlt_do_grub: true            # GRUB 固定当前内核, 防重启后内核变更
@@ -36,6 +36,15 @@ qdlt_swap_files:
   - /swapfile
 
 # ---------------- PCIe ACSCtl ----------------
+# 交付标准要求「确认所有 PCIe 设备的 ACSCtl 均已关闭」, 所以默认【开启】本项。
+# ⚠ 它是本角色里唯一直接写 PCI 配置空间(setpci)的步骤, 副作用要知道:
+#   - 降低 PCIe 设备间隔离性: 要跑 VFIO 直通/依赖 IOMMU 分组隔离的机器别开
+#     (置 qdlt_do_acs=false)。交付标准同时要求关 vt-d/IOMMU, 两者方向一致。
+#   - 重启后固件会重新置位 → 配套装 qdlt-acs-disable.service 每次开机重跑。
+#   - 多数寄存器被固件锁定时写不进去, 这属正常, 见 qdlt_acs_strict。
+# CPU 管理节点上关 ACS 的【性能收益接近于零】(收益全在 GPU 间 P2P/NCCL 带宽上),
+# 但交付标准说的是"所有 PCIe 设备", 故照做, 体检项也才能判 PASS。
+# 单独跳过: --skip-tags acs   或   -e qdlt_do_acs=false
 # 关闭脚本落地路径(systemd 服务也引用这个变量)
 qdlt_acs_script_path: /usr/local/sbin/qdlt-acs-disable.sh
 # true = 回验发现仍有设备 ACSCtl 未关闭时直接中止。
