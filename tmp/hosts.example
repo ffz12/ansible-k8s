@@ -130,12 +130,10 @@ qdlt_node_role=gpu
 # GPU 节点按交付标准命名: GPU-SU<qdlt_su>-<IP末段3位>
 qdlt_hostname_policy=ip
 
-[qdlt:vars]
-# 连接身份由 group_vars/all/connection.yaml 自动探测(root 免密 → root; 否则 用户+sudo)。
-# 首次进场机器通常只有厂商初始账号, 在 group_vars/all/env.yaml 里配 bootstrap_* 即可。
-# 下面两项与 [all:vars] 重复, 是有意的: 让 qdlt 段自成一体, 单独拆出去用时不依赖 [all:vars]。
-ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+# 注: 【故意没有 [qdlt:vars] 段】—— python 解释器 / ssh 参数只写在下面 [all:vars] 一处。
+#   ansible 的 all 组包含 inventory 里的每一台机器, qdlt 这些节点自然继承, 不用重复写。
+#   连接身份由 group_vars/all/connection.yaml 自动探测(root 免密 → root; 否则 用户+sudo);
+#   首次进场机器只有厂商初始账号时, 在 group_vars/all/env.yaml 里配 bootstrap_* 即可。
 
 [all:vars]
 # 集群参数(is_offline / kube_network_plugin / chrony_ip / lbvip / vip_prefix 等)
