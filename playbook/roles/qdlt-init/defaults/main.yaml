@@ -168,6 +168,22 @@ qdlt_packages:
 # ---------------- CPU 性能 ----------------
 qdlt_cpu_governor: performance
 qdlt_cpu_service: qdlt-cpu-performance.service
+# 是否安装 cpufrequtils。默认 false ——
+# 本角色从未用过它的 cpufreq-info / cpufreq-set, 装它只会带进来一个
+# cpufrequtils.service(LSB 生成), 它开机会按 /etc/default/cpufrequtils 的
+# GOVERNOR 重设 governor, 该文件缺失时回落到 ondemand, 把 performance 覆盖掉。
+# ⚠ 现网事故: 6 台里 4 台重启后 governor 掉回 ondemand, 就是这么来的
+#   (cpufrequtils 比本角色的服务晚 14 秒跑)。
+# 已经装了的机器不卸载(卸载可能连带别的包), 改为把 GOVERNOR 写成 performance,
+# 方向一致就不存在赛跑 —— 见 tasks/cpu.yaml。
+qdlt_install_cpufrequtils: false
+# governor 校验前的等待秒数。
+# ⚠ 原来校验紧跟 systemctl restart 之后, 那一刻必然是 performance, 于是这一项
+#   【每次都判 PASS】—— 自己给自己作弊, 重启后才暴露。等一会儿至少能抓到
+#   "刚设完就被别的服务改回去"这类即时覆盖。
+#   但仍然【判不了重启后是否持久】, 那个只能靠重启后复验, 见 tasks/cpu.yaml 末尾提示。
+# 置 0 = 不等待(赶时间时用)。
+qdlt_gov_verify_delay: 5
 
 # ---------------- 日志审计外送(qdlt_do_syslog=true 时生效) ----------------
 # qdlt_log_server: "10.82.4.200"

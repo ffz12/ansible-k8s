@@ -1,8 +1,13 @@
 [Unit]
 # 由 Ansible qdlt-init 角色生成 —— 青岛联通交付标准: CPU 供电策略维持性能模式
 Description=Set CPU scaling governor to {{ qdlt_cpu_governor }} (QDLT delivery standard)
-After=sysinit.target
-DefaultDependencies=no
+# ⚠ 必须排在所有会动 governor 的服务【之后】, 否则被它们覆盖。
+#   现网事故: cpufrequtils.service(LSB 生成) 在本服务 Finished 后 14 秒把
+#   governor 改回 ondemand, 4/6 台重启后掉出 performance。
+#   这些 unit 不存在时 After= 是空操作, 不会报错。
+After=cpufrequtils.service loadcpufreq.service ondemand.service tuned.service
+After=power-profiles-daemon.service
+# ⚠ 不要加 DefaultDependencies=no —— 那会让上面的 After= 排序不可靠。
 
 [Service]
 Type=oneshot
