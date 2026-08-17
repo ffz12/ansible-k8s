@@ -60,6 +60,37 @@
 [etcd_to_delete]
 [master_to_delete]
 
+# ============================================================================
+#  青岛联通项目交付(qdlt-init / qdlt-check)—— 不跑该项目就整段留空
+#
+#    [qdlt]      本次交付的全部节点(qdlt-init / qdlt-check 都跑这个组)
+#    [qdlt_cpu]  CPU 管理节点 → 主机名 CPU-<IP末段3位>            例 CPU-229
+#    [qdlt_gpu]  GPU 算力节点 → 主机名 GPU-SU<n>-<IP末段3位>      例 GPU-SU2-056
+#
+#  ⚠ qdlt_su 依据服务器上连的计算网 Leaf 交换机组顺序决定, 必须对照接线表逐台填,
+#    猜不出来; GPU 节点漏填会在 qdlt-init 的 hostname 步骤直接 assert 中止。
+#  ⚠ 这几个组与上面的组彼此独立; 主机名建议直接写成交付标准要求的目标名, 便于核对。
+# ============================================================================
+
+[qdlt_cpu]
+#CPU-229 ansible_host=10.82.4.229
+#CPU-230 ansible_host=10.82.4.230
+
+[qdlt_gpu]
+#GPU-SU1-056 ansible_host=10.82.4.56  qdlt_su=1
+#GPU-SU1-057 ansible_host=10.82.4.57  qdlt_su=1
+#GPU-SU2-058 ansible_host=10.82.4.58  qdlt_su=2
+
+[qdlt:children]
+qdlt_cpu
+qdlt_gpu
+
+[qdlt_cpu:vars]
+qdlt_node_role=cpu
+
+[qdlt_gpu:vars]
+qdlt_node_role=gpu
+
 [all:vars]
 # 集群参数(is_offline / kube_network_plugin / chrony_ip / lbvip / vip_prefix 等)
 # 统一在 inventory/group_vars/all/env.yaml 配置。
