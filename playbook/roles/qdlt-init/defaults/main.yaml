@@ -164,6 +164,25 @@ qdlt_packages:
   - ethtool
   - dmidecode
   - numactl
+  # ⚠ 下面三个是现网排查睿频时【缺包缺出来的】—— 当时 turbostat / rdmsr / cpupower
+  #   全都没装, 只能 dd 读 /dev/cpu/0/msr 绕过去。判"睿频是否真能跑上去"必须读
+  #   APERF/MPERF, 而 /proc/cpuinfo 的 cpu MHz 在 intel_pstate passive 模式下
+  #   报的是内核请求值(空载报 3398, 实测只有 3000), 不能当判据。
+  - msr-tools           # rdmsr —— 读 APERF/MPERF 算真实频率; 几十 KB, 不依赖内核版本
+  - sysstat             # mpstat, 看各核负载是否均衡
+  - linux-tools-common  # cpupower/turbostat 的分发 wrapper(与内核版本无关, 装它无风险)
+# 是否安装 cpupower + turbostat(同一个包里)。默认 true —— 判 HWP/频率问题的主力工具:
+#   cpupower frequency-info 报 "no or unknown cpufreq driver is active"
+#   就是 Xeon 8468 锁死基频那次最关键的一条证据;
+#   turbostat --Summary 的 Bzy_MHz 是睿频实测的标准取法。
+# ⚠ 装法有坑, 别改成 linux-tools-generic:
+#   - linux-tools-common 只有 wrapper, 单装它会报 "cpupower not found for kernel x"
+#   - 可执行文件在 linux-tools-$(uname -r) 里, 是【带内核版本号】的包
+#   - 元包 linux-tools-generic 会【跟着新内核走】, 而本角色在 apt-mark hold 内核
+#     (交付标准要求内核固定) —— 装元包等于给 apt 留一条把内核带升级的路
+#   所以 packages.yaml 里用实时 uname -r 拼出确切版本的包名装, 见该文件说明。
+# 装不上不中止: 内核被 hold 时对应 tools 包可能不在源里, msr-tools 已够用。
+qdlt_install_cpupower: true
 
 # ---------------- CPU 性能 ----------------
 qdlt_cpu_governor: performance
@@ -177,6 +196,11 @@ qdlt_cpu_service: qdlt-cpu-performance.service
 # 已经装了的机器不卸载(卸载可能连带别的包), 改为把 GOVERNOR 写成 performance,
 # 方向一致就不存在赛跑 —— 见 tasks/cpu.yaml。
 qdlt_install_cpufrequtils: false
+# ⚠ thermald 是另一个会压频率的用户态守护(现网 6 台全 enabled, 当次 inactive)。
+#   本角色【不动它】—— 它属于过热保护的一环, 而且从没实际出过事,
+#   与 cpufrequtils(实锤把 4 台改回 ondemand)不是一个性质, 不值得为假想问题 mask 掉。
+#   qdlt-check 会在「CPU 供电性能模式」项里把它连同其他竞争者一起报出来
+#   (gov_rivals), 真出问题再人工 mask。
 # governor 校验前的等待秒数。
 # ⚠ 原来校验紧跟 systemctl restart 之后, 那一刻必然是 performance, 于是这一项
 #   【每次都判 PASS】—— 自己给自己作弊, 重启后才暴露。等一会儿至少能抓到

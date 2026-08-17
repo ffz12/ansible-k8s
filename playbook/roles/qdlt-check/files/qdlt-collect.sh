@@ -76,7 +76,37 @@ kv gov_current   "$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>
 kv boost_no_turbo "$(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || echo NA)"
 kv boost_flag     "$(cat /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || echo NA)"
 kv cstate_disabled "$(cat /sys/module/intel_idle/parameters/max_cstate 2>/dev/null || echo NA)"
+# ⚠ cpu_mhz_now 只作参考, 【不可作睿频判据】——
+#   intel_pstate passive 模式下 /proc/cpuinfo 的 cpu MHz 报的是内核【请求值】
+#   (performance governor 钉在 max), 不是测量值。现网实证: 空载报 3398,
+#   同一时刻 APERF/MPERF 实测只有 3000。判睿频要看下面的 cpu_mhz_busy。
 kv cpu_mhz_now    "$(awk -F': *' '/cpu MHz/{s+=$2; n++} END{if(n)printf "%.0f", s/n}' /proc/cpuinfo 2>/dev/null)"
+# intel_pstate 运行模式: active=BIOS 开了 HWP / passive=内核检测不到 HWP 自动退回
+#   ⚠ passive 不等于睿频有问题 —— 现网 5 台 passive 实测睿频高出基频 21~23%, 正常。
+#   只影响一点: passive 才暴露 ondemand governor, 存在被别的服务改走的风险。
+kv pstate_status  "$(cat /sys/devices/system/cpu/intel_pstate/status 2>/dev/null || echo NA)"
+kv scaling_driver "$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver 2>/dev/null || echo NA)"
+# 基频从 MSR 0xCE bits15:8 读(×100MHz)。
+#   ⚠ 不用 cpufreq/base_frequency —— 那个文件【只在 active 模式存在】, passive 下读不到得 0,
+#     曾因此把 5 台正常机器全误判成"睿频未超基频"。
+CPU_BASE=""
+if [ -c /dev/cpu/0/msr ] || modprobe msr 2>/dev/null; then
+  PI=$(dd if=/dev/cpu/0/msr bs=8 count=1 skip=206 iflag=skip_bytes 2>/dev/null | od -An -tu8 | tr -d ' ')
+  [ -n "$PI" ] && CPU_BASE=$(( (PI >> 8 & 0xFF) * 100 ))
+fi
+kv cpu_base_mhz  "${CPU_BASE:-NA}"
+kv cpu_max_mhz   "$(awk '{printf "%.0f", $1/1000}' /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null)"
+# 温度墙命中计数(开机以来累计)。非 0 = 历史上降过频, 说明散热或功耗有问题 ——
+# 这一项非 0 时, 任何频率实测数据都不可用于判断睿频(污染源是散热, 不是频率控制)。
+kv throttle_core "$(cat /sys/devices/system/cpu/cpu*/thermal_throttle/core_throttle_count 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+kv throttle_pkg  "$(cat /sys/devices/system/cpu/cpu*/thermal_throttle/package_throttle_count 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+# CPU 温度与散热余量(BMC 侧, 比 /sys 的 coretemp 更贴近验收口径)
+kv cpu_temp      "$(ipmitool sdr type temperature 2>/dev/null | awk -F'|' '/CPU[01]_Temp/{gsub(/[^0-9]/,"",$5); printf "%s,", $5}')"
+kv cpu_tjmax     "$(ipmitool sdr type temperature 2>/dev/null | awk -F'|' '/TJMAX/{gsub(/[^0-9]/,"",$5); print $5; exit}')"
+kv fan_rpm       "$(ipmitool sdr type fan 2>/dev/null | awk -F'|' '/RPM/{gsub(/[^0-9]/,"",$5); printf "%s,", $5}')"
+# 会抢 governor / 压频率的竞争服务(平时看不出来, 开机或升温时才动手)
+kv gov_rivals    "$(for s in cpufrequtils ondemand thermald power-profiles-daemon tuned; do
+                      st=$(systemctl is-enabled $s 2>/dev/null | head -1); [ -n "$st" ] && printf "%s=%s " "$s" "$st"; done)"
 
 # ---------------- 内存 ----------------
 kv mem_total_gb  "$(awk '/MemTotal/{printf "%.0f", $2/1024/1024}' /proc/meminfo 2>/dev/null)"
