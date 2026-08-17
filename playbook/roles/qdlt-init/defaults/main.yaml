@@ -142,6 +142,16 @@ qdlt_hostname_policy: inventory
 #   cpu-001 ansible_host=192.168.1.111 qdlt_hostname=cpu-001
 qdlt_hostname: ""
 
+# ---------------- GRUB / 内核固定 ----------------
+# 本角色固定的是【当前正在运行】的内核(ansible_kernel), 所以顺序是:
+#   装新内核 → reboot 到它 → 再跑 --tags grub
+# 检测到"/boot 里有更新的内核但当前没在跑它"时, GRUB 段【整段跳过, 一步都不做】——
+# 防的是这个真实事故: 人工装好新内核、把 GRUB_DEFAULT 改指向新内核, 但还没重启,
+# 这时跑 playbook 会按运行中的旧内核把配置覆盖回去, 还给旧内核加 apt hold。
+# true = 无视上述保护, 强行固定到【当前运行】的内核。
+# 什么时候用: 新内核起不来要回退, 已经引导回旧内核并要把它钉死。
+qdlt_grub_force: false
+
 # ---------------- 软件包 ----------------
 qdlt_packages:
   - ipmitool          # 交付标准明确要求

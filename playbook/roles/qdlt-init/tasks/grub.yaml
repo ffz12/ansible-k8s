@@ -26,103 +26,200 @@
     path: "/boot/vmlinuz-{{ qdlt_kernel }}"
   register: qdlt_vmlinuz
 
-- name: 锁定内核相关包, 防 apt 升级
+# 本角色固定的是【当前正在运行】的内核(ansible_kernel)。所以顺序很重要:
+#   装了新内核 → 必须先 reboot 到新内核 → 再跑 --tags grub
+# ⚠ 不加保护的话会出这个事故: 人工装好新内核、把 GRUB_DEFAULT 改指向新内核,
+#   但还没重启(仍在跑旧内核), 这时跑 playbook → 它按【运行中的旧内核】重写
+#   GRUB_DEFAULT, 把人工刚改好的配置覆盖回旧版本, 还 apt-mark hold 了旧内核包。
+#   所以检测到"/boot 里有更新的内核但当前没在跑它"时【直接跳过 GRUB 写入】,
+#   什么都不动, 只打一条告警说明该怎么做。
+- name: 检查 /boot 里是否存在比当前运行内核更新的版本
   shell: |
     set -o pipefail
-    VER=$(echo "{{ qdlt_kernel }}" | cut -d'-' -f1,2)
-    PKGS=$(dpkg --get-selections | awk '$2=="install"{print $1}' \
-           | grep -E "^linux-(image|headers|modules|modules-extra|tools)-(${VER}|generic)" || true)
-    if [ -n "$PKGS" ]; then
-      apt-mark hold $PKGS
-    else
-      echo "未找到匹配 ${VER} 的内核包"
-    fi
+    ls /boot/vmlinuz-* 2>/dev/null | sed 's|.*/vmlinuz-||' \
+      | sort -V | tail -n1
   args:
     executable: /bin/bash
-  register: qdlt_kernel_hold
-  changed_when: "'set on hold' in qdlt_kernel_hold.stdout"
-
-- name: 输出内核锁定结果
-  debug:
-    var: qdlt_kernel_hold.stdout_lines
-
-# ---------------- GRUB 固定启动项 ----------------
-
-- name: 从 grub.cfg 解析当前内核对应的 menuentry id
-  shell: |
-    set -o pipefail
-    KVER="{{ qdlt_kernel }}"
-    CFG=/boot/grub/grub.cfg
-    # 顶层 menuentry(通常是 Ubuntu 默认项)
-    TOP=$(grep -m1 "^menuentry " "$CFG" | sed -n "s/.*\\\$menuentry_id_option '\([^']*\)'.*/\1/p")
-    # submenu(Advanced options)id
-    SUB=$(grep -m1 "^submenu " "$CFG" | sed -n "s/.*\\\$menuentry_id_option '\([^']*\)'.*/\1/p")
-    # submenu 内匹配当前内核版本、且非 recovery 的条目 id
-    ENT=$(grep "menuentry_id_option" "$CFG" \
-          | grep -- "$KVER" | grep -v recovery \
-          | sed -n "s/.*\\\$menuentry_id_option '\([^']*\)'.*/\1/p" | head -n1)
-    if [ -n "$SUB" ] && [ -n "$ENT" ]; then
-      echo "${SUB}>${ENT}"
-    elif [ -n "$ENT" ]; then
-      echo "$ENT"
-    else
-      echo "$TOP"
-    fi
-  args:
-    executable: /bin/bash
-  register: qdlt_grub_entry
+  register: qdlt_newest_kernel
   changed_when: false
 
-- name: 校验解析到了有效的 GRUB 启动项 id
-  assert:
-    that: qdlt_grub_entry.stdout | trim | length > 0
-    fail_msg: "未能从 /boot/grub/grub.cfg 解析出启动项 id, 中止 GRUB 修改以免机器无法启动"
+# 只有"最新的那个不是当前运行的"才算待重启; 相等或取不到都按正常走。
+- name: 判断是否处于「装了新内核但没重启」状态
+  set_fact:
+    qdlt_kernel_pending: >-
+      {{ (qdlt_newest_kernel.stdout | trim | length > 0)
+         and ((qdlt_newest_kernel.stdout | trim) != qdlt_kernel) }}
 
-- name: 解析结果
+- name: ⚠ 装了更新的内核但还没重启到它 —— 本次【跳过】GRUB 固定, 不覆盖现有配置
   debug:
-    msg: "GRUB_DEFAULT 将设置为: {{ qdlt_grub_entry.stdout | trim }}"
+    msg: |
+      ⚠⚠⚠ 本次【不修改】GRUB, 也【不加】新的 apt hold。⚠⚠⚠
 
-- name: 备份 /etc/default/grub
-  copy:
-    src: /etc/default/grub
-    dest: "/etc/default/grub.qdlt.bak"
-    remote_src: yes
-    force: no          # 只备份一次原始版本, 后续重跑不覆盖
-    mode: '0644'
+      /boot 里最新内核: {{ qdlt_newest_kernel.stdout | trim }}
+      当前正在运行的  : {{ qdlt_kernel }}
 
-- name: 写入 GRUB 固定启动项配置
-  lineinfile:
-    path: /etc/default/grub
-    regexp: "^#?{{ item.k }}="
-    line: "{{ item.k }}={{ item.v }}"
-    state: present
-    backup: yes
-  loop:
-    # 固定到解析出的具体内核条目, 避免装了新内核后默认项漂移
-    - { k: 'GRUB_DEFAULT', v: "\"{{ qdlt_grub_entry.stdout | trim }}\"" }
-    # 关闭 saved 模式(saved 会记住上次选择, 与"固定"冲突)
-    - { k: 'GRUB_SAVEDEFAULT', v: 'false' }
-  notify: update grub
+      本角色固定的是【当前运行中】的内核。现在照跑会把 GRUB_DEFAULT 钉到
+      {{ qdlt_kernel }}(旧的那个), 如果你刚人工把 GRUB 改指向
+      {{ qdlt_newest_kernel.stdout | trim }}, 就会被覆盖回去 —— 所以这里直接跳过。
 
-- name: 立即刷新 grub.cfg
-  command: update-grub
-  register: qdlt_update_grub
-  changed_when: true
+      正确顺序:
+        1) reboot                       # 先起到 {{ qdlt_newest_kernel.stdout | trim }}
+        2) uname -r                     # 确认已经是它
+        3) ansible-playbook playbook/qdlt-init.yaml --tags grub --limit {{ inventory_hostname }}
 
-- name: 校验 grub.cfg 中确实存在该启动项 id
-  shell: |
-    set -o pipefail
-    ID="{{ (qdlt_grub_entry.stdout | trim).split('>') | last }}"
-    grep -q -- "$ID" /boot/grub/grub.cfg && echo ok || echo missing
-  args:
-    executable: /bin/bash
-  register: qdlt_grub_verify
-  changed_when: false
+      确实就是要固定到当前运行的 {{ qdlt_kernel }}(比如新内核起不来要回退):
+        ansible-playbook playbook/qdlt-init.yaml --tags grub -e qdlt_grub_force=true
+  when: qdlt_kernel_pending | bool and not (qdlt_grub_force | bool)
 
-- name: GRUB 固定结果校验
-  assert:
-    that: qdlt_grub_verify.stdout | trim == 'ok'
-    fail_msg: >-
-      ❌ grub.cfg 中找不到设置的启动项 id, 请立即人工检查
-      /etc/default/grub (原始备份在 /etc/default/grub.qdlt.bak) 后再重启!
-    success_msg: "✅ GRUB 已固定到内核 {{ qdlt_kernel }}"
+- name: 后续 GRUB/hold 步骤是否执行
+  set_fact:
+    qdlt_grub_proceed: >-
+      {{ (qdlt_grub_force | bool) or not (qdlt_kernel_pending | bool) }}
+
+# 下面整段(解锁/加锁/改 GRUB)受 qdlt_grub_proceed 控制 —— 待重启状态下【一步都不做】,
+# 保证不会覆盖人工刚改好的 GRUB, 也不会给旧内核加 hold。
+- name: 内核固定与 GRUB 配置
+  when: qdlt_grub_proceed | bool
+  block:
+    # 换过内核后重跑本角色时, 上一版内核的 hold 还在(hold 只加不减)。
+    # 这会留下两个隐患:
+    #   1) apt-mark showhold 里堆着 119 和 185 两套包, 分不清到底固定的是哪个;
+    #   2) 旧内核包被 hold 住 → apt autoremove 清不掉, /boot 会被占满。
+    # 所以先解掉【除当前运行内核外】的所有内核 hold, 再锁当前的。
+    # ⚠ 只解 hold(允许 apt 管理), 不卸载任何内核包 —— 旧内核留着做回滚兜底,
+    #   要删自己 apt autoremove --purge。
+    - name: 解除【其他版本】内核的 apt hold(只解锁, 不卸载)
+      shell: |
+        set -o pipefail
+        KEEP=$(echo "{{ qdlt_kernel }}" | cut -d'-' -f1,2)
+        # linux-generic / linux-image-generic 这类【无版本号】的元包要保留 hold:
+        # 它们才是"别自动升到新内核"的关键, 与具体版本无关。
+        STALE=$(apt-mark showhold 2>/dev/null \
+                | grep -E '^linux-(image|headers|modules|modules-extra|tools)-[0-9]' \
+                | grep -v -- "$KEEP" || true)
+        if [ -n "$STALE" ]; then
+          apt-mark unhold $STALE
+        else
+          echo "无需解锁: 除当前内核 ${KEEP} 外没有其他被 hold 的内核包"
+        fi
+      args:
+        executable: /bin/bash
+      register: qdlt_kernel_unhold
+      changed_when: "'Canceled hold' in qdlt_kernel_unhold.stdout"
+
+    - name: 输出内核解锁结果
+      debug:
+        var: qdlt_kernel_unhold.stdout_lines
+
+    - name: 锁定内核相关包, 防 apt 升级
+      shell: |
+        set -o pipefail
+        VER=$(echo "{{ qdlt_kernel }}" | cut -d'-' -f1,2)
+        PKGS=$(dpkg --get-selections | awk '$2=="install"{print $1}' \
+               | grep -E "^linux-(image|headers|modules|modules-extra|tools)-(${VER}|generic)" || true)
+        if [ -n "$PKGS" ]; then
+          apt-mark hold $PKGS
+        else
+          echo "未找到匹配 ${VER} 的内核包"
+        fi
+      args:
+        executable: /bin/bash
+      register: qdlt_kernel_hold
+      changed_when: "'set on hold' in qdlt_kernel_hold.stdout"
+
+    - name: 输出内核锁定结果
+      debug:
+        var: qdlt_kernel_hold.stdout_lines
+
+    # ---------------- GRUB 固定启动项 ----------------
+
+    - name: 从 grub.cfg 解析当前内核对应的 menuentry id
+      shell: |
+        set -o pipefail
+        KVER="{{ qdlt_kernel }}"
+        CFG=/boot/grub/grub.cfg
+        # 顶层 menuentry(通常是 Ubuntu 默认项)
+        TOP=$(grep -m1 "^menuentry " "$CFG" | sed -n "s/.*\\\$menuentry_id_option '\([^']*\)'.*/\1/p")
+        # submenu(Advanced options)id
+        SUB=$(grep -m1 "^submenu " "$CFG" | sed -n "s/.*\\\$menuentry_id_option '\([^']*\)'.*/\1/p")
+        # submenu 内匹配当前内核版本、且非 recovery 的条目 id
+        ENT=$(grep "menuentry_id_option" "$CFG" \
+              | grep -- "$KVER" | grep -v recovery \
+              | sed -n "s/.*\\\$menuentry_id_option '\([^']*\)'.*/\1/p" | head -n1)
+        if [ -n "$SUB" ] && [ -n "$ENT" ]; then
+          echo "${SUB}>${ENT}"
+        elif [ -n "$ENT" ]; then
+          echo "$ENT"
+        else
+          echo "$TOP"
+        fi
+      args:
+        executable: /bin/bash
+      register: qdlt_grub_entry
+      changed_when: false
+
+    - name: 校验解析到了有效的 GRUB 启动项 id
+      assert:
+        that: qdlt_grub_entry.stdout | trim | length > 0
+        fail_msg: "未能从 /boot/grub/grub.cfg 解析出启动项 id, 中止 GRUB 修改以免机器无法启动"
+
+    # 解析出的 id 里必须含当前内核版本号, 否则说明 grub.cfg 里没有该内核的条目,
+    # 上面的脚本回落到了 TOP(顶层第一个 menuentry) —— 那可能是【别的内核】,
+    # 直接写进 GRUB_DEFAULT 等于把启动项钉到一个没预期的版本上。
+    - name: 校验解析到的启动项确实指向当前内核
+      assert:
+        that: qdlt_grub_entry.stdout is search(qdlt_kernel)
+        fail_msg: >-
+          解析出的启动项 id "{{ qdlt_grub_entry.stdout | trim }}" 里不含当前内核
+          版本 {{ qdlt_kernel }} —— grub.cfg 里可能没有该内核的条目(脚本回落到了
+          顶层第一项)。中止以免把 GRUB 钉到别的内核上。
+          先跑 update-grub 让 grub.cfg 重新生成, 再重试本步骤。
+
+    - name: 解析结果
+      debug:
+        msg: "GRUB_DEFAULT 将设置为: {{ qdlt_grub_entry.stdout | trim }}"
+
+    - name: 备份 /etc/default/grub
+      copy:
+        src: /etc/default/grub
+        dest: "/etc/default/grub.qdlt.bak"
+        remote_src: yes
+        force: no          # 只备份一次原始版本, 后续重跑不覆盖
+        mode: '0644'
+
+    - name: 写入 GRUB 固定启动项配置
+      lineinfile:
+        path: /etc/default/grub
+        regexp: "^#?{{ item.k }}="
+        line: "{{ item.k }}={{ item.v }}"
+        state: present
+        backup: yes
+      loop:
+        # 固定到解析出的具体内核条目, 避免装了新内核后默认项漂移
+        - { k: 'GRUB_DEFAULT', v: "\"{{ qdlt_grub_entry.stdout | trim }}\"" }
+        # 关闭 saved 模式(saved 会记住上次选择, 与"固定"冲突)
+        - { k: 'GRUB_SAVEDEFAULT', v: 'false' }
+      notify: update grub
+
+    - name: 立即刷新 grub.cfg
+      command: update-grub
+      register: qdlt_update_grub
+      changed_when: true
+
+    - name: 校验 grub.cfg 中确实存在该启动项 id
+      shell: |
+        set -o pipefail
+        ID="{{ (qdlt_grub_entry.stdout | trim).split('>') | last }}"
+        grep -q -- "$ID" /boot/grub/grub.cfg && echo ok || echo missing
+      args:
+        executable: /bin/bash
+      register: qdlt_grub_verify
+      changed_when: false
+
+    - name: GRUB 固定结果校验
+      assert:
+        that: qdlt_grub_verify.stdout | trim == 'ok'
+        fail_msg: >-
+          ❌ grub.cfg 中找不到设置的启动项 id, 请立即人工检查
+          /etc/default/grub (原始备份在 /etc/default/grub.qdlt.bak) 后再重启!
+        success_msg: "✅ GRUB 已固定到内核 {{ qdlt_kernel }}"
