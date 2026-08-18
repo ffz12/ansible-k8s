@@ -3,8 +3,14 @@
 #  user.yaml —— 交付标准: 系统登录账户使用统一账密, 用户名指定为 wwxq,
 #               且系统上不存在其他一般用户
 #
-#  ⚠ 密码从控制机环境变量 QDLT_USER_PASSWORD 取(见 defaults/main.yaml),
-#    禁止把明文写进 git。
+#  ⚠ 密码来源有两条路, 二选一(见 defaults/main.yaml):
+#    1) 推荐: inventory/group_vars/all/env.yaml 里写 qdlt_user_password ——
+#       和 harbor_admin_password / bootstrap_ssh_pass 放在一处, 不用每次 export。
+#       该文件已在 .gitignore 里, 不入库。
+#    2) 控制机环境变量 QDLT_USER_PASSWORD(角色默认值就是取它) —— 不想落文件时用。
+#    ⚠ 别两处都写: env.yaml 是 group_vars, 优先级【高于】角色默认值, 两处都有时
+#      环境变量那条永远不生效, 改了环境变量却不见效会查很久。
+#    禁止把明文写进【入库的】文件。
 #  ⚠ 多余用户默认【只报告不删除】, 确认后再置 qdlt_remove_extra_users=true。
 #  ⚠ root 密码默认【也设成同一个密码】(qdlt_do_root_password=true) —— 交付标准
 #    要求"统一账密", root 也算登录账户。改 root 密码不可逆, 但只要不是靠 root
@@ -18,9 +24,14 @@
       - qdlt_user_password is defined
       - qdlt_user_password | length > 0
     fail_msg: >-
-      未提供统一登录密码。请在【控制机】上先导出环境变量:
+      未提供统一登录密码。二选一:
+      (推荐)在 inventory/group_vars/all/env.yaml 里加一行
+        qdlt_user_password: '密码'
+      —— 该文件已 gitignore 不入库, 和 harbor_admin_password 放在一处, 之后直接跑不用 export;
+      (或)在【控制机】导出环境变量
         export QDLT_USER_PASSWORD='密码'
-      然后重新执行(不要加 sudo -- sudo 默认会清掉环境变量; 需要时用 sudo -E)。
+      —— 不要加 sudo(sudo 默认清环境变量; 需要时用 sudo -E)。
+      ⚠ 两处【只写一处】: env.yaml 优先级高于角色默认值, 都写时环境变量不生效。
       临时也可以 -e "qdlt_user_password=xxxx", 但会留在 shell history 里。
       注意: 写在 inventory/hosts 里必须放在 [xxx:vars] 段内并用 = 号,
       裸写一行会被 ansible 当成主机名跳过(WARNING: not a valid group definition), 不生效。

@@ -77,13 +77,24 @@ qdlt_fail_on_unsynced: true
 
 # ---------------- 统一登录账号 ----------------
 qdlt_user: wwxq
-# 密码默认从【控制机环境变量】取, 不落任何文件 —— 这样就不需要 secrets 文件,
-# 也不存在"忘了 gitignore 就把密码提上去"的风险。
-#   export QDLT_USER_PASSWORD='明文密码'
-#   ansible-playbook playbook/qdlt-init.yaml
-# 环境变量没设时也可以 -e 覆盖(会进 shell history, 只适合临时):
+# 密码有两条来源, 二选一:
+#
+#  1) 【推荐】写在 inventory/group_vars/all/env.yaml 里:
+#       qdlt_user_password: '实际密码'
+#     和该文件里已有的 harbor_admin_password / bootstrap_ssh_pass 放在一处 ——
+#     一个仓库只有一套秘密存放方式, 不用记着每次开 shell 都要 export。
+#     env.yaml 已在 .gitignore 里(init.sh 从 tmp/env.yaml.example 生成), 不会入库。
+#     配好之后直接跑: ansible-playbook playbook/qdlt-init.yaml
+#
+#  2) 控制机环境变量(本变量的默认值就是取它) —— 不想让密码落到任何文件时用:
+#       export QDLT_USER_PASSWORD='实际密码'
+#     ⚠ 别加 sudo, sudo 默认会清掉环境变量(需要时用 sudo -E)。
+#
+# ⚠ 两处【只写一处】。env.yaml 属 group_vars, 优先级【高于】本文件的角色默认值,
+#   两处都写时环境变量那条【永远不生效】—— 改了环境变量却不见效会查很久。
+# 两者都没有 → user.yaml 的前置 assert 直接中止(不会拿空密码去改账号)。
+# 也可以 -e 覆盖(会进 shell history, 只适合临时):
 #   ansible-playbook playbook/qdlt-init.yaml -e "qdlt_user_password=xxx"
-# 两者都没有 → user.yaml 的前置 assert 直接中止。
 qdlt_user_password: "{{ lookup('env', 'QDLT_USER_PASSWORD') }}"
 qdlt_user_shell: /bin/bash
 qdlt_user_sudo_nopasswd: false   # true=sudo 免密; 交付标准未要求, 默认保持需要密码
