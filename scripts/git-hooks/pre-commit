@@ -69,6 +69,17 @@ is_placeholder() {
     local v="$1"
     [ -z "$v" ] && return 0
     printf '%s' "$v" | grep -qE '^('"$KNOWN_DEFAULTS"')$' && return 0
+    # 值里含【非 ASCII 可打印字符】(中文/全角标点等) → 占位符。
+    # ⚠ 这一条替代了原来逐词枚举中文的做法(在此填写|请填|改成|示例|...)——
+    #   枚举必漏: 写 '密码' / '统一登录密码' / '实际密码' 都不在词表里, 全被误拦。
+    #   通则是: Linux 登录密码不可能是中文, 所以含中文即占位符。
+    #   下面那条 grep -E 的中文词表保留着做兜底(值里中英混排时仍能命中)。
+    # ⚠ 用 [^ -~] 而不是 grep -P '[\x{4e00}-\x{9fff}]' —— 本仓库 Windows/Git Bash
+    #   环境的 grep 报 "character value in \x{} is too large", -P 的码点区间用不了;
+    #   [^ -~] 只依赖 ASCII 区间, 不依赖 PCRE 也不依赖 locale。
+    #   实测: 密码/统一登录密码/实际密码/另一个密码 → 放过;
+    #        Aa1@bcdefg / P@ssw0rd! 这类纯 ASCII → 照旧按真实密码拦。
+    printf '%s' "$v" | LC_ALL=C grep -q '[^ -~]' && return 0
     printf '%s' "$v" | grep -qE '^(""|'"''"'|xxx+|XXX+|<.*>|\{\{.*\}\}|.*(在此填写|请填|填写|改成|示例|明文密码|你的|自己的).*)$' && return 0
     # {{ ... }} 里可能跨行(YAML 折叠标量), 只要值整体是一个 Jinja 表达式就算占位符
     printf '%s' "$v" | grep -qE '^\{\{.*\}\}$' && return 0
