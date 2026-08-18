@@ -79,7 +79,10 @@ kv cstate_disabled "$(cat /sys/module/intel_idle/parameters/max_cstate 2>/dev/nu
 # ⚠ cpu_mhz_now 只作参考, 【不可作睿频判据】——
 #   intel_pstate passive 模式下 /proc/cpuinfo 的 cpu MHz 报的是内核【请求值】
 #   (performance governor 钉在 max), 不是测量值。现网实证: 空载报 3398,
-#   同一时刻 APERF/MPERF 实测只有 3000。判睿频要看下面的 cpu_mhz_busy。
+#   同一时刻 APERF/MPERF 实测只有 3000。
+#   ⚠ 本脚本【只读, 不压测】, 所以【不采满载实测频率】—— 那个必须人工跑一次压测,
+#     读 APERF/MPERF(MSR 0xE8/0xE7)或 turbostat --Summary 的 Bzy_MHz,
+#     命令见交付文档「睿频实测」一节。这里只把基频/温度墙/温度摆出来供比对。
 kv cpu_mhz_now    "$(awk -F': *' '/cpu MHz/{s+=$2; n++} END{if(n)printf "%.0f", s/n}' /proc/cpuinfo 2>/dev/null)"
 # intel_pstate 运行模式: active=BIOS 开了 HWP / passive=内核检测不到 HWP 自动退回
 #   ⚠ passive 不等于睿频有问题 —— 现网 5 台 passive 实测睿频高出基频 21~23%, 正常。
