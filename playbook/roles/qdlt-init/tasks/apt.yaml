@@ -35,9 +35,11 @@
   failed_when: false
 
 - name: 校验 apt 自动更新已关闭
+  # ⚠ 不能数 list-timers --all 的行数 —— masked 之后依然会被列出来(NEXT/LEFT
+  #   全是 n/a), 永远数出 2。改成看 list-unit-files 的 STATE 列是否 masked。
   shell: |
     set -o pipefail
-    systemctl list-timers --all 2>/dev/null | grep -c 'apt-daily' || true
+    systemctl list-unit-files --type=timer 2>/dev/null | grep 'apt-daily' | grep -vc 'masked' || true
   args:
     executable: /bin/bash
   register: qdlt_apt_timers

@@ -55,7 +55,11 @@ if [ -x /usr/bin/cloud-init ]; then
 else
   kv cloudinit "not-installed"
 fi
-kvn apt_timers   "$(systemctl list-timers --all 2>/dev/null | grep -c 'apt-daily')"
+# ⚠ 不能用 `list-timers --all | grep -c apt-daily` 数 —— masked 之后这两个
+#   timer 依然会被列出来(NEXT/LEFT 全是 n/a), 数出来永远是 2, 跟真实是否已
+#   关掉无关。2026-08 青岛现网踩过: mask 明明成功了(is-enabled 显示 masked),
+#   体检却一直判 FAIL。改成看 list-unit-files 的 STATE 列, 数"没被 masked"的。
+kvn apt_timers   "$(systemctl list-unit-files --type=timer 2>/dev/null | grep 'apt-daily' | grep -vc 'masked')"
 kv apt_periodic  "$(grep -hoE '"[01]"' /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null | tr -d '"' | tr '\n' ' ')"
 # ⚠ is-enabled 在 disabled 时也返回非 0 码, 直接 `|| echo absent` 会两条都输出
 #   (变成 "disabled absent"), 故只在完全无输出时才补 absent。
