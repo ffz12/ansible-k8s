@@ -29,6 +29,18 @@
 #  逐项判定 —— 每条 {item, expect, actual, verdict}
 #  verdict: PASS / FAIL / WARN / SKIP
 # ============================================================================
+#
+# ⚠「睿频实测 / intel_pstate 模式」项(下面判定列表里)是「TurboBoost 启用」的
+#   实证补充 —— 光看 no_turbo=0 只能证明"睿频没被禁用", 证明不了"睿频真能跑到
+#   boost 频率"。2026-08 青岛现网: 5 台 intel_pstate passive, 一度被判成"HWP
+#   关闭需进 BIOS", 实测全核满载 2788~2832 MHz(基频 2300, 高出 21~23%) ——
+#   睿频完全正常, 停机进 BIOS 是白跑。所以判据必须是【实测频率】, 不是模式或
+#   开关。本体检为只读, 不会自己压测 —— 满载数据要人工跑一次(命令见该项
+#   actual 里的提示), 所以该项默认 INFO, 只把判据摆出来, 不替人下结论。
+#   ⚠ 这段注释不能挪进下面 qdlt_results 的折叠块(>-)里 —— 那整块是一个连续
+#   的 Jinja {{ ... }} 表达式, 内部不能再嵌套 {# #} 注释(Jinja 词法分析器在
+#   表达式状态下不识别 {# 是注释起始, 会把 # 当非法字符抛 TemplateSyntaxError,
+#   2026-08 青岛现网踩过一次)。任何要写给这段判定逻辑看的说明都只能放在这里。
 
 - name: 生成判定结果
   set_fact:
@@ -136,13 +148,6 @@
                      else ('FAIL' if ((f.boost_no_turbo | default('NA')) != 'NA' or (f.boost_flag | default('NA')) != 'NA')
                            else 'WARN'))},
 
-        {# ⚠ 这一项是「TurboBoost 启用」的实证补充 —— 光看 no_turbo=0 只能证明
-           "睿频没被禁用", 证明不了"睿频真能跑到 boost 频率"。
-           2026-08 青岛现网: 5 台 intel_pstate passive, 一度被判成"HWP 关闭需进 BIOS",
-           实测全核满载 2788~2832 MHz(基频 2300, 高出 21~23%) —— 睿频完全正常,
-           停机进 BIOS 是白跑。所以判据必须是【实测频率】, 不是模式或开关。
-           本体检为只读, 不会自己压测 —— 满载数据要人工跑一次(命令见 actual 里的提示),
-           所以这一项默认 INFO, 只把判据摆出来, 不替人下结论。 #}
         {'cat':'BIOS','item':'睿频实测 / intel_pstate 模式','expect':'全核满载实测频率高出基频 10% 以上',
          'actual': 'pstate=' ~ (f.pstate_status | default('NA')) ~ ' driver=' ~ (f.scaling_driver | default('NA'))
                    ~ ' | 温度墙命中: core=' ~ (f.throttle_core | default('?')) ~ ' pkg=' ~ (f.throttle_pkg | default('?'))
