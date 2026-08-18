@@ -1,8 +1,7 @@
 #!/bin/bash
 
-# ⚠ 不用 ANSI 颜色 —— 原来定义了 RED/GREEN/NC, 靠 echo -e 输出, 但漏 -e 的那一行
-#   会打出字面的转义码; 而且 tee/重定向到文件、以及不认转义的终端里全是乱码。
-#   靠 [成功]/[跳过]/[待办]/[警告] 这些方括号标签区分就够了, 不依赖终端能力。
+# ⚠ 不用 ANSI 颜色 —— tee/重定向到文件、以及不认转义的终端里全是乱码, 漏写 echo -e
+#   的那行还会打出字面转义码。靠 [成功]/[跳过]/[待办]/[警告] 方括号标签区分就够了。
 
 echo "开始初始化项目配置文件..."
 
@@ -26,31 +25,14 @@ for pair in "${files[@]}"; do
 
     if [ -f "$DST" ]; then
         echo "[跳过] $DST 已经存在，不会覆盖。"
-        # ⚠ 「已存在就跳过」是对的(不能覆盖别人填好的配置), 但副作用是:
-        #   模板【后来新增】的变量, 老环境的 env.yaml 里永远不会有。
-        #   qdlt_user_password 就是这么一个 —— 它是后加的, 老 env.yaml 里没有,
-        #   人照着提示去 vim 会找不到那一行, 以为哪里出错了。这里明确指出来。
-        if [ "$DST" = "inventory/group_vars/all/env.yaml" ] \
-           && ! grep -q 'qdlt_user_password' "$DST" 2>/dev/null \
-           && grep -q 'qdlt_user_password' "$SRC" 2>/dev/null; then
-            echo "  ⚠ 这份 env.yaml 是旧版生成的, 里面【没有】qdlt_user_password 那一段。"
-            echo "    跑 qdlt-init 前手工加一行(和已有的 harbor_admin_password 放一起即可):"
-            echo "      qdlt_user_password: '统一登录密码'"
-            echo "    完整说明见 tmp/env.yaml.example 末尾的「统一登录密码」一节。"
-        fi
+        # ⚠ 「已存在就跳过」是对的(不能覆盖别人填好的配置), 但副作用是: 模板
+        #   【后来新增】的变量, 老环境的这份文件里永远不会有。差异自己比一下:
+        #     diff inventory/group_vars/all/env.yaml tmp/env.yaml.example
     else
         cp "$SRC" "$DST"
         echo "[成功] 已生成 $DST"
     fi
 done
-
-# 体检报告落地目录(qdlt-check 生成 md/csv), 已在 .gitignore 中排除
-if [ ! -d reports ]; then
-    mkdir -p reports
-    echo "[成功] 已创建 reports/"
-else
-    echo "[跳过] reports/ 已经存在。"
-fi
 
 # ---------------------------------------------------------------------------
 #  安装 pre-commit 钩子: 拦住明文密码 / 私钥进库
@@ -79,25 +61,9 @@ if [ -d playbook/roles/qdlt-init ]; then
     echo "  vim inventory/hosts                        # 填 [qdlt_cpu]/[qdlt_gpu]; GPU 必须逐台填 qdlt_su"
     echo "  vim inventory/group_vars/all/env.yaml      # 取消注释填 qdlt_user_password(统一账号 wwxq 的密码)"
     echo
-    echo "  密码就写在 env.yaml 里, 和已有的 harbor_admin_password / bootstrap_ssh_pass 放一处 ——"
-    echo "  该文件已 gitignore 不入库, 配好之后直接跑, 不用每次 export:"
+    echo "  该文件已 gitignore 不入库, 和已有的 harbor_admin_password 放一处, 配好直接跑:"
     echo "    ansible-playbook playbook/qdlt-init.yaml"
-    echo
-    echo "  不想让密码落到任何文件时, 也可以改走环境变量(角色默认值就是取它):"
-    echo "    export QDLT_USER_PASSWORD='密码'"
-    echo "    ⚠ 别用 sudo ansible-playbook —— sudo 默认清环境变量, 密码会取不到。"
-    echo "      playbook 自带 become: yes, 普通用户直接跑即可; 非要 sudo 就用 sudo -E。"
-    echo "  ⚠ 两处只写一处 —— env.yaml 优先级高于角色默认值, 都写时环境变量【永远不生效】。"
-    # 历史遗留: 旧版 init.sh 生成过 secrets 文件, 里面是明文密码, 提醒删掉
-    if [ -f inventory/qdlt-secrets.yml ]; then
-        echo
-        echo "[清理] 发现旧版遗留的 inventory/qdlt-secrets.yml(明文密码)。"
-        echo "  现在密码写在 env.yaml 里(或走环境变量), 该文件已不再使用, 建议删除:"
-        echo "    rm inventory/qdlt-secrets.yml"
-        echo "  ⚠ 它在 inventory/ 目录下, ansible 会把它当 YAML inventory 一并解析(留着有副作用)。"
-        if git -C . ls-files --error-unmatch inventory/qdlt-secrets.yml >/dev/null 2>&1; then
-            echo "  [严重] 且它已被 git 跟踪! 明文密码进库了。"
-            echo "    git rm --cached inventory/qdlt-secrets.yml && git commit"
-        fi
-    fi
+    echo "  ⚠ 也可以走 export QDLT_USER_PASSWORD='密码', 但两处【只写一处】——"
+    echo "    env.yaml 优先级高于角色默认值, 都写时环境变量永远不生效。"
+    echo "    走环境变量时别用 sudo(会清环境变量), playbook 自带 become: yes。"
 fi

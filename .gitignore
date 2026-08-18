@@ -17,8 +17,10 @@ playbook/roles/certs/files/etcd-*/
 inventory/group_vars/all/env.yaml
 
 # 青岛联通交付: 体检报告产物
-# 注: 密码走控制机环境变量 QDLT_USER_PASSWORD, 不再有 secrets 文件。
-#     下面这行是给旧版遗留文件兜底的(现在已不生成), 别删。
 # ⚠ .gitignore 拦不住 git add -f, 兜底靠 scripts/git-hooks/pre-commit(init.sh 自动装)
-inventory/qdlt-secrets.yml
 reports/
+
+# 旧版 init.sh 生成过这个明文密码文件, 现在密码写在 env.yaml 里, 已不再生成。
+# 2026-08 两个仓库本地残留的那份已删掉。这行【别删】—— 纯兜底: 万一从旧备份或
+# 别人的旧工作副本里又冒出来一份, 至少不会被 git add . 带进库。
+inventory/qdlt-secrets.yml
