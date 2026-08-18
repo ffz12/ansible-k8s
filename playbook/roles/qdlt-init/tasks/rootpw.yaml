@@ -1,0 +1,71 @@
+---
+# ============================================================================
+#  rootpw.yaml —— 把 root 密码也设成统一登录密码
+#
+#  交付标准要求「系统登录账户使用统一账密」, root 也算登录账户, 故默认一并统一
+#  (qdlt_do_root_password=true)。密码取 qdlt_root_password, 默认回落到
+#  qdlt_user_password —— 配好统一密码之后不用再多设任何东西。
+#
+#  ⚠ 从 user.yaml 里【拆出来单独一个文件 + 单独 tag】的原因:
+#    原来这几步混在 user.yaml 里, 想单独改一下 wwxq 的 sudo 免密(--tags user)
+#    就会连带把 root 密码重设一遍, 只能靠每次记得加 -e qdlt_do_root_password=false,
+#    忘一次就动了 root 凭据、而且不可逆。拆开后:
+#      --tags user      只碰 wwxq / sudoers / 多余用户, 【完全不碰 root】
+#      --tags rootpw    只设 root 密码
+#      --tags qdlt      两者都跑(与拆分前的完整行为一致)
+#
+#  ⚠ 改 root 密码【不可逆】(旧密码找不回)。要关掉: -e qdlt_do_root_password=false
+#    什么时候该关: 这台是靠 root【密码】(bootstrap_ssh_pass)连进来的 —— 改完
+#    ansible 自己就连不上了。root 免密/密钥登录不受影响, 可放心改。
+# ============================================================================
+
+- name: 【前置】必须提供 root 密码
+  assert:
+    that:
+      - qdlt_root_password is defined
+      - qdlt_root_password | trim | length > 0
+    fail_msg: >-
+      未取到 root 密码。它默认回落到 qdlt_user_password, 所以通常是统一登录密码
+      没配 —— 配法见 user.yaml 开头或 defaults/main.yaml。
+      要给 root 单独设另一个密码: export QDLT_ROOT_PASSWORD='另一个密码'。
+      不想动 root 密码: -e qdlt_do_root_password=false
+
+# 先查 sshd 策略再设密码 —— 下面的结果提示要引用它。
+#   ⚠ 这一步原来排在结果提示【后面】, 而提示里引用的又是个根本不存在的变量名
+#     (qdlt_sshd_root, register 的其实是 qdlt_sshd_check), 所以那句 sshd 状态
+#     一直打印"未检查", 白写。
+- name: 检查 sshd 是否允许 root 密码登录(只读, 不修改)
+  shell: |
+    set -o pipefail
+    printf 'PermitRootLogin=%s PasswordAuthentication=%s' \
+      "$(sshd -T 2>/dev/null | awk '/^permitrootlogin/{print $2}' | head -1)" \
+      "$(sshd -T 2>/dev/null | awk '/^passwordauthentication/{print $2}' | head -1)"
+  args:
+    executable: /bin/bash
+  register: qdlt_sshd_check
+  changed_when: false
+  failed_when: false
+
+- name: 设置 root 密码
+  user:
+    name: root
+    password: "{{ qdlt_root_password | password_hash('sha512', 65534 | random(seed=inventory_hostname ~ 'root') | string) }}"
+    update_password: always
+  # password_hash 每次生成不同 salt 会导致永远 changed;
+  # 用 inventory_hostname 派生固定 seed 保证幂等(与 wwxq 那步同一套做法)。
+  no_log: true
+
+- name: 解除 root 密码过期限制
+  command: "chage -M 99999 -m 0 -I -1 -E -1 root"
+  changed_when: false
+  failed_when: false
+
+- name: root 密码结果
+  debug:
+    msg: >-
+      root 密码已设置为统一登录密码。
+      当前 sshd 实际生效配置: {{ qdlt_sshd_check.stdout | default('未取到') }}
+      {{ '⚠ permitrootlogin 不是 yes, root 无法用【密码】ssh 登录(免密/密钥不受影响)。'
+         ~ '本任务不改 sshd 配置, 如需放开请人工改 sshd_config。'
+         if (qdlt_sshd_check.stdout | default('') is search('PermitRootLogin=(no|prohibit-password|forced-commands-only)'))
+         else '' }}

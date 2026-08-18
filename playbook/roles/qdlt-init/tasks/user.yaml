@@ -12,10 +12,9 @@
 #      环境变量那条永远不生效, 改了环境变量却不见效会查很久。
 #    禁止把明文写进【入库的】文件。
 #  ⚠ 多余用户默认【只报告不删除】, 确认后再置 qdlt_remove_extra_users=true。
-#  ⚠ root 密码默认【也设成同一个密码】(qdlt_do_root_password=true) —— 交付标准
-#    要求"统一账密", root 也算登录账户。改 root 密码不可逆, 但只要不是靠 root
-#    【密码】连进来的(密钥/免密不受影响), 就没有把自己关在门外的风险。
-#    要保留机器原有 root 密码: -e qdlt_do_root_password=false
+#  ⚠ root 密码【不在本文件】—— 已拆到 rootpw.yaml(tag: rootpw)。
+#    这样 --tags user 只碰 wwxq / sudoers / 多余用户, 不会顺带把 root 密码
+#    重设一遍(那一步不可逆, 原来混在这里只能靠每次记得加 -e 关掉, 忘一次就动了)。
 # ============================================================================
 
 - name: 【前置】必须提供 qdlt_user_password
@@ -79,58 +78,6 @@
       | shell={{ qdlt_user_shell }}
       | sudo={{ 'NOPASSWD' if qdlt_user_sudo_nopasswd | bool else '需密码' }}
       | 密码已设置(与统一登录密码一致)
-
-# ---------------- root 密码 ----------------
-# 交付标准要求「系统登录账户使用统一账密」, root 也算登录账户, 故默认一并统一
-# (qdlt_do_root_password=true)。密码取 qdlt_root_password, 它默认回落到
-# qdlt_user_password —— 所以 export QDLT_USER_PASSWORD 之后不用再多设任何东西。
-# ⚠ 改 root 密码不可逆(旧密码找不回)。要关掉: -e qdlt_do_root_password=false
-#   什么时候该关: 这台是靠 root【密码】(bootstrap_ssh_pass)连进来的 —— 改完
-#   ansible 自己就连不上了。root 免密/密钥登录不受影响, 可放心改。
-- name: 设置 root 密码
-  user:
-    name: root
-    password: "{{ qdlt_root_password | password_hash('sha512', 65534 | random(seed=inventory_hostname ~ 'root') | string) }}"
-    update_password: always
-  no_log: true
-  when: qdlt_do_root_password | bool
-
-- name: 解除 root 密码过期限制
-  command: "chage -M 99999 -m 0 -I -1 -E -1 root"
-  changed_when: false
-  failed_when: false
-  when: qdlt_do_root_password | bool
-
-- name: root 密码结果
-  debug:
-    msg: >-
-      root 密码已设置为统一登录密码。
-      ⚠ 若 sshd 未放开 root 密码登录(PermitRootLogin / PasswordAuthentication),
-      root 仍无法用密码 ssh 进来 —— 本任务【不改 sshd 配置】, 需要人工确认。
-      当前 sshd: {{ qdlt_sshd_root | default('未检查') }}
-  when: qdlt_do_root_password | bool
-
-- name: 检查 sshd 是否允许 root 密码登录(只读, 不修改)
-  shell: |
-    set -o pipefail
-    printf 'PermitRootLogin=%s PasswordAuthentication=%s' \
-      "$(sshd -T 2>/dev/null | awk '/^permitrootlogin/{print $2}' | head -1)" \
-      "$(sshd -T 2>/dev/null | awk '/^passwordauthentication/{print $2}' | head -1)"
-  args:
-    executable: /bin/bash
-  register: qdlt_sshd_check
-  changed_when: false
-  failed_when: false
-  when: qdlt_do_root_password | bool
-
-- name: sshd root 登录策略(仅提示, 不修改)
-  debug:
-    msg: >-
-      sshd 实际生效配置: {{ qdlt_sshd_check.stdout | default('未取到') }}
-      {{ '—— permitrootlogin 不是 yes, root 无法用密码 ssh 登录, 如需放开请人工改 sshd_config'
-         if (qdlt_sshd_check.stdout | default('') is search('PermitRootLogin=(no|prohibit-password|forced-commands-only)'))
-         else '' }}
-  when: qdlt_do_root_password | bool
 
 # ---------------- 多余一般用户盘点 ----------------
 

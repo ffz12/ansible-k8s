@@ -38,6 +38,13 @@
   when: qdlt_do_user | bool
   tags: [qdlt, user]
 
+# root 密码单独一个 tag —— 它不可逆, 不该被 --tags user 顺带触发。
+- import_tasks: rootpw.yaml
+  when:
+    - qdlt_do_user | bool
+    - qdlt_do_root_password | bool
+  tags: [qdlt, rootpw]
+
 - import_tasks: cpu.yaml
   when: qdlt_do_cpu | bool
   tags: [qdlt, cpu]
