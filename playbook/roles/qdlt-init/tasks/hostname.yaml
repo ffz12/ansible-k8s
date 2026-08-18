@@ -108,4 +108,16 @@
       {% for h in (groups['qdlt'] | default([])) | sort %}
       {{ hostvars[h].qdlt_mgmt_ip | default(hostvars[h].ansible_host) | default('') }} {{ hostvars[h].qdlt_target_hostname | default(h) }}
       {% endfor %}
-  when: (groups['qdlt'] | default([])) | length > 0
+  when:
+    - qdlt_write_cluster_hosts | bool
+    - (groups['qdlt'] | default([])) | length > 0
+
+# 关掉本项(qdlt_write_cluster_hosts=false)时, 把以前写进去的块清掉 —— 否则机器上会
+# 留着一份再没人维护的映射, 之后改了 IP 反而被这份旧记录带偏(比 DNS 优先)。
+- name: 移除历史写入的集群 hosts 解析块
+  blockinfile:
+    path: /etc/hosts
+    marker: "# Ansible qdlt hosts {mark}"
+    state: absent
+    backup: yes
+  when: not (qdlt_write_cluster_hosts | bool)

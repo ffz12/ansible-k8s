@@ -103,8 +103,11 @@ qdlt_user_sudo_nopasswd: false   # true=sudo 免密; 交付标准未要求, 默�
 qdlt_remove_extra_users: false
 qdlt_protected_users:            # 永不删除的账号(除 uid<1000 的系统账号外)
   - "{{ qdlt_user }}"
-  - ubuntu
   - root
+  # ⚠ 曾经把 ubuntu 也放这里保护, 是早期 root 免密还没配好时留的退路(镜像默认账号,
+  #   丢了它就可能连不上机器)。2026-08 现网 root 免密已全部配好、wwxq 也已确认可用,
+  #   ubuntu 不再需要保留 —— 交付标准要求"系统上不存在其他一般用户", 保护名单里留着
+  #   它反而会让 qdlt_remove_extra_users=true 之后 ubuntu 依然清不掉, 体检永远 WARN。
 
 # ---------------- root 密码 ----------------
 # 是否把 root 密码也设成统一登录密码。默认 true ——
@@ -152,6 +155,10 @@ qdlt_hostname_policy: inventory
 # policy=explicit 时的目标主机名, 在 inventory 里逐台写:
 #   cpu-001 ansible_host=192.168.1.111 qdlt_hostname=cpu-001
 qdlt_hostname: ""
+# 是否把 qdlt 组内全部节点的 IP-主机名 映射写进每台机器的 /etc/hosts(集群内互相
+# 按主机名找得到彼此)。交付标准没有这项要求, 默认开着只是图方便; 不需要就在
+# env.yaml 里覆盖成 false —— 不影响上面 hostname 本身的设置, 只影响 /etc/hosts。
+qdlt_write_cluster_hosts: true
 
 # ---------------- GRUB / 内核固定 ----------------
 # 本角色固定的是【当前正在运行】的内核, 所以顺序是:
