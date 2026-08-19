@@ -35,8 +35,8 @@ qdlt_expect_mounts: []
 # 例: [ /gpfs, /hgpfs ]
 
 # 节点角色 gpu / cpu。inventory 里显式写了 qdlt_node_role 就用那个(group_vars 优先),
-# 没写则按是否在 qdlt_gpu 组内自动判定。与 qdlt-init/defaults 保持同一套逻辑。
-qdlt_node_role: "{{ 'gpu' if inventory_hostname in (groups['qdlt_gpu'] | default([])) else 'cpu' }}"
+# 没写则按是否在 [gpu] 组内自动判定。与 qdlt-init/defaults 保持同一套逻辑。
+qdlt_node_role: "{{ 'gpu' if inventory_hostname in (groups['gpu'] | default([])) else 'cpu' }}"
 
 # GPU 相关项是否检查(CPU 管理节点自动跳过)
 qdlt_check_gpu: "{{ qdlt_node_role | default('cpu') == 'gpu' }}"

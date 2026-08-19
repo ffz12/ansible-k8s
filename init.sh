@@ -6,7 +6,7 @@
 echo "开始初始化项目配置文件..."
 
 # 定义需要初始化的文件对 (源文件:目标文件)
-# 注: hosts.example 里已含青岛联通交付用的 [qdlt_cpu]/[qdlt_gpu] 分组, 不另发模板。
+# 注: hosts.example 里机器写在 [cluster], [qdlt:children] 引用它, 不另发模板。
 files=(
     "./tmp/hosts.example:inventory/hosts"
     "./tmp/env.yaml.example:inventory/group_vars/all/env.yaml"
@@ -58,7 +58,7 @@ echo "初始化完成。请根据实际环境修改 inventory/ 目录下的配�
 if [ -d playbook/roles/qdlt-init ]; then
     echo
     echo "[待办] 跑青岛联通交付(qdlt-*)前还需要:"
-    echo "  vim inventory/hosts                        # 填 [qdlt_cpu]/[qdlt_gpu]; GPU 必须逐台填 qdlt_su"
+    echo "  vim inventory/hosts                        # 填 [cluster] 节点; GPU 必须逐台填 qdlt_su"
     echo "  vim inventory/group_vars/all/env.yaml      # 取消注释填 qdlt_user_password(统一账号 wwxq 的密码)"
     echo
     echo "  该文件已 gitignore 不入库, 和已有的 harbor_admin_password 放一处, 配好直接跑:"

@@ -1,42 +1,19 @@
-# inventory 主机清单模板 —— 复制为 inventory/hosts 并按实际填写(去掉行首 #)
-# 约定: ansible_host 及自定义变量【只在主机第一次出现的组里写一次】, 其余组只列主机名(同名=同一台)
-#      一台机器要被某个 playbook 命中, 就把它加进对应的组; 组名就是"标签"。
-#      不想重复抄主机名时用 [组名:children] 把整组并进去(见 [cluster:children])。
+# inventory 主机清单模板 —— 复制为 inventory/hosts 按实际填写(去行首 #)
+# 约定: 机器只写一次(ansible_host 等), 别的组只列主机名; 同名=同一台。
+# 详见 docs/青岛联通交付-系统初始化.md
+# ============================================================================
 
+# 全部机器写在这。⚠ policy=inventory 时, 这里写的名字就是机器最终主机名
 [cluster]
-# 所有节点; ansible_host 只在这里定义; 可带 ipmi_ip / storage_ip 等自定义变量
-# 本项目的机器写在下面的 [qdlt_cpu] / [qdlt_gpu], 通过 [cluster:children] 并进来,
-# 所以这里【不用】再抄一遍。非青岛项目的散机才直接写在这。
-#cpu217 ansible_host=172.171.0.217
-#node001 ansible_host=172.171.0.11
-
-[cluster:children]
-# 把 qdlt 两个组整体并入 [cluster] —— 这样 init.yaml / ssh-passwordless.yaml /
-# harbor-trust.yaml / mount-nvme.yaml 等按 [cluster] 取组的 playbook 才有主机可跑。
-# 用 :children 而不是把 6 台再抄一遍: 以后增删机器只改 [qdlt_cpu] 一处, 不会两边漂。
-qdlt_cpu
-qdlt_gpu
-
-# ---------------------------------------------------------------------------
-#  下面这些组是【按角色】的, 不能用 :children 一把并进来 —— 谁当 master、谁装
-#  etcd、谁跑 LB 是部署决策。6 台管理节点已按名字预置成注释, 按实际角色取消
-#  注释即可(名字要和 [qdlt_cpu] 里完全一致, ansible_host 不用重复写)。
-# ---------------------------------------------------------------------------
+#cpu-001 ansible_host=192.168.1.111
+#gpu-su1-001 ansible_host=10.82.4.56  qdlt_su=1
 
 [containerd]
 # 用 containerd 的节点(只列主机名); GPU/加速器节点加 accelerator_type=nvidia/dcu/npu(华为昇腾), 纯 CPU 不写(默认 runc)
 #cpu-001
-#cpu-002
-#cpu-004
-#cpu-005
-#cpu-008
-
 [k8s_master]
 # 控制平面(建议奇数台); 多 master 需配 lbvip + 跑 LB(见 [k8slb])
 #cpu-001
-#cpu-002
-#cpu-004
-
 [k8s_node]
 # worker 节点
 #cpu-005
@@ -45,19 +22,16 @@ qdlt_gpu
 [etcd]
 # 外置 etcd(建议 3/5 台奇数; 可与 master 共机)
 #cpu-001
-#cpu-002
-#cpu-004
+
 
 [k8slb]
 # haproxy+keepalived LB(多 master 才需要; 常与 master 共机)
 # 只列主机名; VIP 网卡自动按 ansible_host 探测, 无需 host_ip
 #cpu-001
-#cpu-002
-#cpu-004
 
 [harbor]
 # Harbor 节点(在线从公共 mirror 拉镜像时可不部署)
-#cpu-008
+#172.171.1.217
 
 [docker]
 # 装 docker 的节点(本项目里 docker 仅给 Harbor 用; k8s 节点跑 containerd 直连,不用 docker)。
@@ -67,7 +41,6 @@ qdlt_gpu
 # ⚠️ docker 侧【只支持 nvidia】; dcu/npu(华为昇腾)只在 containerd 生效,别往这组写 dcu/npu。
 #cpu-008
 #a800-node30 accelerator_type=nvidia
-
 [cri_docker_nodes]
 # cri-dockerd 已弃用,留空
 
@@ -78,81 +51,23 @@ qdlt_gpu
 [etcd_to_delete]
 [master_to_delete]
 
-# ⚠ [gpu] 组【故意不与 qdlt_gpu 关联】: gpu-init.yaml / gpu-update.yaml 会装
-#   GPU 驱动并可能升内核, 本项目 GPU 节点只跑 qdlt-init, 别让它们被误命中。
+# ---- GPU:有算力节点时用。[gpu]=打"有GPU"标签(角色自动判 gpu); [gpu_driver]=装驱动/升内核 ----
+# ⚠ 青岛交付 GPU 节点只跑 qdlt-init, 绝不进 [gpu_driver]。机器本体仍写在上面 [cluster](带 qdlt_su)。
+[gpu]
+#gpu-su1-001
+#[gpu_driver]
+#gpu-su1-001
 
-# ============================================================================
-#  青岛联通项目交付(qdlt-init / qdlt-check)—— 不跑该项目就整段留空
-#
-#    [qdlt]      本次交付的全部节点(qdlt-init / qdlt-check 都跑这个组)
-#    [qdlt_cpu]  CPU 管理节点
-#    [qdlt_gpu]  GPU 算力节点
-#
-#  ⚠ 这里写的名字只是 inventory 里的【标识】, 不等于会被设置的主机名。
-#    实际主机名由各组 vars 里的 qdlt_hostname_policy 决定, 本项目用 inventory:
-#      inventory 以【这里写的名字】为准 —— 清单写 cpu-001, 机器就被设成 cpu-001
-#                (本项目默认。清单是唯一事实来源, 机器上原来叫什么都按清单纠正)
-#      ip        按交付标准从带内 IP 末段生成 CPU-<末段3位> / GPU-SU<n>-<末段3位>
-#      keep      完全不改主机名, 保持机器上现有的名字
-#      explicit  用逐台写的 qdlt_hostname
-#    ⚠ 用 inventory 策略时【这里写的名字就是最终主机名】, 所以要写成你希望机器
-#      叫的样子: 已投产的按现有序号写(cpu-001), 新裸机直接写交付标准目标名
-#      (GPU-SU1-056)。名字只能用字母/数字/减号, 不能是 IP、不能带下划线或点。
-#  ⚠ qdlt_su 依据服务器上连的计算网 Leaf 交换机组顺序决定, 必须对照接线表逐台填,
-#    猜不出来; policy=ip 的 GPU 节点漏填会在 hostname 步骤直接 assert 中止。
-# ============================================================================
-
-[qdlt_cpu]
-# 青岛现网管理节点。⚠ 这里写的名字就是【机器最终的主机名】(policy=inventory)
-cpu-001 ansible_host=192.168.1.111
-cpu-002 ansible_host=192.168.1.112
-cpu-004 ansible_host=192.168.1.114
-cpu-005 ansible_host=192.168.1.115
-cpu-008 ansible_host=192.168.1.118
-maascpu-011 ansible_host=192.168.1.121
-
-[qdlt_gpu]
-# 新进场裸机 → 直接写成交付标准的目标名(policy=inventory 会按这个名字设置)
-#GPU-SU1-056 ansible_host=10.82.4.56  qdlt_su=1
-#GPU-SU1-057 ansible_host=10.82.4.57  qdlt_su=1
-#GPU-SU2-058 ansible_host=10.82.4.58  qdlt_su=2
-
+# 青岛交付组 = 全部机器(qdlt-init / qdlt-check 跑这个组)
 [qdlt:children]
-qdlt_cpu
-qdlt_gpu
+cluster
 
-[qdlt_cpu:vars]
-qdlt_node_role=cpu
-# 主机名【以上面 [qdlt_cpu] 里写的名字为准】: 清单写 cpu-001, 机器就设成 cpu-001。
-# 现网这几台机器上的名字是 CPU-111/CPU-114 这种(cpu-008 甚至被误设成了 wwxq),
-# 与清单不一致, 本策略会按清单把它们纠正过来。
-# 其他取值: ip=按 IP 末段生成 CPU-111 / keep=保持机器现有名字不动 / explicit=另写 qdlt_hostname
+[qdlt:vars]
+# 主机名以清单里写的名字为准; 别用 ip(会把 cpu-001 改成 CPU-111)。其他: keep / explicit
 qdlt_hostname_policy=inventory
-
-[qdlt_gpu:vars]
-qdlt_node_role=gpu
-# 同上, 以清单里写的名字为准 —— 所以 [qdlt_gpu] 段里【直接写成交付标准的目标名】
-#   GPU-SU1-056 ansible_host=10.82.4.56 qdlt_su=1
-# 这样就不必让 playbook 去算 IP 末段(要算就改成 qdlt_hostname_policy=ip)。
-qdlt_hostname_policy=inventory
-
-# 注: 【故意没有 [qdlt:vars] 段】—— python 解释器 / ssh 参数只写在下面 [all:vars] 一处。
-#   ansible 的 all 组包含 inventory 里的每一台机器, qdlt 这些节点自然继承, 不用重复写。
-#   连接身份由 group_vars/all/connection.yaml 自动探测(root 免密 → root; 否则 用户+sudo);
-#   首次进场机器只有厂商初始账号时, 在 group_vars/all/env.yaml 里配 bootstrap_* 即可。
 
 [all:vars]
-# 集群参数(is_offline / kube_network_plugin / chrony_ip / lbvip / vip_prefix 等)
-# 统一在 inventory/group_vars/all/env.yaml 配置。
-# ⚠ group_vars 优先级高于本文件: 这些变量写在这里会被 env.yaml 覆盖(不生效), 别在这重复写。
-# 本段只保留【连接方式】和少数按主机差异的变量。
-
-# 连接方式:
-# 身份(root 直连 / 普通用户+sudo)由 group_vars/all/connection.yaml 【自动探测】:
-#   控制机能免密到 root → root 直连; 否则 → 普通用户+sudo。
-#   回退用的 bootstrap_user / bootstrap_ssh_pass / bootstrap_become_pass 及 connect_as 在 env.yaml 配。
-#   想强制: env.yaml 里 connect_as=root 或 sudo。
-# 所以这里【不用】再写 ansible_user / ansible_ssh_pass / ansible_become*(写了也会被 connection.yaml 覆盖)。
-# 下面两项(python 解释器 / ssh 参数)按需保留在这里:
+# 集群参数(is_offline / lbvip 等)统一在 group_vars/all/env.yaml 配。
+# 连接身份(root 直连 / 普通用户+sudo)由 group_vars/all/connection.yaml 自动探测。
 ansible_python_interpreter=/usr/bin/python3
 ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"

@@ -127,8 +127,8 @@ qdlt_root_password: >-
      or qdlt_user_password | default('') }}
 
 # ---------------- 主机名 ----------------
-# 角色: gpu / cpu。默认按 inventory 组自动判定(在 qdlt_gpu 组内即 gpu)。
-qdlt_node_role: "{{ 'gpu' if inventory_hostname in (groups['qdlt_gpu'] | default([])) else 'cpu' }}"
+# 角色: gpu / cpu。默认按 inventory 组自动判定(在 [gpu] 组内即 gpu)。
+qdlt_node_role: "{{ 'gpu' if inventory_hostname in (groups['gpu'] | default([])) else 'cpu' }}"
 # GPU 节点的 SU 号(按上连计算网 Leaf 交换机组顺序), 在 inventory 里逐台指定:
 #   GPU-SU1-056 ansible_host=10.82.4.56 qdlt_su=1
 qdlt_su: ""
