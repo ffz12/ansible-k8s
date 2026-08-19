@@ -5,7 +5,7 @@ OFFLINE_PKGS="openssl-libs pcre zlib socat chrony ipvsadm conntrack ipset ebtabl
 KYLIN_IMAGE="hxsoong/kylin:v10-sp3"
 
 # 最终存放 TAR 包的根目录 (对齐你的现状)
-BASE_DIR="$(pwd)/binaries/ios-offline"
+BASE_DIR="$(pwd)/artifacts/ios-offline"
 # ============================================
 
 download_by_arch() {

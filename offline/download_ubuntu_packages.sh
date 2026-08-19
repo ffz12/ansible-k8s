@@ -4,7 +4,7 @@
 OFFLINE_PKGS="socat ebtables ipset iotop sysstat ipvsadm conntrack net-tools nfs-common nfs-kernel-server libseccomp2 netcat-openbsd ca-certificates bash-completion apt-transport-https software-properties-common gcc make bzip2 unzip freeipa-client chrony"
 
 # 最终存放 TAR 包的根目录 (对齐你的现状)
-BASE_OUT_DIR="$(pwd)/binaries/ios-offline"
+BASE_OUT_DIR="$(pwd)/artifacts/ios-offline"
 # ============================================
 
 download_ubuntu_pkg() {
