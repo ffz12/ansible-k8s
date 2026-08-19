@@ -58,12 +58,15 @@ echo "初始化完成。请根据实际环境修改 inventory/ 目录下的配�
 if [ -d playbook/roles/qdlt-init ]; then
     echo
     echo "[待办] 跑青岛联通交付(qdlt-*)前还需要:"
-    echo "  vim inventory/hosts                        # 填 [cluster] 节点; GPU 必须逐台填 qdlt_su"
-    echo "  vim inventory/group_vars/all/env.yaml      # 取消注释填 qdlt_user_password(统一账号 wwxq 的密码)"
+    echo "  vim inventory/hosts                        # 机器写进 [cluster](有 GPU 再单列 [gpu] 组并逐台填 qdlt_su)"
+    echo "  vim inventory/group_vars/all/env.yaml      # 填两类:"
+    echo "    ① 连接: 首次进场机器还没 root 免密时, 取消注释 bootstrap_user/bootstrap_ssh_pass/bootstrap_become_pass"
+    echo "            (connect_as=auto 会自动判: 能 root 免密就直连, 否则走这几个 用户+sudo; 已免密可不填)"
+    echo "    ② 密码: 取消注释填 qdlt_user_password(统一账号 wwxq 的密码)"
     echo
-    echo "  该文件已 gitignore 不入库, 和已有的 harbor_admin_password 放一处, 配好直接跑:"
+    echo "  env.yaml 已 gitignore 不入库, 和 harbor_admin_password 放一处, 配好直接跑:"
     echo "    ansible-playbook playbook/qdlt-init.yaml"
-    echo "  ⚠ 也可以走 export QDLT_USER_PASSWORD='密码', 但两处【只写一处】——"
-    echo "    env.yaml 优先级高于角色默认值, 都写时环境变量永远不生效。"
-    echo "    走环境变量时别用 sudo(会清环境变量), playbook 自带 become: yes。"
+    echo "  ⚠ 密码也可走 export QDLT_USER_PASSWORD='密码', 但与 env.yaml【只写一处】——"
+    echo "    env.yaml 优先级高于角色默认值, 都写时环境变量永远不生效;"
+    echo "    走环境变量时别用 sudo(会清环境变量), 要用 sudo -E; playbook 自带 become: yes。"
 fi
