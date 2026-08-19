@@ -11,6 +11,8 @@
 #    - 密码回退(sudo 分支)需要【控制机】装 sshpass。
 #    - root 探测走「控制机当前用户」的 ssh key: 先跑 add-control-key.yml 下发控制机公钥后,
 #      auto 才会判成 root。没下发前 auto 自动走 用户+sudo —— 正好用于首次下发免密。
+#      探测认 ansible_port(默认 22), 但【不认 ansible_ssh_common_args 里的跳板/ProxyJump】——
+#      走堡垒机的环境探测会直连目标而判不通, 这种场景请用 -e connect_as=root/sudo 强制指定。
 #    - bootstrap_user / bootstrap_ssh_pass / bootstrap_become_pass 在 env.yaml 配(见示例)。
 #      root 全程免密时这几个可不填(lazy: 只有回退到 sudo 分支才会用到)。
 #    - ansible_python_interpreter / ansible_ssh_common_args 仍在 hosts [all:vars] 配, 不受本文件影响。
@@ -23,7 +25,8 @@ connect_as: auto          # 可被 env.yaml 覆盖
 _root_login_ok: >-
   {{ lookup('pipe',
      'ssh -o BatchMode=yes -o ConnectTimeout=4 -o StrictHostKeyChecking=no'
-     ~ ' -o UserKnownHostsFile=/dev/null root@'
+     ~ ' -o UserKnownHostsFile=/dev/null -p ' ~ (ansible_port | default(22))
+     ~ ' root@'
      ~ (ansible_host | default(inventory_hostname))
      ~ ' true >/dev/null 2>&1 && echo yes || echo no') }}
 
@@ -33,7 +36,11 @@ _use_root: >-
      or (connect_as == 'auto' and _root_login_ok == 'yes') }}
 
 # —— 推导出的连接参数 ——
-ansible_user: "{{ 'root' if (_use_root | bool) else bootstrap_user }}"
+# 回退到「普通用户+sudo」但 bootstrap_user 没填时, mandatory 给出清晰指引(而非「变量未定义」天书)。
+# ternary 只求值命中的那支: root 直连时不会触发 mandatory。
+ansible_user: >-
+  {{ 'root' if (_use_root | bool)
+     else (bootstrap_user | mandatory('connect_as 回退到[普通用户+sudo], 但 bootstrap_user 未定义; 请在 inventory/group_vars/all/env.yaml 取消注释并填 bootstrap_user (及 bootstrap_ssh_pass / bootstrap_become_pass), 或用 -e connect_as=root 强制 root 免密直连')) }}
 ansible_become: "{{ not (_use_root | bool) }}"
 ansible_become_method: sudo
 # 密码仅在有 bootstrap_* 时才带(root 全程免密→omit→纯密钥); root 分支即便带上, ssh 也先走密钥
