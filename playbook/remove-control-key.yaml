@@ -4,10 +4,7 @@
 #       节点的 /root/.ssh/authorized_keys(单向: 控制机 -> 各节点)。交付时需撤掉这把钥匙。
 #
 # 与 add-control-key.yaml(加)成对(精确逆操作)。
-# 与 ssh-passwordless-remove 的区别:
-#   - ssh-passwordless-remove : 解除【节点之间】N×N 互信(删每个被管节点自己的公钥);
-#   - 本 playbook             : 只删【控制机这一把】公钥(控制机通常不在 inventory 里,
-#                               所以那个反向脚本删不到它)。
+# 只删【控制机这一把】公钥(控制机通常不在 inventory 里)。方向: 控制机 -> 各节点(单向)。
 #
 # ⚠️ 注意: 跑完控制机对各节点的免密即失效, 之后再连需要密码。请作为交付【最后一步】执行,
 #          之前若还要跑别的 playbook, 先跑完再清。

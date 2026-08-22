@@ -12,7 +12,7 @@
 - **在线/离线双支持**：一个 `is_offline` 开关切换——在线直连公共 mirror，离线全走本地 Harbor + bundled tar。
 - **多 CNI 可插拔**：`kube_network_plugin` 一个变量切 `calico` / `flannel` / `cilium`。
 - **多版本 K8s**：`k8s_version` 单一真源，配套组件自动派生（当前在用 1.28 / 1.34）。
-- **外置二进制 etcd**、apiserver 高可用（haproxy / nginx-ha + keepalived）、集群 root 免密一键互信。
+- **外置二进制 etcd**、apiserver 高可用（haproxy / nginx-ha + keepalived）、控制机→节点 root 免密一键下发。
 - **Ansible 2.8.8 兼容**（Kylin V10 SP3）：全短模块名，按 `ansible_distribution` 判族。
 
 ## 文档导航
@@ -48,8 +48,8 @@ cd ansible-k8s
 vim inventory/hosts                       # 参考 tmp/hosts.example
 vim inventory/group_vars/all/env.yaml     # 域名/密码/版本/CNI/is_offline 等
 
-# 3. 配置集群 root 免密互信（首次带 -k 输密码）
-ansible-playbook playbook/ssh-passwordless.yaml -k
+# 3.（可选）控制机→各节点免密，便于后续批量执行（首次带 -k 输密码）
+ansible-playbook playbook/add-control-key.yaml -k
 
 # 4. 按《部署说明.md》整体流程走：init → 挂盘 → containerd → docker/harbor → etcd → k8s → CNI
 ```
@@ -59,7 +59,7 @@ ansible-playbook playbook/ssh-passwordless.yaml -k
 ## 前置条件
 
 - 控制节点已装 Ansible（2.8.8+；Kylin V10 SP3 用系统自带 2.8.8）
-- 目标节点已装 Python 3、SSH 可达（免密由 `ssh-passwordless.yaml` 一键配）
+- 目标节点已装 Python 3、SSH 可达（控制机→节点免密由 `add-control-key.yaml` 一键配）
 - 离线场景：先按《部署说明.md》「离线部署」在联网机打包物料
 
 ## 许可证

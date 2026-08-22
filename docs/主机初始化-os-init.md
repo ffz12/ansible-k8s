@@ -160,7 +160,7 @@ git config secretscan.skip true         # 长期关掉
 
 ### 主机都写在 `[cluster]`（os-init / os-check 直接跑这个组）
 
-`os-init.yaml` / `os-check.yaml` 和 `init.yaml`、`ssh-passwordless`、`mount-nvme` 等**都跑 `[cluster]` 组**，所以机器只写在 `[cluster]` 一处即可：
+`os-init.yaml` / `os-check.yaml` 和 `init.yaml`、`add-control-key`、`mount-nvme` 等**都跑 `[cluster]` 组**，所以机器只写在 `[cluster]` 一处即可：
 
 ```ini
 [cluster]
