@@ -2,20 +2,30 @@
   hostname:
     name: "{{ inventory_hostname }}"
   when: ansible_distribution not in ['openEuler']
-- include_tasks: redhat.yaml 
+  tags: [hostname]
+
+# ⚠ 下面几个 include 用 tags: always —— 动态 include(include_tasks)的子任务
+#   只有在 include 本身被选中时才会被评估。加 always 保证 include 永远进得去,
+#   这样 `--tags dns` / `--tags swap` 等子标签才能命中文件里的具体任务。
+#   发行版分流由各 include 的 when 决定, 与 always 不冲突。
+- include_tasks: redhat.yaml
   when: ansible_distribution in ['RedHat','CentOS']
+  tags: always
 
 - include_tasks: openEuler.yaml
   when: ansible_distribution in ['openEuler']
+  tags: always
 
 # 系统基础软件环境设置
 
 - include_tasks: debian.yaml
   when: ansible_distribution in ['Debian','Ubuntu']
+  tags: always
 
 - include_tasks: kylinsp3.yaml
   when: ansible_distribution in ['Kylin Linux Advanced Server']
+  tags: always
 
 # 公共系统参数设置
 - include_tasks: common.yaml
- 
+  tags: always

@@ -4,6 +4,7 @@
 # ==================== 1. 软件源策略分流 ====================
 
 - name: 【离线模式】配置本地双架构离线 APT 源
+  tags: [repo]
   block:
     - name: 清理历史离线目录并重新创建
       file:
@@ -33,6 +34,7 @@
   when: is_offline | bool
 
 - name: 【在线模式】配置官方/国内镜像软件源
+  tags: [repo]
   block:
     - name: 【Ubuntu 22.04 在线】拷贝常规 sources.list
       copy:
@@ -53,6 +55,7 @@
 # ==================== 2. 环境健壮性优化与防卡死 (通用) ====================
 
 - name: 强行重写 70debconf 配置，彻底废除底层蓝底灰框交互弹窗
+  tags: [apt]
   copy:
     dest: /etc/apt/apt.conf.d/70debconf
     content: |
@@ -65,17 +68,20 @@
     mode: '0644'
 
 - name: 在系统全局环境变量中注入双重静默保险
+  tags: [apt]
   lineinfile:
     path: /etc/profile
     line: 'export DEBIAN_FRONTEND=noninteractive'
     state: present
 
 - name: 移除 99needrestart 防止升级组件后卡在服务重启确认界面
+  tags: [apt]
   file:
     path: /etc/apt/apt.conf.d/99needrestart
     state: absent
 
 - name: 彻底关闭系统自带的无感后台自动更新（防止抢占锁死 apt）
+  tags: [apt]
   copy:
     dest: "{{ item.dest }}"
     content: "{{ item.content }}"
@@ -87,6 +93,7 @@
     - { dest: '/etc/apt/apt.conf.d/10periodic', content: "APT::Periodic::Update-Package-Lists \"0\";\nAPT::Periodic::Download-Upgradeable-Packages \"0\";\n" }
 
 - name: 停止并禁用无人值守更新服务
+  tags: [apt]
   systemd:
     name: unattended-upgrades
     state: stopped
@@ -97,6 +104,7 @@
 # 定时拉起 apt-daily(.service) 去 update/download, 抢 dpkg 锁、偶尔偷偷升级内核。
 # mask 掉定时器和对应 service 才是真正关死后台自动更新。
 - name: 停止并 mask apt 自动更新相关 systemd 单元
+  tags: [apt]
   systemd:
     name: "{{ item }}"
     state: stopped
@@ -110,6 +118,7 @@
   failed_when: false
 
 - name: 禁用 cloud-init 网络配置管理 (防止其覆盖手动/静态网络设置)
+  tags: [cloudinit]
   block:
     - name: 确保 cloud-init 配置目录存在
       file:
@@ -162,6 +171,7 @@
           failed_when: false
 
 - name: 精准锁定当前正在使用的内核版本防止误升级
+  tags: [kernel]
   shell: |
     # 提取当前内核的核心版本号（例如：6.8.0-117）
     CURRENT_VERSION=$(uname -r | cut -d'-' -f1,2)
@@ -178,17 +188,21 @@
   ignore_errors: yes
 
 - name: 查看hold内核状态
+  tags: [kernel]
   shell: apt-mark showhold
   register: hold_status
   changed_when: false
 
 - name: debug 内核锁定状态
+  tags: [kernel]
   debug:
     msg: "{{ hold_status.stdout_lines }}"
 
 - name: 优化基础环境参数 (Pager, Vim, Locale, Firewall)
+  tags: [baseenv]
   block:
     - name: 禁用防火墙 ufw
+      tags: [firewall]
       service:
         name: ufw
         state: stopped
@@ -238,6 +252,7 @@
 # ==================== 3. 故障修复与基础依赖包安装 ====================
 
 - name: 【仅在线环境】执行 APT 残留修复与多余包清理
+  tags: [packages]
   block:
     - name: 强制尝试修复损坏的依赖
       command: apt-get install -f -y
@@ -251,6 +266,7 @@
   when: not is_offline | bool
 
 - name: 更新缓存并批量安装必要软件包 (动态合并线上/线下包清单)
+  tags: [packages]
   apt:
     name: "{{ debian_online_pkgs if not is_offline | bool else debian_offline_pkgs }}"
     state: present
@@ -302,6 +318,7 @@
 # 需要 ansible 统一接管时: 在 env.yaml 置 init_config_dns: true,并填 dns / domains。
 # 用 resolved.conf.d drop-in(不整覆盖主文件),幂等,可重复跑。
 - name: 配置 DNS(systemd-resolved)
+  tags: [dns]
   when:
     - init_config_dns | bool
     - dns is defined

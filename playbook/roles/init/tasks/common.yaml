@@ -2,18 +2,22 @@
   shell: timedatectl | grep 'Time zone' | awk '{print $3}'
   register: current_timezone
   changed_when: false
+  tags: [timezone]
 
 - name: debug
   debug:
     var: current_timezone.stdout
+  tags: [timezone]
 
 - name: 如果时区不是上海则设置为上海
   command: timedatectl set-timezone Asia/Shanghai
   when: current_timezone.stdout != "Asia/Shanghai"
+  tags: [timezone]
 
 - name: modprobe br_netfilter
   shell: modprobe br_netfilter
   changed_when: false
+  tags: [sysctl]
 
 # 删掉原来单独的 state=touch 任务(每次都报 changed,不幂等);
 # 改由 blockinfile 的 create=yes 在文件不存在时自动创建。
@@ -29,14 +33,17 @@
     state: present
     backup: yes
     marker: "# Ansible inventory  {mark}"
+  tags: [sysctl]
 - name: 内核参数调优
   copy: src=sysctl.conf dest=/etc/sysctl.conf owner=root group=root mode=0644
+  tags: [sysctl]
 - name: 执行sysctl
-  shell: | 
+  shell: |
       sysctl -p
+  tags: [sysctl]
 - name: 调整文件描述符限制
   blockinfile:
-    path: /etc/security/limits.conf 
+    path: /etc/security/limits.conf
     block: |-
        root soft memlock unlimited
        root hard memlock unlimited
@@ -51,16 +58,18 @@
        * soft nofile 1000001
        * hard nofile 1000001
 
-       
+
 
     state: present
     backup: yes
     marker: "# Ansible inventory  {mark}"
+  tags: [limits]
 
 - name: 关闭当前已启用的 swap
   shell: "swapoff -a"
   ignore_errors: true
   changed_when: false
+  tags: [swap]
 
 # ⚠ 原来用 lineinfile regexp: 'swap' state: absent 直接【删行】, 那个裸 'swap'
 #   会连 /data/swaparea、/var/log/swapstats 这类路径里带 swap 字样的正常挂载行
@@ -72,6 +81,7 @@
     regexp: '^(?!\s*#)(\s*\S+\s+\S+\s+swap\s+.*)$'
     replace: '# [init] swap disabled: \1'
     backup: yes
+  tags: [swap]
 
 # sysctl -w 只在当前内核生效, 重启就丢; 落盘到 sysctl.d 才持久。
 - name: 持久化 vm.swappiness=0
@@ -84,11 +94,13 @@
       # 由 Ansible init 写入: 尽量不使用 swap(真正关闭靠 swapoff + fstab)
       vm.swappiness = 0
   register: init_swappiness_conf
+  tags: [swap]
 
 - name: 应用 swappiness
   command: sysctl -p /etc/sysctl.d/99-swap.conf
   when: init_swappiness_conf is changed
   changed_when: true
+  tags: [swap]
 
 - name: 统一配置时间同步 chrony.conf 配置文件
   template:
@@ -98,6 +110,7 @@
     group: root
     mode: '0644'
   ignore_errors: yes
+  tags: [chrony]
 
 - name: 统一启动并设置 chronyd 服务开机自启
   service:
@@ -106,3 +119,4 @@
     state: restarted
     enabled: yes
   ignore_errors: yes
+  tags: [chrony]

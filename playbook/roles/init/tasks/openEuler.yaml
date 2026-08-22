@@ -4,12 +4,14 @@
 - name: openEuler类型环境配置
   block:
     - name: 设置 hostname
+      tags: [hostname]
       hostname:
         name: "{{ inventory_hostname }}"
 
 # ==================== 2. 软件源策略分流与软件包安装 ====================
 
 - name: 【离线模式】openEuler 双架构离线 RPM 包本地安装
+  tags: [packages]
   block:
     - name: 检查并屏蔽官方默认软件源 (防止联网超时卡死)
       file:
@@ -38,6 +40,7 @@
   when: is_offline | bool
 
 - name: 【在线模式】联网批量安装必要基础软件包
+  tags: [packages]
   yum:
     name:
       - createrepo

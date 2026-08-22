@@ -4,6 +4,7 @@
 - name: RedHat类型环境基础安全配置
   block:
     - name: 关闭并禁用 firewalld 防火墙
+      tags: [firewall]
       service:
         name: firewalld
         state: stopped
@@ -11,16 +12,19 @@
       ignore_errors: yes
 
     - name: 检查当前 SELinux 显式状态
+      tags: [selinux]
       shell: cat /etc/selinux/config | grep '^SELINUX=' | grep -v "#"
       register: selinux_check
       failed_when: false
       changed_when: false
 
     - name: 输出 SELinux 检查结果
+      tags: [selinux]
       debug:
         var: selinux_check.stdout
 
     - name: 永久并临时关闭 SELinux
+      tags: [selinux]
       shell: |
         sed -i 's/^SELINUX=.*/SELINUX=disabled/' /etc/selinux/config
         setenforce 0
@@ -32,6 +36,7 @@
 # ==================== 2. 软件源策略分流与软件包安装 ====================
 
 - name: 【离线模式】银河麒麟双架构离线 RPM 包本地安装
+  tags: [packages]
   block:
     - name: 创建目标服务器离线包存放目录
       file:
@@ -40,8 +45,8 @@
         mode: '0755'
 
     - name: 动态同步对应架构的 RPM 离线安装包
-      unarchive: 
-        src: "{{ offline_artifacts }}/ios-offline/kylin_{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}.tar.gz" 
+      unarchive:
+        src: "{{ offline_artifacts }}/ios-offline/kylin_{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}.tar.gz"
         dest: /opt/kylin-pkgs/
         mode: '0644'
         owner: root
@@ -55,6 +60,7 @@
   when: is_offline | bool
 
 - name: 【在线模式】银河麒麟联网批量安装必要基础软件包
+  tags: [packages]
   yum:
     name:
       - socat
