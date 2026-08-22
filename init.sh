@@ -43,7 +43,6 @@ if [ -d playbook/roles/os-init ]; then
 [待办] 跑 os-init / os-account 前:
   vim inventory/hosts                    # 机器写进 [cluster]; 有 GPU 单列 [gpu] 并逐台填 osinit_su
   vim inventory/group_vars/all/env.yaml  # ①连接(未免密才填 bootstrap_*) ②osacct_user_password(账号名默认 osadmin, 青岛 wwxq) ③离线置 is_offline: true
-  ansible-playbook playbook/os-init.yaml
 
   密码只写一处: env.yaml 优先级 > 角色默认; 走 export OSACCT_USER_PASSWORD 时别用 sudo(会清环境变量), 用 sudo -E。
 TIP
