@@ -1,0 +1,60 @@
+---
+# ============================================================================
+#  os-init/tasks/main.yaml —— 通用 CPU/GPU 主机 OS 初始化(纯软件配置)
+#  默认值按青岛联通交付标准设定, 站点差异在 env.yaml 覆盖(见 defaults/main.yaml)。
+#  ⚠ 不改任何网络配置(netplan/bond/vlan/hca_id/策略路由/IP), 网络项见 os-check
+# ============================================================================
+
+- name: 【前置】仅支持 Debian/Ubuntu 系
+  assert:
+    that: ansible_os_family == 'Debian'
+    fail_msg: >-
+      os-init 按交付标准只针对 Ubuntu 22.04 编写,
+      当前系统为 {{ ansible_distribution }} {{ ansible_distribution_version }}。
+
+- name: 【前置】交付标准要求 Ubuntu 22.04.3 ~ 22.04.5(不符只告警, 不中断)
+  debug:
+    msg: >-
+      ⚠ 当前 {{ ansible_distribution }} {{ ansible_distribution_version }}
+      不在交付标准要求的 Ubuntu 22.04.3~22.04.5 范围内, 请确认。
+  when: ansible_distribution_version is not match('^22\.04')
+
+- import_tasks: packages.yaml
+  when: osinit_do_pkgs | bool
+  tags: [os, pkgs]
+
+- import_tasks: time.yaml
+  when: osinit_do_time | bool
+  tags: [os, time]
+
+- import_tasks: cloudinit.yaml
+  when: osinit_do_cloudinit | bool
+  tags: [os, cloudinit]
+
+- import_tasks: apt.yaml
+  when: osinit_do_apt | bool
+  tags: [os, apt]
+
+- import_tasks: cpu.yaml
+  when: osinit_do_cpu | bool
+  tags: [os, cpu]
+
+- import_tasks: swap.yaml
+  when: osinit_do_swap | bool
+  tags: [os, swap]
+
+- import_tasks: acs.yaml
+  when: osinit_do_acs | bool
+  tags: [os, acs]
+
+- import_tasks: hostname.yaml
+  when: osinit_do_hostname | bool
+  tags: [os, hostname]
+
+- import_tasks: grub.yaml
+  when: osinit_do_grub | bool
+  tags: [os, grub]
+
+- import_tasks: syslog.yaml
+  when: osinit_do_syslog | bool
+  tags: [os, syslog]

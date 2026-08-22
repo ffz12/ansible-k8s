@@ -1,0 +1,188 @@
+---
+# ============================================================================
+#  os-init —— 通用 CPU/GPU 主机操作系统环境初始化
+#  默认值按青岛联通《交付标准》设定; 站点差异(时区、账号名、NTP 等)在
+#  inventory/group_vars/all/env.yaml 里覆盖为本项目的「预设」。
+#
+#  作用域: 只做「纯软件配置」。
+#  ⚠ 本角色【完全不碰网络】: 不改 netplan / bond / vlan / RDMA hca_id /
+#    策略路由 / 网卡驱动 / IP。这些项由 os-check 角色只读体检出报告,
+#    人工按报告处置。
+#
+#  与 init 角色的关系: 本角色在 init 之后跑, 会【覆盖】init 的两处冲突:
+#    1) init 强制时区 Asia/Shanghai → 本角色按交付标准改回 UTC
+#    2) init 只 apt-mark hold 内核  → 本角色补 GRUB 固定启动项
+# ============================================================================
+
+# ---------------- 总开关(逐项可关) ----------------
+osinit_do_time: true            # 时区 UTC + chrony 时间同步(误差 <15s)
+osinit_do_cloudinit: true       # 彻底关闭 cloud-init
+osinit_do_apt: true             # 关闭 apt 自动更新(含 mask apt-daily 定时器)
+osinit_do_cpu: true             # governor=performance + TurboBoost
+osinit_do_swap: true            # 永久关闭 swap(swapoff + fstab + mask unit + sysctl)
+osinit_do_acs: true             # 关闭所有 PCIe 设备 ACSCtl(交付标准要求; 详见下方 ACSCtl 段)
+osinit_do_pkgs: true            # 安装 ipmitool 等交付要求的软件包
+osinit_do_hostname: true        # 按 GPU-SU<n>-<xxx> / CPU-<xxx> 规范设置主机名
+osinit_do_grub: true            # GRUB 固定当前内核, 防重启后内核变更
+osinit_do_syslog: false         # 日志外送日志审计系统(需先填 osinit_log_server)
+
+# ---------------- swap ----------------
+# vm.swappiness 落盘到 /etc/sysctl.d/99-os-swap.conf(sysctl -w 重启会丢)
+osinit_swappiness: 0
+# 是否连 swap 文件/分区本身一起删除。【不可逆】, 默认只停用不删除。
+osinit_swap_remove_file: false
+# osinit_swap_remove_file=true 时要删的文件(分区不在此列, 分区请人工处置)
+osinit_swap_files:
+  - /swap.img
+  - /swapfile
+
+# ---------------- PCIe ACSCtl ----------------
+# 交付标准要求「确认所有 PCIe 设备的 ACSCtl 均已关闭」, 所以默认【开启】本项。
+# ⚠ 它是本角色里唯一直接写 PCI 配置空间(setpci)的步骤, 副作用要知道:
+#   - 降低 PCIe 设备间隔离性: 要跑 VFIO 直通/依赖 IOMMU 分组隔离的机器别开
+#     (置 osinit_do_acs=false)。交付标准同时要求关 vt-d/IOMMU, 两者方向一致。
+#   - 重启后固件会重新置位 → 配套装 os-acs-disable.service 每次开机重跑。
+#   - 多数寄存器被固件锁定时写不进去, 这属正常, 见 osinit_acs_strict。
+# CPU 管理节点上关 ACS 的【性能收益接近于零】(收益全在 GPU 间 P2P/NCCL 带宽上),
+# 但交付标准说的是"所有 PCIe 设备", 故照做, 体检项也才能判 PASS。
+# 单独跳过: --skip-tags acs   或   -e osinit_do_acs=false
+# 关闭脚本落地路径(systemd 服务也引用这个变量)
+osinit_acs_script_path: /usr/local/sbin/os-acs-disable.sh
+# true = 回验发现仍有设备 ACSCtl 未关闭时直接中止。
+# 默认 false: 这类寄存器常被固件锁定, 只能在 BIOS 里关, 不该让整个 playbook 挂掉。
+osinit_acs_strict: false
+
+# ---------------- 时间 ----------------
+# 交付标准第 3 页要求「统一使用 UTC 时区」, 故默认值保持 UTC。
+# 项目实际要用别的时区(如 Asia/Shanghai)时, 【在 inventory/group_vars/all/env.yaml 覆盖】,
+# 不要改这里 —— 让偏离交付标准的地方显式落在项目配置里, 便于交付时说明。
+# 时区只影响显示, 不影响对时精度与跨节点时间差。
+osinit_timezone: UTC
+# NTP 源。【复用仓库既有的 chrony_ip】—— init 角色的 chrony.conf.j2 用的就是它,
+# 在 inventory/group_vars/all/env.yaml 里配。这样换 NTP 源只改 chrony_ip 一处,
+# 不会 init 和 os-init 两边配得不一样。
+#   ⚠ 别在 env.yaml 里再写一份 osinit_ntp_servers —— 那就又变成两处要维护了。
+# 要单独配多个源做冗余时才覆盖本变量(显式值优先, 会盖掉 chrony_ip):
+#   osinit_ntp_servers: [10.82.4.1, 10.82.4.2]
+# 交付标准公网放行清单含 ntp.ntsc.ac.cn / ntp.aliyun.com udp123, 但仅在特定情形适用;
+# chrony_ip 没配时回落到前者。
+osinit_ntp_servers:
+  - "{{ chrony_ip | default('ntp.aliyun.com', true) }}"
+osinit_time_max_offset: 15      # 交付标准: 集群内最大时间差 15 秒
+osinit_sync_wait: 60            # 等待 chrony 实际同步上的最长秒数
+# 超时仍未同步是否中止。true=fail 中止, false=打一条醒目告警继续跑(os-check 侧仍判 FAIL)。
+# ⚠ 这里失败是"没锁定上外部 NTP 源", 不等于"节点之间时间不齐" —— 交付标准要的是后者。
+#   置 false 前先确认跨节点差在 osinit_time_max_offset 秒内:
+#     ansible cluster -m shell -a 'date -u +%FT%T'
+osinit_fail_on_unsynced: true
+
+# ---------------- 统一登录账号 / root 密码 ----------------
+# 账号相关默认值已抽到独立角色 os-account(roles/os-account/defaults/main.yaml):
+#   osacct_user / osacct_user_password / osacct_do_root_password / osacct_root_password ...
+# os-init.yaml 会顺带调用 os-account, 一条命令仍把账号一起配好。
+
+# ---------------- 主机名 ----------------
+# 角色: gpu / cpu。默认按 inventory 组自动判定(在 [gpu] 组内即 gpu)。
+node_role: "{{ 'gpu' if inventory_hostname in (groups['gpu'] | default([])) else 'cpu' }}"
+# GPU 节点的 SU 号(按上连计算网 Leaf 交换机组顺序), 在 inventory 里逐台指定:
+#   GPU-SU1-056 ansible_host=10.82.4.56 osinit_su=1
+osinit_su: ""
+# 用于取「最后一段」的带内 IP; 默认取 inventory 里的 ansible_host
+mgmt_ip: "{{ ansible_host | default(ansible_default_ipv4.address) }}"
+
+# 主机名命名策略:
+#   inventory —— 以 inventory 里写的主机名为准(清单是唯一事实来源)。
+#                inventory 写 cpu-001 → 机器主机名就设成 cpu-001。
+#                GPU 节点在 inventory 里直接写成 GPU-SU1-056 即可, 不用再算 IP 末段。
+#   ip       —— 按交付标准由带内 IP 末段生成: CPU-<末段3位> / GPU-SU<n>-<末段3位>
+#                例 10.82.4.229 → CPU-229; 10.82.4.56 + osinit_su=1 → GPU-SU1-056
+#   explicit —— 用 inventory 里显式写的 osinit_hostname(没写就保持现有主机名不动)
+#   keep     —— 完全不改主机名, 保持【机器上现有】的名字(只写 /etc/hosts 解析)
+#
+# ⚠ keep 和 inventory 容易混: keep 保的是【机器现状】, inventory 保的是【清单】。
+#   现网机器叫 CPU-111 而 inventory 写 cpu-001 时:
+#     keep      → 机器仍是 CPU-111(不动机器, 清单只是标识)
+#     inventory → 机器被改成 cpu-001(按清单纠正机器)
+#
+# 默认用 inventory: 清单里写什么, 机器就叫什么, 最直观也最不容易出意外 ——
+# ip 策略会把 cpu-001(192.168.1.111) 改成 CPU-111, 与运维习惯的序号对不上。
+osinit_hostname_policy: inventory
+# policy=explicit 时的目标主机名, 在 inventory 里逐台写:
+#   cpu-001 ansible_host=192.168.1.111 osinit_hostname=cpu-001
+osinit_hostname: ""
+# 是否把 cluster 组内全部节点的 IP-主机名 映射写进每台机器的 /etc/hosts(集群内互相
+# 按主机名找得到彼此)。交付标准没有这项要求, 默认开着只是图方便; 不需要就在
+# env.yaml 里覆盖成 false —— 不影响上面 hostname 本身的设置, 只影响 /etc/hosts。
+osinit_write_cluster_hosts: true
+
+# ---------------- GRUB / 内核固定 ----------------
+# 本角色固定的是【当前正在运行】的内核, 所以顺序是:
+#   装新内核 → reboot 到它 → 再跑 --tags grub
+# 检测到"/boot 里有更新的内核但当前没在跑它"时, GRUB 段【整段跳过, 一步都不做】——
+# 防的是这个真实事故: 人工装好新内核、把 GRUB_DEFAULT 改指向新内核, 但还没重启,
+# 这时跑 playbook 会按运行中的旧内核把配置覆盖回去, 还给旧内核加 apt hold。
+# true = 无视上述保护, 强行固定到【当前运行】的内核。
+# 什么时候用: 新内核起不来要回退, 已经引导回旧内核并要把它钉死。
+osinit_grub_force: false
+# ⚠ 「当前运行内核」由 grub.yaml 每次【实时 uname -r】取得, 不用 ansible_kernel ——
+#   ansible.cfg 配了 fact_caching_timeout=86400, 重启换内核后 24 小时内 fact 仍是
+#   旧版本, 会把 GRUB 钉回旧内核(现网 maascpu-011 就这么被钉回 5.15.0-119 的)。
+#   os-check 侧不受影响: 它的 os-collect.sh 自己跑 uname -r, 也不读 fact 缓存。
+
+# ---------------- 软件包 ----------------
+osinit_packages:
+  - ipmitool          # 交付标准明确要求
+  - chrony            # 时间同步
+  - pciutils          # lspci, 体检 ACSCtl 用
+  - ethtool
+  - dmidecode
+  - numactl
+  # ⚠ 下面三个是现网排查睿频时【缺包缺出来的】—— 当时 turbostat / rdmsr / cpupower
+  #   全都没装, 只能 dd 读 /dev/cpu/0/msr 绕过去。判"睿频是否真能跑上去"必须读
+  #   APERF/MPERF, 而 /proc/cpuinfo 的 cpu MHz 在 intel_pstate passive 模式下
+  #   报的是内核请求值(空载报 3398, 实测只有 3000), 不能当判据。
+  - msr-tools           # rdmsr —— 读 APERF/MPERF 算真实频率; 几十 KB, 不依赖内核版本
+  - sysstat             # mpstat, 看各核负载是否均衡
+  - linux-tools-common  # cpupower/turbostat 的分发 wrapper(与内核版本无关, 装它无风险)
+# 是否安装 cpupower + turbostat(同一个包里)。默认 true —— 判 HWP/频率问题的主力工具:
+#   cpupower frequency-info 报 "no or unknown cpufreq driver is active"
+#   就是 Xeon 8468 锁死基频那次最关键的一条证据;
+#   turbostat --Summary 的 Bzy_MHz 是睿频实测的标准取法。
+# ⚠ 装法有坑, 别改成 linux-tools-generic:
+#   - linux-tools-common 只有 wrapper, 单装它会报 "cpupower not found for kernel x"
+#   - 可执行文件在 linux-tools-$(uname -r) 里, 是【带内核版本号】的包
+#   - 元包 linux-tools-generic 会【跟着新内核走】, 而本角色在 apt-mark hold 内核
+#     (交付标准要求内核固定) —— 装元包等于给 apt 留一条把内核带升级的路
+#   所以 packages.yaml 里用实时 uname -r 拼出确切版本的包名装, 见该文件说明。
+# 装不上不中止: 内核被 hold 时对应 tools 包可能不在源里, msr-tools 已够用。
+osinit_install_cpupower: true
+
+# ---------------- CPU 性能 ----------------
+osinit_cpu_governor: performance
+osinit_cpu_service: os-cpu-performance.service
+# 是否安装 cpufrequtils。默认 false ——
+# 本角色从未用过它的 cpufreq-info / cpufreq-set, 装它只会带进来一个
+# cpufrequtils.service(LSB 生成), 它开机会按 /etc/default/cpufrequtils 的
+# GOVERNOR 重设 governor, 该文件缺失时回落到 ondemand, 把 performance 覆盖掉。
+# ⚠ 现网事故: 6 台里 4 台重启后 governor 掉回 ondemand, 就是这么来的
+#   (cpufrequtils 比本角色的服务晚 14 秒跑)。
+# 已经装了的机器不卸载(卸载可能连带别的包), 改为把 GOVERNOR 写成 performance,
+# 方向一致就不存在赛跑 —— 见 tasks/cpu.yaml。
+osinit_install_cpufrequtils: false
+# ⚠ thermald 是另一个会压频率的用户态守护(现网 6 台全 enabled, 当次 inactive)。
+#   本角色【不动它】—— 它属于过热保护的一环, 而且从没实际出过事,
+#   与 cpufrequtils(实锤把 4 台改回 ondemand)不是一个性质, 不值得为假想问题 mask 掉。
+#   os-check 会在「CPU 供电性能模式」项里把它连同其他竞争者一起报出来
+#   (gov_rivals), 真出问题再人工 mask。
+# governor 校验前的等待秒数。
+# ⚠ 原来校验紧跟 systemctl restart 之后, 那一刻必然是 performance, 于是这一项
+#   【每次都判 PASS】—— 自己给自己作弊, 重启后才暴露。等一会儿至少能抓到
+#   "刚设完就被别的服务改回去"这类即时覆盖。
+#   但仍然【判不了重启后是否持久】, 那个只能靠重启后复验, 见 tasks/cpu.yaml 末尾提示。
+# 置 0 = 不等待(赶时间时用)。
+osinit_gov_verify_delay: 5
+
+# ---------------- 日志审计外送(osinit_do_syslog=true 时生效) ----------------
+# osinit_log_server: "10.82.4.200"
+osinit_log_port: 514
+osinit_log_proto: udp          # udp=@  tcp=@@

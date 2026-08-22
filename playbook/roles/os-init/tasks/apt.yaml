@@ -1,0 +1,51 @@
+---
+# ============================================================================
+#  apt.yaml —— 交付标准: 确保 apt 自动更新功能已关闭
+#  init 角色已写 20auto-upgrades/10periodic 并停 unattended-upgrades;
+#  这里补 systemd 定时器层面的 mask, 防止 apt-daily 抢锁或偷偷更新内核。
+# ============================================================================
+
+- name: 关闭 APT 周期性任务
+  copy:
+    dest: "{{ item }}"
+    content: |
+      APT::Periodic::Update-Package-Lists "0";
+      APT::Periodic::Download-Upgradeable-Packages "0";
+      APT::Periodic::AutocleanInterval "0";
+      APT::Periodic::Unattended-Upgrade "0";
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - /etc/apt/apt.conf.d/20auto-upgrades
+    - /etc/apt/apt.conf.d/10periodic
+
+- name: 停止并 mask apt 自动更新相关 systemd 单元
+  systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: no
+    masked: yes
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+    - apt-daily.service
+    - apt-daily-upgrade.service
+    - unattended-upgrades.service
+  failed_when: false
+
+- name: 校验 apt 自动更新已关闭
+  # ⚠ 不能数 list-timers --all 的行数 —— masked 之后依然会被列出来(NEXT/LEFT
+  #   全是 n/a), 永远数出 2。改成看 list-unit-files 的 STATE 列是否 masked。
+  shell: |
+    set -o pipefail
+    systemctl list-unit-files --type=timer 2>/dev/null | grep 'apt-daily' | grep -vc 'masked' || true
+  args:
+    executable: /bin/bash
+  register: osinit_apt_timers
+  changed_when: false
+
+- name: 输出 apt 自动更新状态
+  debug:
+    msg: >-
+      残留 apt-daily 定时器数量: {{ osinit_apt_timers.stdout | trim }} (期望 0)

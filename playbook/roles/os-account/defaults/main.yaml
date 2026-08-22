@@ -1,0 +1,49 @@
+---
+# ============================================================================
+#  os-account —— 统一登录账号 / root 口令 / 清理多余用户
+#  从 os-init 抽出的独立角色: OS 初始化里「账号」这一块单独管理, 便于复用与按需跳过。
+#  账号名、密码等站点相关取值在 inventory/group_vars/all/env.yaml 里覆盖。
+# ============================================================================
+
+# ---------------- 总开关 ----------------
+osacct_do_user: true              # 创建统一登录账号
+osacct_do_root_password: true     # 把 root 密码也设成统一登录密码
+
+# ---------------- 统一登录账号 ----------------
+# 账号名。默认中性占位 osadmin; 具体项目在 env.yaml 覆盖(如青岛联通用 wwxq)。
+osacct_user: osadmin
+# 密码有两条来源, 二选一:
+#  1) 【推荐】写在 inventory/group_vars/all/env.yaml 里:
+#       osacct_user_password: '实际密码'
+#     和该文件里已有的 harbor_admin_password / bootstrap_ssh_pass 放在一处。
+#     env.yaml 已在 .gitignore 里(init.sh 从 tmp/env.yaml.example 生成), 不会入库。
+#  2) 控制机环境变量(本变量默认值就是取它) —— 不想让密码落到任何文件时用:
+#       export OSACCT_USER_PASSWORD='实际密码'
+#     ⚠ 别加 sudo, sudo 默认会清掉环境变量(需要时用 sudo -E)。
+#
+# ⚠ 两处【只写一处】。env.yaml 属 group_vars, 优先级【高于】本文件的角色默认值,
+#   两处都写时环境变量那条【永远不生效】—— 改了环境变量却不见效会查很久。
+# 两者都没有 → user.yaml 的前置 assert 直接中止(不会拿空密码去改账号)。
+osacct_user_password: "{{ lookup('env', 'OSACCT_USER_PASSWORD') }}"
+osacct_user_shell: /bin/bash
+osacct_user_sudo_nopasswd: false   # true=sudo 免密; 默认保持需要密码
+# 默认只【报告】多余一般用户不删除, 确认无误后再置 true 执行删除
+# (会 remove=yes 连家目录一起删, 不可逆)。
+osacct_remove_extra_users: false
+osacct_protected_users:            # 永不删除的账号(除 uid<1000 的系统账号外)
+  - "{{ osacct_user }}"
+  - root
+
+# ---------------- root 密码 ----------------
+# 是否把 root 密码也设成统一登录密码。默认 true —— 不用再记 -e 参数,
+# export OSACCT_USER_PASSWORD 之后直接跑就全配好了。
+# ⚠ 改 root 密码【不可逆】(旧密码找不回)。下面两种情况要关掉(-e osacct_do_root_password=false):
+#   1) 这台是靠 bootstrap_ssh_pass 用【root 密码】连进来的 —— 改完 ansible 自己
+#      就连不上了, 得同步改 env.yaml。(root 免密/密钥登录不受影响, 可放心改)
+#   2) 机器交给别人管、不该动 root 凭据。
+# ⚠ 本角色【不修改 sshd 配置】, 只在设完后打印 sshd -T 的实际策略供人工判断。
+# root 密码。默认复用统一登录密码; 想给 root 单独设别的:
+#   export OSACCT_ROOT_PASSWORD='另一个密码'
+osacct_root_password: >-
+  {{ lookup('env', 'OSACCT_ROOT_PASSWORD') | default('', true)
+     or osacct_user_password | default('') }}

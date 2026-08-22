@@ -6,7 +6,7 @@
 echo "开始初始化项目配置文件..."
 
 # 定义需要初始化的文件对 (源文件:目标文件)
-# 注: hosts.example 里机器写在 [cluster], [qdlt:children] 引用它, 不另发模板。
+# 注: hosts.example 里机器写在 [cluster], 各功能组只列主机名, 不另发模板。
 files=(
     "./tmp/hosts.example:inventory/hosts"
     "./tmp/env.yaml.example:inventory/group_vars/all/env.yaml"
@@ -37,7 +37,7 @@ done
 # ---------------------------------------------------------------------------
 #  安装 pre-commit 钩子: 拦住明文密码 / 私钥进库
 #  .git/hooks 不受版本控制, 所以钩子源文件放在 scripts/git-hooks/, 这里装进去。
-#  每次跑 init.sh 都会覆盖安装(保证是最新版); 不想要就 git config qdlt.skipSecretScan true
+#  每次跑 init.sh 都会覆盖安装(保证是最新版); 不想要就 git config secretscan.skip true
 #  ⚠ 覆盖安装意味着: 手工改了 .git/hooks/pre-commit 而没同步回 scripts/git-hooks/,
 #    下次跑 init.sh 就会被冲掉。改钩子必须改 scripts/git-hooks/ 那份。
 # ---------------------------------------------------------------------------
@@ -54,19 +54,20 @@ fi
 
 echo "初始化完成。请根据实际环境修改 inventory/ 目录下的配置文件。"
 
-# 青岛联通交付项目额外提醒: 密码写在 env.yaml 里, GPU 节点要逐台填 SU 号
-if [ -d playbook/roles/qdlt-init ]; then
+# 通用 OS 初始化(os-init)额外提醒: 密码写在 env.yaml 里, GPU 节点要逐台填 SU 号
+if [ -d playbook/roles/os-init ]; then
     echo
-    echo "[待办] 跑青岛联通交付(qdlt-*)前还需要:"
-    echo "  vim inventory/hosts                        # 机器写进 [cluster](有 GPU 再单列 [gpu] 组并逐台填 qdlt_su)"
-    echo "  vim inventory/group_vars/all/env.yaml      # 填两类:"
+    echo "[待办] 跑 OS 初始化(os-init / os-account)前还需要:"
+    echo "  vim inventory/hosts                        # 机器写进 [cluster](有 GPU 再单列 [gpu] 组并逐台填 osinit_su)"
+    echo "  vim inventory/group_vars/all/env.yaml      # 填三类:"
     echo "    ① 连接: 首次进场机器还没 root 免密时, 取消注释 bootstrap_user/bootstrap_ssh_pass/bootstrap_become_pass"
     echo "            (connect_as=auto 会自动判: 能 root 免密就直连, 否则走这几个 用户+sudo; 已免密可不填)"
-    echo "    ② 密码: 取消注释填 qdlt_user_password(统一账号 wwxq 的密码)"
+    echo "    ② 账号: 取消注释填 osacct_user_password(统一账号的密码); 账号名默认 osadmin, 青岛联通预设为 osacct_user: wwxq"
+    echo "    ③ 离线: 无外网时置 is_offline: true(走 /opt/*-pkgs 本地源)"
     echo
     echo "  env.yaml 已 gitignore 不入库, 和 harbor_admin_password 放一处, 配好直接跑:"
-    echo "    ansible-playbook playbook/qdlt-init.yaml"
-    echo "  ⚠ 密码也可走 export QDLT_USER_PASSWORD='密码', 但与 env.yaml【只写一处】——"
+    echo "    ansible-playbook playbook/os-init.yaml"
+    echo "  ⚠ 密码也可走 export OSACCT_USER_PASSWORD='密码', 但与 env.yaml【只写一处】——"
     echo "    env.yaml 优先级高于角色默认值, 都写时环境变量永远不生效;"
     echo "    走环境变量时别用 sudo(会清环境变量), 要用 sudo -E; playbook 自带 become: yes。"
 fi

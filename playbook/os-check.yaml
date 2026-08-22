@@ -1,0 +1,29 @@
+---
+# ============================================================================
+#  os-check.yaml —— 通用主机「只读体检」(判据默认按青岛联通《交付标准》, env.yaml 可覆盖)
+#
+#  ⚠ 全程不修改任何配置, 可随时安全执行(初始化前自查 / 初始化后验收都能跑)。
+#
+#  用法:
+#    ansible-playbook playbook/os-check.yaml
+#    ansible-playbook playbook/os-check.yaml -e oscheck_verbose=true   # 打印逐项明细
+#    ansible-playbook playbook/os-check.yaml --limit CPU-229
+#
+#  产物(控制机本地): reports/os-check-<时间戳>.md 和 .csv
+# ============================================================================
+
+- name: 节点只读体检
+  hosts: cluster
+  gather_facts: yes
+  become: yes
+  any_errors_fatal: no          # 单台失败不影响其余节点体检
+  roles:
+    - os-check
+
+- name: 汇总生成体检报告
+  hosts: cluster
+  gather_facts: no
+  become: no
+  run_once: yes
+  roles:
+    - os-report

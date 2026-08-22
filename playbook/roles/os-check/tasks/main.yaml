@@ -1,0 +1,308 @@
+---
+# ============================================================================
+#  os-check/tasks/main.yaml —— 只读体检(不修改任何配置)
+# ============================================================================
+
+- name: 下发采集脚本到临时目录
+  copy:
+    src: os-collect.sh
+    dest: /tmp/os-collect.sh
+    mode: '0755'
+  changed_when: false
+
+- name: 执行只读采集
+  command: bash /tmp/os-collect.sh
+  register: oscheck_raw
+  changed_when: false
+
+- name: 解析采集结果
+  set_fact:
+    f: "{{ oscheck_raw.stdout | from_json }}"
+
+- name: 清理临时脚本
+  file:
+    path: /tmp/os-collect.sh
+    state: absent
+  changed_when: false
+
+# ============================================================================
+#  逐项判定 —— 每条 {item, expect, actual, verdict}
+#  verdict: PASS / FAIL / WARN / SKIP
+# ============================================================================
+#
+# ⚠「睿频实测 / intel_pstate 模式」项(下面判定列表里)是「TurboBoost 启用」的
+#   实证补充 —— 光看 no_turbo=0 只能证明"睿频没被禁用", 证明不了"睿频真能跑到
+#   boost 频率"。2026-08 青岛现网: 5 台 intel_pstate passive, 一度被判成"HWP
+#   关闭需进 BIOS", 实测全核满载 2788~2832 MHz(基频 2300, 高出 21~23%) ——
+#   睿频完全正常, 停机进 BIOS 是白跑。所以判据必须是【实测频率】, 不是模式或
+#   开关。本体检为只读, 不会自己压测 —— 满载数据要人工跑一次(命令见该项
+#   actual 里的提示), 所以该项默认 INFO, 只把判据摆出来, 不替人下结论。
+#   ⚠ 这段注释不能挪进下面 oscheck_results 的折叠块(>-)里 —— 那整块是一个连续
+#   的 Jinja {{ ... }} 表达式, 内部不能再嵌套 {# #} 注释(Jinja 词法分析器在
+#   表达式状态下不识别 {# 是注释起始, 会把 # 当非法字符抛 TemplateSyntaxError,
+#   2026-08 青岛现网踩过一次)。任何要写给这段判定逻辑看的说明都只能放在这里。
+
+- name: 生成判定结果
+  set_fact:
+    oscheck_results: >-
+      {{
+      [
+        {'cat':'操作系统','item':'OS 版本','expect':'Ubuntu 22.04.3~22.04.5',
+         'actual': f.os_pretty ~ ' (' ~ (f.os_point | default('?')) ~ ')',
+         'verdict': ('PASS' if (f.os_point | default('')) is match(oscheck_expect_os_pattern) else 'FAIL')},
+
+        {'cat':'操作系统','item':'内核版本','expect':'5.15.0-181 ~ 5.15.0-999',
+         'actual': f.kernel,
+         'verdict': ('PASS' if f.kernel is match(oscheck_expect_kernel_pattern) else 'FAIL')},
+
+        {'cat':'操作系统','item':'内核 GRUB 固定','expect':'GRUB_DEFAULT 指向具体内核项 + apt-mark hold',
+         'actual': 'GRUB_DEFAULT=' ~ (f.grub_default | default('未设置') | trim) ~ ' | hold: ' ~ (f.kernel_hold | default('无')),
+         'verdict': ('PASS' if ((f.kernel_hold | default('')) | length > 0
+                                and (f.grub_default | default('')) | trim not in ['', '0'])
+                     else 'WARN')},
+
+        {'cat':'操作系统','item':'时区','expect': oscheck_expect_timezone,
+         'actual': f.timezone | default(''),
+         'verdict': ('PASS' if (f.timezone | default('')) == oscheck_expect_timezone else 'FAIL')},
+
+        {'cat':'操作系统','item':'时间同步服务','expect':'chrony active 且已实际同步(NTPSynchronized=yes)',
+         'actual': 'chrony=' ~ (f.chrony_active | default('?')) ~ ' NTPSync=' ~ (f.ntp_sync | default('?'))
+                   ~ ' offset=' ~ (f.chrony_offset | default('?') | trim | default('未取到', true))
+                   ~ ' 源=' ~ (f.chrony_source | default('') | trim | default('无', true))
+                   ~ (' | ⚠ 服务在跑但一次都没同步上, 检查 NTP 源可达性(chronyc sources -v)'
+                      if ((f.chrony_active | default('')) == 'active'
+                          and (f.ntp_sync | default('')) != 'yes') else ''),
+         'verdict': ('PASS' if ((f.chrony_active | default('')) == 'active'
+                                and (f.ntp_sync | default('')) == 'yes')
+                     else 'FAIL')},
+
+        {'cat':'操作系统','item':'cloud-init 关闭','expect':'disabled / masked / 未安装',
+         'actual': f.cloudinit | default(''),
+         'verdict': ('PASS' if ((f.cloudinit | default('')) is search('disabled|masked|not-installed')) else 'FAIL')},
+
+        {'cat':'操作系统','item':'apt 自动更新关闭','expect':'apt-daily 定时器 0 个, unattended 未启用',
+         'actual': 'apt-daily 定时器=' ~ (f.apt_timers | default('?')) ~ ' unattended=' ~ (f.unattended | default('?')),
+         'verdict': ('PASS' if ((f.apt_timers | default('9') | int) == 0
+                                and (f.unattended | default('')) not in ['enabled'])
+                     else 'FAIL')},
+
+        {'cat':'操作系统','item':'swap 永久关闭','expect':'当前无启用 swap + fstab 无 swap 条目 + swap unit 未 enabled + swappiness 已落盘',
+         'actual': '当前启用=' ~ (f.swap_on | default('') | trim(',') | default('无', true))
+                   ~ ' | fstab 未注释 swap 条目=' ~ (f.swap_fstab | default('?'))
+                   ~ ' | swap.target=' ~ (f.swap_target | default('?') | trim | default('未知', true))
+                   ~ ' | swappiness=' ~ (f.swappiness | default('?'))
+                   ~ ('(已落盘)' if ((f.swappiness_persisted | default('0') | int) > 0) else '(仅运行时, 重启丢失)')
+                   ~ ((' | ⚠ 当前虽已关闭, 但 '
+                       ~ (('fstab 里还有 ' ~ (f.swap_fstab | string) ~ ' 条 swap 条目; ')
+                          if ((f.swap_fstab | default('0') | int) > 0) else '')
+                       ~ ('swap.target 仍为 enabled; ' if ((f.swap_target | default('') | trim) == 'enabled') else '')
+                       ~ '重启后会自动挂回')
+                      if ((f.swap_on | default('') | trim(',') | length == 0)
+                          and ((f.swap_fstab | default('0') | int) > 0
+                               or (f.swap_target | default('') | trim) == 'enabled')) else '')
+                   ~ ((' | swap.target 未 mask(static 是 Ubuntu 默认值): 当前没有 swap 条目所以挂不回来, '
+                       ~ '但 systemd-gpt-auto-generator 仍可能按 GPT 分区类型自动生成 .swap unit, '
+                       ~ '建议 mask(os-init 的 swap 步骤会做)')
+                      if ((f.swap_on | default('') | trim(',') | length == 0)
+                          and (f.swap_fstab | default('0') | int) == 0
+                          and (f.swap_target | default('') | trim) == 'static') else ''),
+         'verdict': ('FAIL' if ((f.swap_on | default('') | trim(',') | length > 0)
+                                or (f.swap_fstab | default('0') | int) > 0)
+                     else ('WARN' if ((f.swap_target | default('') | trim) in ['enabled', 'static']
+                                      or (f.swappiness_persisted | default('0') | int) == 0)
+                           else 'PASS'))},
+
+        {'cat':'操作系统','item':'统一登录账号','expect': oscheck_expect_user ~ ' 存在且无其他一般用户',
+         'actual': '一般用户: ' ~ (f.normal_users | default('') | trim),
+         'verdict': ('PASS' if ((f.normal_users | default('')).split() | reject('equalto', oscheck_expect_user) | list | length == 0
+                                and oscheck_expect_user in (f.normal_users | default('')))
+                     else ('WARN' if oscheck_expect_user in (f.normal_users | default('')) else 'FAIL'))},
+
+        {'cat':'BIOS','item':'vt-d / IOMMU 关闭','expect':'IOMMU 未启用',
+         'actual': 'DMAR enabled 命中=' ~ (f.iommu_dmar | default('?')) ~ ' iommu_groups=' ~ (f.iommu_groups | default('?'))
+                   ~ ' | cmdline: ' ~ (f.cmdline | default('') | regex_search('\S*iommu\S*') | default('无 iommu 参数', true)),
+         'verdict': ('PASS' if ((f.iommu_dmar | default('0') | int) == 0
+                                and (f.iommu_groups | default('0') | int) == 0)
+                     else 'FAIL')},
+
+        {'cat':'BIOS','item':'超线程启用','expect':'Thread(s) per core = 2',
+         'actual': (f.cpu_threads_per_core | default('?')) ~ ' 线程/核, 共 ' ~ (f.cpu_cores | default('?')) ~ ' 逻辑核',
+         'verdict': ('PASS' if (f.cpu_threads_per_core | default('1') | int) >= 2 else 'FAIL')},
+
+        {'cat':'BIOS','item':'子 NUMA 关闭','expect':'NUMA 节点数 = CPU socket 数(整机 2 numa)',
+         'actual': 'NUMA=' ~ (f.numa_nodes | default('?')) ~ ' Socket=' ~ (f.cpu_sockets | default('?')),
+         'verdict': ('PASS' if (f.numa_nodes | default('0') | int) == (f.cpu_sockets | default('-1') | int) else 'FAIL')},
+
+        {'cat':'BIOS','item':'CPU 供电性能模式','expect':'所有核心 governor = performance',
+         'actual': 'available=[' ~ (f.gov_available | default('NA')) ~ '] current=[' ~ (f.gov_current | default('NA') | trim(',')) ~ ']'
+                   ~ (' | ⚠ 存在会改 governor 的服务: ' ~ (f.gov_rivals | default('') | trim)
+                      if ((f.gov_rivals | default('')) is search('enabled')) else ''),
+         'verdict': ('PASS' if (f.gov_current | default('') | trim(',')) == 'performance'
+                     else ('WARN' if (f.gov_available | default('')) == '' else 'FAIL'))},
+
+        {'cat':'BIOS','item':'TurboBoost 启用','expect':'no_turbo=0 或 boost=1(至少一个文件存在)',
+         'actual': 'no_turbo=' ~ (f.boost_no_turbo | default('NA')) ~ ' boost=' ~ (f.boost_flag | default('NA'))
+                   ~ ' | 基频=' ~ (f.cpu_base_mhz | default('NA')) ~ ' 最大睿频=' ~ (f.cpu_max_mhz | default('NA')) ~ ' MHz'
+                   ~ ' | ⚠ 开关已开 ≠ 睿频真能跑上去, 满载实测见下一项',
+         'verdict': ('PASS' if ((f.boost_no_turbo | default('NA')) == '0' or (f.boost_flag | default('NA')) == '1')
+                     else ('FAIL' if ((f.boost_no_turbo | default('NA')) != 'NA' or (f.boost_flag | default('NA')) != 'NA')
+                           else 'WARN'))},
+
+        {'cat':'BIOS','item':'睿频实测 / intel_pstate 模式','expect':'全核满载实测频率高出基频 10% 以上',
+         'actual': 'pstate=' ~ (f.pstate_status | default('NA')) ~ ' driver=' ~ (f.scaling_driver | default('NA'))
+                   ~ ' | 温度墙命中: core=' ~ (f.throttle_core | default('?')) ~ ' pkg=' ~ (f.throttle_pkg | default('?'))
+                   ~ ' | CPU温度=' ~ (f.cpu_temp | default('NA') | trim(',')) ~ '°C TJMAX=' ~ (f.cpu_tjmax | default('NA')) ~ '°C'
+                   ~ (' | ⚠ passive 模式(BIOS 未开 HWP): 不影响睿频, 但会暴露 ondemand governor'
+                      if (f.pstate_status | default('')) == 'passive' else '')
+                   ~ (' | ❌ 温度墙命中非 0, 历史上降过频 —— 先查散热, 此时频率数据不可用于判睿频'
+                      if ((f.throttle_core | default('0') | int) > 0 or (f.throttle_pkg | default('0') | int) > 0)
+                      else ' | ✅ 从未撞温度墙, 频率数据可信')
+                   ~ ' | 满载实测(人工): 见交付文档「睿频实测」一节的 MSR 读法, 或 turbostat --Summary 看 Bzy_MHz',
+         'verdict': ('FAIL' if ((f.throttle_core | default('0') | int) > 0 or (f.throttle_pkg | default('0') | int) > 0)
+                     else 'INFO')},
+
+        {'cat':'PCIe','item':'ACSCtl 全部关闭','expect':'SrcValid+ 计数 = 0',
+         'actual': (f.acs_enabled_count | default('?')) ~ ' / ' ~ (f.acs_total_count | default('?')) ~ ' 个 ACSCtl 处于开启',
+         'verdict': ('PASS' if (f.acs_enabled_count | default('1') | int) == 0 else 'FAIL')},
+
+        {'cat':'PCIe','item':'PCIe 链路无降速','expect':'无 downgraded 链路' ~ (', 且有 Gen5 x16 链路' if (oscheck_check_pcie_gen5 | bool) else ''),
+         'actual': 'downgraded=' ~ (f.pcie_downgrade | default('?')) ~ ' | Gen5 x16 链路数=' ~ (f.pcie_gen5_x16 | default('?'))
+                   ~ ('' if (oscheck_check_pcie_gen5 | bool)
+                      else ' | 本节点非 GPU 算力节点, Gen5 要求不适用(oscheck_check_pcie_gen5=false)'),
+         'verdict': ('SKIP' if not (oscheck_check_pcie_gen5 | bool)
+                     else ('PASS' if (f.pcie_downgrade | default('1') | int) == 0 else 'WARN'))},
+
+        {'cat':'磁盘','item':'根分区文件系统','expect':'ext4, 占用系统盘剩余全部空间',
+         'actual': f.sys_disk_root | default(''),
+         'verdict': ('PASS' if (f.root_fstype | default('')) == 'ext4' else 'FAIL')},
+
+        {'cat':'磁盘','item':'系统盘 RAID','expect':'有硬件 RAID 卡则 RAID1; 无则单盘且不用软 RAID',
+         'actual': 'RAID卡: ' ~ (f.raid_ctrl | default('无') | trim(';') | default('无', true))
+                   ~ ' | mdraid: ' ~ (f.md_raid | default('无') | trim | default('无', true)),
+         'verdict': ('FAIL' if ((f.md_raid | default('') | trim) | length > 0) else 'WARN')},
+
+        {'cat':'磁盘','item':'数据盘保持裸盘','expect':'无分区 / 无 LVM / 无 RAID / 无文件系统',
+         'actual': ('本节点非 GPU 算力节点, 裸盘要求不适用(盘在正常使用中) | 检出: '
+                    ~ (f.data_disk_dirty | default('无') | trim | default('无', true)))
+                   if not (oscheck_check_bare_disk | bool)
+                   else (('检出非裸盘: ' ~ (f.data_disk_dirty | trim))
+                         if ((f.data_disk_dirty | default('') | trim) | length > 0)
+                         else '全部数据盘为裸盘'),
+         'verdict': ('SKIP' if not (oscheck_check_bare_disk | bool)
+                     else ('FAIL' if ((f.data_disk_dirty | default('') | trim) | length > 0) else 'PASS'))},
+
+        {'cat':'网络','item':'带内 bond 配置','expect':'mode 4 802.3ad, hash layer3+4',
+         'actual': (f.bond_detail | default('') | trim) if ((f.bond_detail | default('') | trim) | length > 0)
+                   else '未发现 bond(交付标准要求带内做 bond mode4, 需网络侧配合, 本工具不改网络)',
+         'verdict': ('WARN' if ((f.bond_detail | default('') | trim) | length == 0)
+                     else ('PASS' if ((f.bond_detail | default('') is search(oscheck_expect_bond_mode))
+                                      and (f.bond_detail | default('') is search('layer3\+4')))
+                           else 'FAIL'))},
+
+        {'cat':'网络','item':'未使用 VLAN 子接口','expect':'系统内无 vlan 接口',
+         'actual': (f.vlan_ifaces | default('') | trim) if ((f.vlan_ifaces | default('') | trim) | length > 0) else '无',
+         'verdict': ('FAIL' if ((f.vlan_ifaces | default('') | trim) | length > 0) else 'PASS')},
+
+        {'cat':'网络','item':'默认路由在主带内网卡','expect':'默认路由唯一且走 bond',
+         'actual': f.default_route | default('') | trim(';'),
+         'verdict': ('PASS' if ((f.default_route | default('') is search('bond'))
+                                and ((f.default_route | default('')).split(';') | select('search', 'default') | list | length == 1))
+                     else 'WARN')},
+
+        {'cat':'网络','item':'带内/带外 IP 末段一致','expect':'带内与 BMC 地址最后一段相同',
+         'actual': '带内=' ~ (mgmt_ip | default('') | trim | default('未取到', true))
+                   ~ ' 带外(ipmitool)=' ~ (f.ipmi_lan | default('') | trim | default('未取到', true))
+                   ~ (' | ipmitool 未安装或无 BMC 访问权限, 无法比对' if ((f.ipmi_lan | default('') | trim) | length == 0) else ''),
+         'verdict': ('WARN' if ((f.ipmi_lan | default('') | trim) | length == 0
+                                or (mgmt_ip | default('') | trim) | length == 0)
+                     else ('PASS' if ((f.ipmi_lan | trim).split('.') | last
+                                      == (mgmt_ip | trim).split('.') | last)
+                           else 'FAIL'))},
+
+        {'cat':'RDMA','item':'RDMA 设备与 hca_id 命名','expect':'计算网 mlx5_0~mlx5_7, 存储网另行命名(如 mlx5_8/mlx5_20)',
+         'actual': (f.rdma_devs | default('无') | trim(',')) ~ ' | ' ~ (f.rdma_detail | default('') | trim)
+                   ~ ((' | 仅 ' ~ ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length) | string
+                       ~ ' 个 RDMA 设备(<' ~ (oscheck_rdma_compute_min_devs | string)
+                       ~ '), 判定为非计算节点, 命名规范不适用')
+                      if ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length
+                          < (oscheck_rdma_compute_min_devs | int)) else ''),
+         'verdict': ('SKIP' if ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length
+                                < (oscheck_rdma_compute_min_devs | int))
+                     else ('PASS' if (f.rdma_devs | default('') is search('mlx5_0,')) else 'WARN'))},
+
+        {'cat':'RDMA','item':'OFED / DOCA 版本','expect':'CX8/BF3 → DOCA_OFED 3.2.2 LTS; 纯 CX7 及以下 → 5.8-7.0.6.1 或 24.10-4.1.4.0',
+         'actual': 'ofed_info=' ~ (f.ofed_version | default('') | trim | default('未安装', true))
+                   ~ ' | doca=' ~ (f.doca_version | default('') | trim(',') | default('无', true))
+                   ~ ((' | 仅 ' ~ ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length) | string
+                       ~ ' 个 RDMA 设备, 判定为非计算节点; 期望版本是按计算网卡(CX7/CX8)写的, 不适用')
+                      if ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length
+                          < (oscheck_rdma_compute_min_devs | int)) else ''),
+         'verdict': ('SKIP' if ((f.rdma_devs | default('') | trim(',')).split(',') | reject('equalto', '') | list | length
+                                < (oscheck_rdma_compute_min_devs | int))
+                     else ('PASS' if (oscheck_expect_ofed_any | select('in', (f.ofed_version | default('')) ~ (f.doca_version | default(''))) | list | length > 0)
+                           else 'FAIL'))},
+
+        {'cat':'GPU','item':'GPU 驱动版本','expect': oscheck_expect_gpu_driver ~ ' + 同版本 fabricmanager + persistenced',
+         'actual': 'driver=' ~ (f.gpu_driver | default('?')) ~ ' fabricmanager=' ~ (f.fabricmgr | default('?'))
+                   ~ ' persistenced=' ~ (f.persistenced | default('?')),
+         'verdict': ('SKIP' if not (oscheck_check_gpu | bool)
+                     else ('PASS' if (f.gpu_driver | default('')) == oscheck_expect_gpu_driver else 'FAIL'))},
+
+        {'cat':'GPU','item':'GPU VBIOS 版本','expect':'B300 ≥ ' ~ oscheck_expect_vbios_min,
+         'actual': (f.gpu_vbios | default('') | trim(',')) | default('未取到', true),
+         'verdict': ('SKIP' if not (oscheck_check_gpu | bool)
+                     else ('FAIL' if ((f.gpu_vbios | default('') | trim(',')) | length == 0)
+                           else ('PASS' if ((f.gpu_vbios | trim(',')).split(',')
+                                            | map('trim') | reject('equalto', '')
+                                            | map('upper')
+                                            | select('lt', oscheck_expect_vbios_min | upper)
+                                            | list | length == 0)
+                                 else 'FAIL')))},
+
+        {'cat':'GPU','item':'CUDA 未安装','expect':'交付标准要求不安装 CUDA',
+         'actual': f.cuda_toolkit | default('未安装'),
+         'verdict': ('FAIL' if ((f.cuda_toolkit | default('') | trim) | length > 0) else 'PASS')},
+
+        {'cat':'共享存储','item':'共享存储挂载','expect':'高性能→/gpfs, 大容量→/hgpfs, 其他→/gpfs02 起; 且开机自动挂载',
+         'actual': '已挂载: ' ~ (f.mounts_shared | default('无') | trim(';') | default('无', true))
+                   ~ ' | fstab: ' ~ (f.fstab_shared | default('无') | trim(';') | default('无', true)),
+         'verdict': ('SKIP' if (oscheck_expect_mounts | length == 0)
+                     else ('PASS' if (oscheck_expect_mounts | reject('in', f.mounts_shared | default('')) | list | length == 0)
+                           else 'FAIL'))},
+
+        {'cat':'软件包','item':'ipmitool 已安装','expect':'已安装',
+         'actual': f.ipmitool | default('?'),
+         'verdict': ('PASS' if ((f.ipmitool | default('')) != 'not-installed') else 'FAIL')},
+
+        {'cat':'软件包','item':'防火墙 ufw 关闭','expect':'inactive',
+         'actual': f.ufw_state | default('?'),
+         'verdict': ('PASS' if ((f.ufw_state | default('')) != 'active') else 'WARN')},
+
+        {'cat':'一致性','item':'硬件基线(跨节点比对)','expect':'全集群 CPU/内存/BIOS/GPU 型号完全一致',
+         'actual': 'CPU=' ~ (f.cpu_model | default('?') | trim) ~ ' | 内存=' ~ (f.mem_total_gb | default('?')) ~ 'GB/'
+                   ~ (f.mem_dimms | default('?')) ~ '条/' ~ (f.mem_vendor | default('?') | trim(','))
+                   ~ ' | BIOS=' ~ (f.bios_version | default('?')) ~ ' | 机型=' ~ (f.sys_product | default('?')),
+         'verdict':'INFO'}
+      ]
+      }}
+
+- name: 输出本机体检结果
+  debug:
+    msg: >-
+      [{{ inventory_hostname }}] {{ item.verdict }} | {{ item.cat }} / {{ item.item }}
+      → 实际: {{ item.actual }}
+  loop: "{{ oscheck_results }}"
+  loop_control:
+    label: "{{ item.verdict }} {{ item.item }}"
+  when: oscheck_verbose | default(false) | bool
+
+- name: 本机不合规项汇总
+  debug:
+    msg: >-
+      {{ ('✅ ' ~ inventory_hostname ~ ' 全部检查项通过')
+         if (oscheck_results | selectattr('verdict', 'in', ['FAIL', 'WARN']) | list | length == 0)
+         else (inventory_hostname ~ ' 不合规 '
+               ~ (oscheck_results | selectattr('verdict','equalto','FAIL') | list | length) ~ ' 项 / 待确认 '
+               ~ (oscheck_results | selectattr('verdict','equalto','WARN') | list | length) ~ ' 项: '
+               ~ (oscheck_results | selectattr('verdict','in',['FAIL','WARN'])
+                  | map(attribute='item') | join(', '))) }}

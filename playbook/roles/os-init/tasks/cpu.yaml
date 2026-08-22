@@ -1,0 +1,217 @@
+---
+# ============================================================================
+#  cpu.yaml —— 交付标准「供电配置 / boost 配置」
+#    - cpu 供电策略维持性能模式(BIOS 配不了就在系统内配服务)
+#    - 确认 cpu 启用 TurboBoost
+#  校验命令(与交付标准一致):
+#    cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors
+#    cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor | sort | uniq
+#    cat /sys/devices/system/cpu/cpufreq/boost
+#    cat /sys/devices/system/cpu/intel_pstate/no_turbo
+#
+#  ⚠ 现网事故(2026-08 青岛 6 台): 重启后 4/6 台 governor 掉回 ondemand。
+#    根因是 cpufrequtils.service(LSB 脚本经 systemd-sysv-generator 生成)在本角色
+#    的服务 Finished 之后 14 秒才跑, 按 /etc/default/cpufrequtils 的 GOVERNOR
+#    重设一遍 —— 该文件不存在时脚本回落到 ondemand, 于是覆盖掉 performance。
+#    cpu-001 侥幸没掉, 只因为它那台恰好有这个文件且值是 performance。
+#    三处一起堵:
+#      1) 不再安装 cpufrequtils(本角色从未用过它的命令, 装它纯属引入竞争者)
+#      2) 已装的机器写 /etc/default/cpufrequtils GOVERNOR=performance, 方向一致
+#      3) service 加 After=cpufrequtils.service 等, 保证本角色最后收尾
+#  ⚠ 另一处更隐蔽的问题: 原来的 governor 校验紧跟在 systemctl restart 之后 ——
+#    那一刻必然是 performance, 所以这一项【每次都判 PASS】, 等于自己给自己作弊,
+#    重启后才暴露。现在校验前先 sleep 让开机竞争者跑完, 且明确说明其局限。
+# ============================================================================
+
+- name: 探测 cpufreq 是否可用
+  stat:
+    path: /sys/devices/system/cpu/cpu0/cpufreq
+  register: osinit_cpufreq
+
+- name: 无 cpufreq 接口时提示(通常为 BIOS 已锁性能模式或驱动未加载)
+  debug:
+    msg: >-
+      ⚠ 未发现 /sys/devices/system/cpu/cpu0/cpufreq,
+      无法在系统内设置 governor。请确认 BIOS 已配置为最高性能模式
+      (关闭 C-state、关闭节能、启用 TurboBoost)。
+  when: not osinit_cpufreq.stat.exists
+
+- name: 配置 CPU 性能模式
+  block:
+    - name: 读取可用 governor 列表
+      command: cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors
+      register: osinit_govs
+      changed_when: false
+
+    - name: 校验 performance governor 可用
+      assert:
+        that: "'performance' in osinit_govs.stdout"
+        fail_msg: >-
+          可用 governor 中没有 performance: {{ osinit_govs.stdout }}
+          —— 需要在 BIOS 中改为最高性能模式(或加载 intel_pstate/acpi-cpufreq)。
+
+    # ⚠ 原来这里装 cpufrequtils("提供 cpufreq-info / cpufreq-set")——
+    #   但本角色从头到尾没用过这两个命令, 装它只带来一个和自己抢 governor 的
+    #   LSB 服务(见文件头事故说明)。所以默认【不装】。
+    #   真需要这两个命令排查时: -e osinit_install_cpufrequtils=true
+    #   (装了也不怕: 下面会把 GOVERNOR 写成 performance, 方向一致就不存在赛跑)
+    - name: 安装 cpufrequtils(默认不装, 它会和 governor 服务抢)
+      apt:
+        name: cpufrequtils
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+      failed_when: false
+      when: osinit_install_cpufrequtils | bool
+
+    # 存量机器上已经装了 cpufrequtils(本角色早期版本装的), 卸载它有副作用
+    # (可能连带别的包), 所以不卸载, 改成把它的 GOVERNOR 拨到 performance ——
+    # 它跑赢跑输都无所谓了。文件不存在时创建, 这正是 4 台掉出 performance 的原因。
+    - name: 探测 cpufrequtils 是否已安装
+      stat:
+        path: /usr/sbin/cpufreq-set
+      register: osinit_cpufrequtils_bin
+
+    - name: 把 cpufrequtils 的 GOVERNOR 也设成 {{ osinit_cpu_governor }}(消除竞争)
+      copy:
+        dest: /etc/default/cpufrequtils
+        content: |
+          # 由 Ansible os-init 写入 —— 青岛联通交付标准: CPU 维持性能模式
+          # ⚠ cpufrequtils.service 开机会按这里的 GOVERNOR 重设一遍 governor,
+          #   本文件【缺失】时它回落到 ondemand, 会覆盖掉 performance。
+          #   现网 cpu-002/004/005/008 重启后掉出 performance 就是因为缺这个文件。
+          ENABLE="true"
+          GOVERNOR="{{ osinit_cpu_governor }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: osinit_cpufrequtils_bin.stat.exists
+
+    - name: 写入 governor 常驻服务(重启后仍生效)
+      template:
+        src: os-cpu-performance.service.j2
+        dest: "/etc/systemd/system/{{ osinit_cpu_service }}"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: reload systemd
+
+    - name: 启用并启动 governor 服务
+      systemd:
+        name: "{{ osinit_cpu_service }}"
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+
+    # ⚠ 这里【不能】紧跟 restart 就校验 —— 那一刻必然是 performance, 结果永远 PASS,
+    #   真正的覆盖发生在开机时序里(cpufrequtils 晚 14 秒), 本次运行看不到。
+    #   等一小会儿至少能抓到"跑完立刻被别的服务改回去"这类即时覆盖。
+    - name: 等待可能的竞争服务收尾后再校验
+      wait_for:
+        timeout: "{{ osinit_gov_verify_delay }}"
+      when: osinit_gov_verify_delay | int > 0
+
+    - name: 校验所有核心的 governor
+      shell: |
+        set -o pipefail
+        cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor | sort | uniq
+      args:
+        executable: /bin/bash
+      register: osinit_gov_now
+      changed_when: false
+
+    - name: governor 校验结果(交付标准要求输出仅有 performance)
+      assert:
+        that: osinit_gov_now.stdout_lines | unique == [osinit_cpu_governor]
+        fail_msg: "❌ governor 不统一或非 {{ osinit_cpu_governor }}: {{ osinit_gov_now.stdout_lines }}"
+        success_msg: "✅ 全部核心 governor = {{ osinit_cpu_governor }}"
+
+    # 本次运行判 PASS 不等于重启后还是 PASS —— 这一条必须靠重启后复验。
+    - name: ⚠ governor 是否持久要靠重启验证
+      debug:
+        msg: |
+          governor 当前 = {{ osinit_gov_now.stdout_lines | join(',') }}(本次运行内正确)。
+          ⚠ 但【是否重启后仍然正确】本次判不了 —— 覆盖发生在开机时序里。
+          重启后必须复验:
+            ansible {{ inventory_hostname }} -m shell -a 'cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor | sort -u'
+          期望输出仅一行 {{ osinit_cpu_governor }}。
+
+  when: osinit_cpufreq.stat.exists
+
+# ---------------- TurboBoost ----------------
+
+- name: 探测 TurboBoost 控制接口
+  stat:
+    path: "{{ item }}"
+  loop:
+    - /sys/devices/system/cpu/intel_pstate/no_turbo
+    - /sys/devices/system/cpu/cpufreq/boost
+  register: osinit_boost_paths
+
+- name: 启用 TurboBoost —— intel_pstate 方式(no_turbo 写 0)
+  copy:
+    dest: /sys/devices/system/cpu/intel_pstate/no_turbo
+    content: "0"
+    unsafe_writes: yes
+  when: osinit_boost_paths.results[0].stat.exists
+  failed_when: false
+
+- name: 启用 TurboBoost —— acpi-cpufreq 方式(boost 写 1)
+  copy:
+    dest: /sys/devices/system/cpu/cpufreq/boost
+    content: "1"
+    unsafe_writes: yes
+  when: osinit_boost_paths.results[1].stat.exists
+  failed_when: false
+
+- name: 读取 TurboBoost 当前状态
+  shell: |
+    set -o pipefail
+    for f in /sys/devices/system/cpu/intel_pstate/no_turbo \
+             /sys/devices/system/cpu/cpufreq/boost; do
+      [ -f "$f" ] && echo "$f = $(cat $f)"
+    done
+    exit 0
+  args:
+    executable: /bin/bash
+  register: osinit_boost_state
+  changed_when: false
+
+- name: TurboBoost 状态(no_turbo 应为 0 / boost 应为 1)
+  debug:
+    msg: >-
+      {{ osinit_boost_state.stdout_lines
+         if osinit_boost_state.stdout_lines | length > 0
+         else '⚠ 两个 TurboBoost 接口文件均不存在 —— 交付标准要求至少有一个存在, 需在 BIOS 检查 TurboBoost' }}
+
+# ---------------- intel_pstate 模式 / HWP(只读, 只报告) ----------------
+# intel_pstate 有两种模式, 取决于 BIOS 里 HWP(Hardware P-States) 开没开:
+#   active  → scaling_driver = intel_pstate, governor 只有 performance/powersave
+#   passive → scaling_driver = intel_cpufreq, 暴露通用 governor(含 ondemand)
+# 内核 5.8+ 检测不到 HWP 时【自动退回 passive】, 所以 passive 基本等价于
+# "BIOS 里 HWP 是关的" —— 即使 /proc/cmdline 里没写 intel_pstate=passive。
+#
+# ⚠ 为什么要报这个: HWP 关闭会导致睿频上不去(实测过 Xeon 8468 被锁在 2100 基频),
+#   交付标准要求启用 TurboBoost, 光看 no_turbo=0 不够 —— 那只说明"没禁用睿频",
+#   不代表睿频真能跑上去。而且 passive 模式才可能被 ondemand 抢走 governor。
+# ⚠ 本角色【不改】这个 —— 它只能在 BIOS 里改(改 cmdline 强制 active 在 HWP
+#   关闭时无效), 属于 os-check 报出、人工去 BIOS 处置的项。
+- name: 读取 intel_pstate 运行模式
+  command: cat /sys/devices/system/cpu/intel_pstate/status
+  register: osinit_pstate_status
+  changed_when: false
+  failed_when: false
+
+- name: intel_pstate 模式与 HWP 判断(只报告, 不修改)
+  debug:
+    msg: >-
+      {{ 'intel_pstate 模式 = ' ~ (osinit_pstate_status.stdout | trim)
+         ~ (' ✅ HWP 已启用(active), governor 只有 performance/powersave, 不会被 ondemand 抢'
+            if (osinit_pstate_status.stdout | trim) == 'active'
+            else ' ⚠ HWP 未启用 —— 内核检测不到 HWP 时自动退回 passive。'
+                 ~ '影响两点: 1) 睿频可能上不去(实测有机型被锁在基频), 交付标准要求启用 TurboBoost;'
+                 ~ ' 2) passive 模式暴露 ondemand governor, 存在被其他服务改走的风险。'
+                 ~ '需【在 BIOS 里开启 HWP / Hardware P-States】, 本角色不改这项。')
+         if (osinit_pstate_status.rc | default(1)) == 0
+         else 'ℹ 无 /sys/devices/system/cpu/intel_pstate/status —— 非 intel_pstate 驱动, 本项不适用' }}
+

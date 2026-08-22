@@ -93,6 +93,22 @@
     enabled: no
   ignore_errors: yes
 
+# 光停 unattended-upgrades 不够: apt-daily.timer / apt-daily-upgrade.timer 仍会
+# 定时拉起 apt-daily(.service) 去 update/download, 抢 dpkg 锁、偶尔偷偷升级内核。
+# mask 掉定时器和对应 service 才是真正关死后台自动更新。
+- name: 停止并 mask apt 自动更新相关 systemd 单元
+  systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: no
+    masked: yes
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+    - apt-daily.service
+    - apt-daily-upgrade.service
+  failed_when: false
+
 - name: 禁用 cloud-init 网络配置管理 (防止其覆盖手动/静态网络设置)
   block:
     - name: 确保 cloud-init 配置目录存在
@@ -112,6 +128,38 @@
         owner: root
         group: root
         mode: '0644'
+
+    # 上面只关了 cloud-init 的【网络配置】那一块。彻底停用 cloud-init 本体
+    # (写 .disabled 标记 + mask 四个 unit)只在机器确实装了 cloud-init 时做,
+    # 没装就不必凭空 mask 一堆不存在的 unit。
+    - name: 检查 cloud-init 是否安装
+      stat:
+        path: /usr/bin/cloud-init
+      register: init_cloudinit_bin
+
+    - name: 彻底停用 cloud-init 本体(装了才做)
+      when: init_cloudinit_bin.stat.exists
+      block:
+        - name: 写入 cloud-init 禁用标记文件
+          copy:
+            dest: /etc/cloud/cloud-init.disabled
+            content: "由 Ansible init 写入: 彻底关闭 cloud-init\n"
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: 停止并 mask cloud-init 全部 systemd 单元
+          systemd:
+            name: "{{ item }}"
+            state: stopped
+            enabled: no
+            masked: yes
+          loop:
+            - cloud-init.service
+            - cloud-init-local.service
+            - cloud-config.service
+            - cloud-final.service
+          failed_when: false
 
 - name: 精准锁定当前正在使用的内核版本防止误升级
   shell: |

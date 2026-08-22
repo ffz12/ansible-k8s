@@ -1,0 +1,21 @@
+---
+# ============================================================================
+#  os-account —— 账号管理入口
+#  从 os-init 抽出: 统一登录账号 / root 口令 / 清理多余用户。
+#  两步各自独立 tag, 互不牵连(见 rootpw.yaml 开头对拆分原因的说明):
+#    --tags account   只碰统一账号 / sudoers / 多余用户, 【完全不碰 root】
+#    --tags rootpw    只设 root 密码
+#    --tags os        账号相关全跑(user + rootpw)
+# ============================================================================
+
+- name: 统一登录账号 / sudoers / 多余用户
+  include_tasks: user.yaml
+  when: osacct_do_user | bool
+  tags: [os, account]
+
+- name: 把 root 密码也设成统一登录密码
+  include_tasks: rootpw.yaml
+  when:
+    - osacct_do_user | bool
+    - osacct_do_root_password | bool
+  tags: [os, account, rootpw]

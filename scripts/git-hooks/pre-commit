@@ -2,7 +2,7 @@
 # ============================================================================
 #  pre-commit —— 拦住明文密码 / 私钥进库
 #
-#  背景: 青岛联通交付的统一登录密码按明文保存(不做 vault 加密), 文件靠
+#  背景: 统一登录密码按明文保存(不做 vault 加密), 文件靠
 #        .gitignore 排除。但 .gitignore 拦不住 `git add -f`, 也拦不住
 #        "顺手把密码贴到某个 yaml 里" 这种情况。而密码一旦进了 git 历史
 #        就删不掉 —— 后面改了密码, 旧提交里那一份还在。所以在提交时兜一道。
@@ -13,13 +13,13 @@
 #
 #  应急放行(确认是误报时):
 #      git commit --no-verify
-#  或整体关掉:  git config qdlt.skipSecretScan true
+#  或整体关掉:  git config secretscan.skip true
 # ============================================================================
 set -u
 
 RED=$'\033[0;31m'; YEL=$'\033[0;33m'; GRN=$'\033[0;32m'; NC=$'\033[0m'
 
-[ "$(git config --get qdlt.skipSecretScan 2>/dev/null)" = "true" ] && exit 0
+[ "$(git config --get secretscan.skip 2>/dev/null)" = "true" ] && exit 0
 
 # 只看本次暂存的内容; -z + 手工分割, 兼容带空格/中文的路径
 mapfile -d '' STAGED < <(git diff --cached --name-only --diff-filter=ACMR -z)
@@ -30,7 +30,7 @@ fail=0
 # ---------------------------------------------------------------------------
 # 1) 整个文件本就不该入库(即便加密过也不入库)
 # ---------------------------------------------------------------------------
-FORBIDDEN_PATHS='^(inventory/qdlt-secrets\.yml|inventory/hosts|inventory/group_vars/all/env\.yaml)$'
+FORBIDDEN_PATHS='^(inventory/os-secrets\.yml|inventory/hosts|inventory/group_vars/all/env\.yaml)$'
 
 for f in "${STAGED[@]}"; do
     if printf '%s' "$f" | grep -qE "$FORBIDDEN_PATHS"; then
@@ -56,7 +56,7 @@ done
 # 3) 密码字段被赋了【真实值】
 #    模板里的占位符要放过去, 否则 tmp/*.example 永远提交不了。
 # ---------------------------------------------------------------------------
-PW_KEYS='qdlt_user_password|qdlt_root_password|bootstrap_ssh_pass|bootstrap_become_pass|ansible_ssh_pass|ansible_password|ansible_become_pass|harbor_admin_password'
+PW_KEYS='osacct_user_password|osacct_root_password|qdlt_user_password|qdlt_root_password|bootstrap_ssh_pass|bootstrap_become_pass|ansible_ssh_pass|ansible_password|ansible_become_pass|harbor_admin_password'
 
 # 厂商公开的默认口令白名单。这些是文档里印着的初始密码, 不是"泄露"——
 # Harbor12345 是 Harbor 官方 harbor.yml 里的默认 admin 密码, root123 同理是
@@ -152,7 +152,7 @@ ${YEL}为什么要拦:${NC} 密码进了 git 历史就删不掉。即便下一�
 处置:
   1) 取消暂存该文件, 密码只留在 .gitignore 覆盖的本地文件里
   2) 确认是误报:  git commit --no-verify
-  3) 长期关掉扫描:  git config qdlt.skipSecretScan true
+  3) 长期关掉扫描:  git config secretscan.skip true
 
 EOF
     exit 1

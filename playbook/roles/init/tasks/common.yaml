@@ -57,15 +57,38 @@
     backup: yes
     marker: "# Ansible inventory  {mark}"
 
-- name: 禁用系统 swap
-  shell: "swapoff -a && sysctl -w vm.swappiness=0"
+- name: 关闭当前已启用的 swap
+  shell: "swapoff -a"
   ignore_errors: true
-- name: 删除 fstab swap 相关配置
-  lineinfile:
+  changed_when: false
+
+# ⚠ 原来用 lineinfile regexp: 'swap' state: absent 直接【删行】, 那个裸 'swap'
+#   会连 /data/swaparea、/var/log/swapstats 这类路径里带 swap 字样的正常挂载行
+#   一起删掉(把数据盘挂载点删了)。改成锚定「第 3 列 fstype == swap」且只【注释】
+#   不删除, 便于回滚。
+- name: 注释掉 fstab 中真正的 swap 条目(锚定第 3 列, 保留原行)
+  replace:
     path: /etc/fstab
-    regexp: 'swap'
-    state: absent
+    regexp: '^(?!\s*#)(\s*\S+\s+\S+\s+swap\s+.*)$'
+    replace: '# [init] swap disabled: \1'
     backup: yes
+
+# sysctl -w 只在当前内核生效, 重启就丢; 落盘到 sysctl.d 才持久。
+- name: 持久化 vm.swappiness=0
+  copy:
+    dest: /etc/sysctl.d/99-swap.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # 由 Ansible init 写入: 尽量不使用 swap(真正关闭靠 swapoff + fstab)
+      vm.swappiness = 0
+  register: init_swappiness_conf
+
+- name: 应用 swappiness
+  command: sysctl -p /etc/sysctl.d/99-swap.conf
+  when: init_swappiness_conf is changed
+  changed_when: true
 
 - name: 统一配置时间同步 chrony.conf 配置文件
   template:

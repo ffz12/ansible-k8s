@@ -1,5 +1,0 @@
-- hosts: cluster
-  roles:
-  - role: init
-    vars:
-      is_offline: true 

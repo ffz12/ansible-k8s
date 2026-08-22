@@ -48,7 +48,7 @@ ansible-k8s 领先的四点：
 
 ## 三、ansible-ai 独有、必须搬过去的内容
 
-只有两类，都不是 k8s/qdlt 主线代码：
+只有两类，都不是 k8s/os-init 主线代码：
 
 **1）二进制内核包（8 个 rpm）**
 
@@ -57,7 +57,7 @@ kernel/files/update_kernel/kernel-lt{,-devel,-headers}-5.4.272-1.el7.elrepo.x86_
 gpu-init/files/openEuler-kernel-pkg/kernel{,-devel,-headers,-tools,-tools-devel}-5.10.0-182.0.0.95.oe2203sp3.x86_64.rpm
 ```
 
-⚠ 这是 CentOS 7 / openEuler 的包，**和青岛的 Ubuntu 22.04 无关**，不影响 qdlt 交付。
+⚠ 这是 CentOS 7 / openEuler 的包，**和青岛的 Ubuntu 22.04 无关**，不影响青岛交付。
 搬之前先确认还有没有在用的存量环境 —— 如果没有，更该考虑的是删掉而不是搬（仓库里放二进制会一直背着体积）。
 
 **2）两个 remove role（同功能，k8s 侧已改名，核对后大概率不用搬）**
@@ -85,7 +85,7 @@ gpu-init/files/openEuler-kernel-pkg/kernel{,-devel,-headers,-tools,-tools-devel}
 | 更新 GPU | `update-gpu.yaml` | `gpu-update.yaml` |
 | 信任 harbor CA | `deploy-trust-harbor.yml` | `harbor-trust.yaml` |
 | 挂 NVMe | `mount_nvme.yaml` / `mount_nvme_lvm.yaml` | `mount-nvme.yaml` / `mount-nvme-lvm.yaml` |
-| 离线初始化 | `offline-init.yaml` | `init-offline.yaml` |
+| 离线初始化 | `offline-init.yaml` | `init-offline.yaml`(已删除，合并进 `init.yaml`，由 `is_offline` 控制) |
 | 改 root 密码 | `set_root_password.yml` | `set-root-password.yaml` |
 | haproxy LB | `haproxy-ha-install.yaml` | `lb-haproxy-install.yaml` |
 | nginx LB | `nginx-ha-install.yaml` / `remove-nginx-ha.yaml` | `lb-nginx-install.yaml` / `lb-nginx-remove.yaml` |
@@ -109,7 +109,7 @@ ansible-ai 侧**真正没有对应物**的入口（合库时要判断是否还�
 | `docker` → `docker/docker-install` | 1 | 仅 `tasks/main.yml` 不同，`files/` 5 个全同 |
 
 **完全一致、不用管的**：`ceph`、`gpu-init`（除 rpm）、`kernel`（除 rpm）、`trust-harbor-ca`、
-以及青岛交付三件套 **`qdlt-init`（19 个文件）、`qdlt-check`、`qdlt-report`** —— 这三个 role 两边逐字节相同，
+以及青岛交付四件套(已通用化重命名)**`os-init`、`os-account`、`os-check`、`os-report`** —— 这几个 role 两边逐字节相同，
 说明「改一处、镜像另一处、各自提交」的纪律是有效的，只是成本高。
 
 ## 六、绝对不能整文件覆盖的文件

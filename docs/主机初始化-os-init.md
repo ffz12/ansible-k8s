@@ -1,0 +1,583 @@
+# 主机操作系统环境初始化 —— os-init / os-account / os-check / os-report
+
+通用的 CPU/GPU 主机 OS 初始化流程。角色默认值按《青岛联通项目交付标准》设定，站点差异（时区、账号名、NTP 等）在 `inventory/group_vars/all/env.yaml` 里覆盖为该项目的「预设」。本文以青岛联通交付为贯穿示例（CPU 管理节点为主，GPU 算力节点分支一并写好，可直接复用）。
+
+## 一、设计原则
+
+| | 做什么 | 谁来做 |
+|---|---|---|
+| **`os-init`** | 纯软件配置：时区、chrony、cloud-init、apt、CPU 性能、ipmitool、主机名、GRUB 固定内核、日志外送 | 自动执行 |
+| **`os-account`** | 统一登录账号 / root 口令 / 清理多余用户（从 os-init 抽出的独立角色，`os-init.yaml` 顺带调用） | 自动执行 |
+| **`os-check`** | 只读体检：OS/内核版本、BIOS、磁盘、网络、RDMA、GPU、存储 —— **一个字节都不改** | 自动采集，人工整改 |
+| **`os-report`** | 汇总出 Markdown / CSV 交付报告，含跨节点一致性比对 | 自动生成 |
+
+**网络配置完全不碰**：netplan、bond、vlan、RDMA hca_id、策略路由、IP、网卡驱动，全部只体检出报告，由人工按报告处置。原因是这些改动一旦出错会直接断掉 ansible 自己的连接。
+
+## 二、与现有 `init` 角色的关系
+
+`init` 角色（`playbook/init.yaml`）已覆盖了交付标准的一部分：apt 自动更新关闭、limits、sysctl、swap、ufw、`apt-mark hold` 内核。
+
+但有两处**与交付标准冲突或不足**，`os-init` 会在其之后覆盖：
+
+| 项 | `init` 角色现状 | 交付标准要求 | `os-init` 处理 |
+|---|---|---|---|
+| 时区 | 强制 `Asia/Shanghai` | **统一 UTC** | 角色默认 UTC；本项目在 `env.yaml` 覆盖回 `Asia/Shanghai`（见下） |
+| 内核固定 | 只 `apt-mark hold` | 还要**配置 grub 做固定** | 解析 menuentry id 写 `GRUB_DEFAULT` |
+| cloud-init | 只关了网络配置 | **关闭 cloud-init 功能** | 写 `.disabled` + mask 全部 unit |
+| apt 自动更新 | 关了配置项 | 同 | 补 mask `apt-daily*.timer` |
+
+`init` 角色本身**不需要改**，跑完 `init` 再跑 `os-init` 即可。也可以只跑 `os-init`（它不依赖 `init`）。
+
+### ⚠ 已知偏离：时区
+
+交付标准第 3 页原文要求「统一使用 UTC 时区」，本项目按实际需要改用 `Asia/Shanghai`。
+
+角色默认值保持标准的 `UTC` 不动，偏离显式写在 `inventory/group_vars/all/env.yaml`：
+
+```yaml
+osinit_timezone: Asia/Shanghai
+oscheck_expect_timezone: Asia/Shanghai    # 体检期望值必须同步改，否则误报 FAIL
+```
+
+**交付材料中应将此作为偏离项列出，或事先与甲方确认。** 时区只影响显示，不影响对时精度和跨节点时间差（交付标准要求 <15 秒）。
+
+### 时间同步排查
+
+`timedatectl` 显示 `System clock synchronized: no` 说明 chrony 在跑但一次都没同步上，时间在自己漂：
+
+```bash
+chronyc sources -v    # 全是 ^? 就是一个源都没通
+chronyc tracking      # Reference ID = 00000000 就是没锁定任何源
+```
+
+最常见原因是默认的公网源在机房里不通。**NTP 源复用仓库既有的 `chrony_ip`**（`init` 角色的 `chrony.conf.j2` 用的就是它），改一处两个角色都生效：
+
+```yaml
+chrony_ip: 10.82.4.x       # inventory/group_vars/all/env.yaml
+```
+
+`osinit_ntp_servers` 的默认值就是 `["{{ chrony_ip | default('ntp.aliyun.com', true) }}"]`，所以**不用**在 `env.yaml` 里再写一份。只有要配多个源做冗余时才显式覆盖：
+
+```yaml
+osinit_ntp_servers: [10.82.4.1, 10.82.4.2]
+```
+
+#### 同步不上不会中断后续步骤
+
+本项目 `env.yaml` 里设了 `osinit_fail_on_unsynced: false`，时间没同步上只打一条醒目告警，**不卡住后面的账号/CPU/swap/GRUB 等步骤**。
+
+这样设是因为**「锁不上外部 NTP 源」不等于「节点之间时间不一致」**。交付标准要求的是「集群时间统一对齐，最大差 15 秒」，青岛现网这 6 台锁不上公网源（udp 123 不通），但节点间时间实测只差 1 秒，这一条本来就满足：
+
+```bash
+ansible cluster -m shell -a 'date -u +%FT%T'    # 核对跨节点时间差
+```
+
+> ⚠ 它仍然**不符合交付标准**对时的要求，只是降级为告警：`os-check` 侧**照旧判 FAIL**，会出现在交付报告里，不会被悄悄放过。找到可用的内网 NTP 后改 `chrony_ip` 再重跑 `--tags time`。
+
+角色默认值 `osinit_fail_on_unsynced: true` 保持不动（交付标准的严格行为），放行是项目偏离，显式写在 `env.yaml`。想临时恢复严格中断：`-e osinit_fail_on_unsynced=true`。
+
+## 三、准备
+
+```bash
+# 一次性生成所有配置文件（幂等，已存在的不会被覆盖）
+./init.sh
+
+# 1. inventory —— [cluster] 组已在模板里
+vim inventory/hosts            # 填节点 IP；GPU 节点必须逐台填 osinit_su
+
+# 2. 统一登录密码（交付标准要求用户名固定 wwxq）—— 写进 env.yaml
+vim inventory/group_vars/all/env.yaml   # 取消注释填 osacct_user_password
+```
+
+`init.sh` 会生成 `inventory/hosts`、`inventory/group_vars/all/env.yaml` 和 `reports/` 目录，都已在 `.gitignore` 里，不入库。
+
+### 统一登录密码写在 env.yaml 里
+
+`env.yaml` 里本来就放着 `harbor_admin_password`、`bootstrap_ssh_pass`，统一登录密码也放这里 —— 一个仓库只有一套秘密存放方式，不用记着每次开新 shell 都要 `export`：
+
+```yaml
+# inventory/group_vars/all/env.yaml
+osacct_user_password: '统一登录密码'
+```
+
+配好之后直接跑，命令行什么都不用加：
+
+```bash
+ansible-playbook playbook/os-init.yaml
+```
+
+**不想让密码落到任何文件**时还有第二条路 —— `osacct_user_password` 的角色默认值就是 `{{ lookup('env', 'OSACCT_USER_PASSWORD') }}`，所以 env.yaml 里那行注释掉、改用环境变量也能跑：
+
+```bash
+export OSACCT_USER_PASSWORD='统一登录密码'
+ansible-playbook playbook/os-init.yaml
+```
+
+这样密码不落盘、不进 git（`export` 会进 shell history，介意的话在命令前加一个空格，或用 `read -rs OSACCT_USER_PASSWORD && export OSACCT_USER_PASSWORD`）。
+
+> ⚠ **两处只写一处。** `env.yaml` 属 group_vars，优先级**高于**角色默认值 —— 两处都写时，环境变量那条**永远不生效**。改了 `export` 却发现密码没变、又查不出原因，基本都是这个：先看 `env.yaml` 里那行是不是还在。
+
+原来那个 `inventory/os-secrets.yml` 已经去掉了 —— 它有个隐患：`ansible.cfg` 里 `inventory = ./inventory/`，整个目录都被当 inventory 源解析，而 `.yml` 不在 `inventory_ignore_extensions` 默认忽略列表里，所以那个文件每次都会被 ansible 当成一份 YAML inventory 去解析。位置本来就选错了。
+
+> ⚠ 走环境变量那条路时**别用 `sudo ansible-playbook`** —— `sudo` 默认清空环境变量，密码取不到，前置 assert 会报"未提供统一登录密码"。playbook 自带 `become: yes`，用普通用户直接跑就行；非要 `sudo` 的话用 `sudo -E`。（密码写在 `env.yaml` 里就没这个问题。）
+
+**root 也会被设成同一个密码**（`osacct_do_root_password` 默认 `true`，见第六节）。想给 root 单独设别的密码：
+
+```bash
+export OSACCT_ROOT_PASSWORD='root 的密码'
+```
+
+临时也可以走命令行，但会留在 history 里，只适合一次性调试：
+
+```bash
+ansible-playbook playbook/os-init.yaml -e "osacct_user_password=xxxx"
+```
+
+旧版 `init.sh` 生成过 `inventory/os-secrets.yml`，里面是明文密码。**2026-08 已把两个仓库本地残留的那份删掉了**（一直没进过 git）。`.gitignore` 和 pre-commit 钩子里仍保留对这个路径的拦截，纯兜底 —— 万一从旧备份或别人的旧工作副本里又冒出来一份，至少不会被 `git add .` 带进库。
+
+### pre-commit 钩子（提交时拦明文密码）
+
+`.gitignore` 拦不住 `git add -f`，也拦不住"顺手把密码贴到某个 yaml 的 vars 里"。所以 `init.sh` 会装一个 pre-commit 钩子（源文件 `scripts/git-hooks/pre-commit`，`.git/hooks` 不受版本控制所以要装）。它在提交时拦三类东西：
+
+| 拦什么 | 规则 |
+|---|---|
+| 不该入库的文件 | `inventory/hosts`、`inventory/group_vars/all/env.yaml`、`inventory/os-secrets.yml`（旧版遗留）被 `add -f` 强加时 |
+| 私钥 | 内容含 `BEGIN * PRIVATE KEY` |
+| 明文密码 | `osacct_user_password` / `osacct_root_password` / `bootstrap_ssh_pass` / `ansible_ssh_pass` / `harbor_admin_password` 等被赋了**非占位符**的值 |
+
+占位符（`""`、`xxx`、`{{ 变量 }}`、注释行，以及**任何含中文的值**）会放过，所以 `tmp/*.example` 模板和 `defaults/main.yaml` 里的 `osacct_user_password: "{{ lookup('env', 'OSACCT_USER_PASSWORD') }}"` 都能正常提交。
+
+「含中文即占位符」这条是后来改的通则 —— 原先是逐词枚举（`在此填写|请填|改成|示例|…`），结果模板里写 `osacct_user_password: '密码'` 这种最自然的占位符不在词表里，直接被误拦。判据换成：值里含非 ASCII 字符就放过，因为 Linux 登录密码不可能是中文。（实现上用 `[^ -~]` 而不是 `grep -P '[\x{4e00}-\x{9fff}]'` —— Git Bash 的 grep 会报 `character value in \x{} is too large`。）
+
+**厂商公开的默认口令**（`Harbor12345`、`root123` 这类，模板里带"建议改"注释的）也在白名单里放过 —— 它们印在官方文档上，不算泄露。白名单是**精确全等匹配**，`Harbor12345x` 这种仍会被拦。报错时**不回显密码本体**，只给文件名、字段名和字符数。
+
+```bash
+git commit --no-verify                      # 确认是误报，单次放行
+git config secretscan.skip true         # 长期关掉
+```
+
+> 钩子是本地兜底，不是保证 —— 它只扫本次暂存内容，扫不到已经在历史里的。**密码一旦推上去就删不掉了**，只能改密码或重写历史。
+
+### 主机都写在 `[cluster]`（os-init / os-check 直接跑这个组）
+
+`os-init.yaml` / `os-check.yaml` 和 `init.yaml`、`ssh-passwordless`、`mount-nvme` 等**都跑 `[cluster]` 组**，所以机器只写在 `[cluster]` 一处即可：
+
+```ini
+[cluster]
+cpu-001 ansible_host=192.168.1.111
+...
+```
+
+增删机器只改 `[cluster]` 一处，不会有两份名单漂移。
+
+> ⚠ **变量挂在机器所在的组上。** `osinit_hostname_policy` 这类变量要写在机器真正加入的组的 `:vars` 里 —— 机器在 `[cluster]`，就挂 `[cluster:vars]`；挂到机器没加入的组上不生效。
+
+**有 GPU 算力节点 / 要部署 k8s 时**才需要再拆组（模板下半段有注释示例）：
+
+- **GPU 节点**：单列 `[gpu]` 组 —— 节点角色（gpu/cpu）靠"是否在 `[gpu]` 组内"自动判定，GPU 必须逐台填 `osinit_su`。
+- **按角色的组**（`[k8s_master]` / `[etcd]` / `[k8slb]` / `[harbor]` / `[containerd]` / `[docker]` / `[gpu_driver]`）：谁当 master、谁装 harbor 是部署决策，**不能 `:children` 一把并**，逐台列主机名，名字要和 `[cluster]` 里**完全一致**，`ansible_host` 不用重复写。
+
+> ⚠ 装 GPU 驱动 / 可能升内核的是 `[gpu_driver]` 组（`gpu-init.yaml` / `gpu-update.yaml` 打的就是它），**不是** `[gpu]`。`[gpu]` 只是"这台机器有 GPU"的身份标记，不触发任何驱动安装。青岛交付的 GPU 节点**只跑 `os-init`**，所以 `[gpu_driver]` **留空**，绝不把它们并进去。
+
+验证一下组到底展开成了什么，再跑 playbook：
+
+```bash
+ansible-inventory -i inventory/hosts --graph
+ansible cluster -i inventory/hosts --list-hosts
+```
+
+首次进场机器通常只有厂商初始账号，在 `inventory/group_vars/all/env.yaml` 里配 `bootstrap_user` / `bootstrap_ssh_pass`，连接身份会自动探测（见 `group_vars/all/connection.yaml`）。
+
+## 四、执行
+
+```bash
+# ① 改之前先体检存档（只读，随时可跑）
+ansible-playbook playbook/os-check.yaml
+
+# ② 空跑看会改什么（强烈建议先跑一遍）
+ansible-playbook playbook/os-init.yaml --check --diff
+
+# ③ 单台试跑，确认没问题再全量
+ansible-playbook playbook/os-init.yaml --limit cpu-001
+
+# ④ 全量执行
+ansible-playbook playbook/os-init.yaml
+
+# ⑤ 改完复查，出交付报告
+ansible-playbook playbook/os-check.yaml
+```
+
+报告落在控制机 `reports/os-check.md` 和 `reports/os-check.csv`，**固定文件名、每次原地覆盖**，反复体检不会堆一堆时间戳文件；上一份自动存为 `os-check.bak.md` / `.bak.csv`（只留最近一份）。
+
+想给某一次留档，或者恢复「每次一个新文件」的老行为：
+
+```bash
+# 留档定稿版本
+ansible-playbook playbook/os-check.yaml -e osreport_name=os-check-验收定稿
+
+# 每次生成带时间戳的新文件
+ansible-playbook playbook/os-check.yaml -e "osreport_name=os-check-{{ osreport_stamp }}"
+
+# 不要 .bak 备份
+ansible-playbook playbook/os-check.yaml -e osreport_keep_prev=false
+```
+
+#### 判定含义
+
+| 判定 | 含义 |
+| --- | --- |
+| PASS | 符合交付标准 |
+| FAIL | 不符合，需要整改 |
+| WARN | 需人工确认（本工具不改网络、或硬件侧才能定） |
+| SKIP | **该项对本节点不适用，自动跳过**，不计入不合规 |
+| INFO | 仅记录，供跨节点比对 |
+
+SKIP 是按节点角色自动判的：CPU 管理节点不套用 GPU 算力节点的硬件形态要求（PCIe Gen5、数据盘裸盘、GPU 驱动/VBIOS），RDMA 设备数少于 `oscheck_rdma_compute_min_devs`（默认 8）的机器不套用计算网卡的 OFED/DOCA 版本与 `mlx5_0~7` 命名要求。想强制检查某项，在 group_vars 里把对应开关打开即可：
+
+```yaml
+oscheck_check_pcie_gen5: true      # 强制检查 Gen5 x16 链路
+oscheck_check_bare_disk: true      # 强制检查数据盘裸盘
+oscheck_rdma_compute_min_devs: 2   # 放低"算作计算节点"的门槛
+```
+
+### 常用参数
+
+```bash
+# 只跑某几类
+--tags time,cpu           # 可选: pkgs time cloudinit apt user rootpw cpu swap acs hostname grub syslog
+
+# 跳过风险最高的 GRUB 改动
+--skip-tags grub
+
+# 灰度，一台一台来
+-e osinit_serial=1
+
+# 体检时打印逐项明细
+-e oscheck_verbose=true
+```
+
+## 五、逐项开关
+
+全在 `playbook/roles/os-init/defaults/main.yaml`，需要关掉哪项就置 `false`：
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `osinit_do_time` | true | 时区 UTC + chrony |
+| `osinit_do_cloudinit` | true | 彻底关闭 cloud-init |
+| `osinit_do_apt` | true | 关闭 apt 自动更新 |
+| `osacct_do_user` | true | 创建 wwxq 账号 |
+| `osinit_do_cpu` | true | governor=performance + TurboBoost |
+| `osinit_do_swap` | true | 永久关闭 swap（见下） |
+| `osinit_do_acs` | true | 关闭所有 PCIe 设备 ACSCtl（写 PCI 配置空间，见下） |
+| `osacct_do_root_password` | true | root 密码也设成统一登录密码（见下） |
+| `osinit_do_pkgs` | true | 装 ipmitool 等 |
+| `osinit_do_hostname` | true | 主机名规范（`false`=完全不碰主机名与 /etc/hosts） |
+| `osinit_hostname_policy` | inventory | 命名策略 `inventory` / `ip` / `keep` / `explicit`，见下 |
+| `osinit_write_cluster_hosts` | true | 往 /etc/hosts 写全集群 IP-主机名映射；**本项目在 env.yaml 置 false**，见下 |
+| `osinit_do_grub` | true | GRUB 固定内核（换内核要先 reboot 再跑，见下） |
+| `osinit_grub_force` | **false** | 无视"装了新内核未重启"的保护，强行固定当前运行内核 |
+| `osinit_install_cpufrequtils` | **false** | 装 cpufrequtils（它会和 governor 服务抢，见下） |
+| `osinit_gov_verify_delay` | 5 | governor 校验前等待秒数，抓即时覆盖；置 0 不等 |
+| `osinit_install_cpupower` | true | 装 `linux-tools-$(uname -r)`（提供 cpupower / turbostat，见下） |
+| `osinit_do_syslog` | **false** | 日志外送审计系统，需先填 `osinit_log_server` |
+| `osacct_remove_extra_users` | **false** | 删除多余一般用户，**不可逆**，默认只报告；**本项目在 env.yaml 置 true**，见下 |
+| `osacct_user_sudo_nopasswd` | **false** | wwxq 的 sudo 免密；**本项目在 env.yaml 置 true** |
+
+## 六、几个要注意的地方
+
+**主机名**。交付标准规定 CPU 节点 `CPU-<IP末段3位>`（如 `CPU-229`），GPU 节点 `GPU-SU<n>-<IP末段3位>`（如 `GPU-SU2-058`）。SU 号依据服务器上连的计算网 Leaf 交换机组顺序决定，**必须对照接线表在 inventory 里逐台填 `osinit_su`**，猜不出来。另外若集群提供 GPFS，主机名必须在装 GPFS 客户端之前配好。
+
+命名行为由 `osinit_hostname_policy` 控制，四种取值：
+
+| 取值 | 行为 | 用在哪 |
+| --- | --- | --- |
+| `inventory`（默认） | **以 inventory 里写的主机名为准** —— 清单写 `cpu-001`，机器就设成 `cpu-001` | 本项目用这个。清单是唯一事实来源 |
+| `ip` | 按交付标准从带内 IP 末段生成 `CPU-xxx` / `GPU-SUn-xxx` | 想严格照交付标准命名 |
+| `keep` | **完全不改主机名**，保持机器上现有的名字 | 不想碰主机名 |
+| `explicit` | 用 inventory 里逐台写的 `osinit_hostname`（没写则保持现有） | 想改名但规则既不是清单名也不是 IP 末段 |
+
+> ⚠ **`keep` 和 `inventory` 容易混**：`keep` 保的是**机器现状**，`inventory` 保的是**清单**。现网机器叫 `CPU-111` 而 inventory 写 `cpu-001` 时，`keep` 会保住 `CPU-111`（不动机器，清单只是标识），`inventory` 会把机器改成 `cpu-001`（按清单纠正机器）。
+
+用 `inventory` 策略时，**清单里写的名字就是机器最终的主机名**，所以要写成你希望机器叫的样子。名字只能用字母、数字、减号 —— 不能是 IP、不能带下划线或点，playbook 有前置校验，不合规会直接中止而不是等到 `hostnamectl` 那步才报错。GPU 节点直接写成 `GPU-SU1-056` 即可，不必让 playbook 去算 IP 末段。
+
+青岛现网这 6 台机器上的实际主机名是 `CPU-111` / `CPU-114` 这种（`cpu-008` 那台甚至被误设成了 `wwxq` —— 那是登录账号名，八成是 `hostnamectl set-hostname` 手误），与 inventory 里的序号不一致。`inventory` 策略会按清单把它们纠正过来：
+
+```
+cpu-001      CPU-111  →  cpu-001
+cpu-008      wwxq     →  cpu-008
+maascpu-011  CPU-121  →  maascpu-011
+```
+
+> ⚠ 改主机名对已装 k8s 的节点有影响（node name 与 kubelet 注册名会不一致）。本项目是 OS 初始化阶段、尚未装 k8s，所以现在改是最好的时机。如果某台已经进了 k8s，那台单独用 `keep`。
+
+> ⚠ **别用 `ip`。** 用 `ip` 策略会把 `cpu-001` 改成 `CPU-111`、`maascpu-011` 改成 `CPU-121` —— 名字和运维习惯的序号对不上。`hosts.example` 的 `[cluster:vars]` 里写的是 `osinit_hostname_policy=inventory`（cpu/gpu 统一）。
+
+目标名和当前名相同时 `设置主机名` 这一步自动跳过。彻底不想碰主机名相关的任何改动，用 `--skip-tags hostname` 或 `-e osinit_do_hostname=false`。
+
+**`/etc/hosts` 集群解析**。角色默认会把 `[cluster]` 组内全部节点的 `IP 主机名` 映射写进每台机器的 `/etc/hosts`（标记块 `# Ansible os-init hosts BEGIN/END`）。**交付标准没有这项要求**，本项目也不靠主机名互访（inventory 里直接写 IP），所以在 `env.yaml` 置了 `osinit_write_cluster_hosts: false`。留着它反而多一份没人维护的映射 —— `/etc/hosts` 优先于 DNS，以后改了 IP 会被这份旧记录带偏。
+
+> 置 `false` 后 `hostname.yaml` 会把**以前写进去的那个块清掉**（`blockinfile state=absent`），不是留着不管。`127.0.1.1 <主机名>` 那条**照旧写**，它跟集群解析是两件事 —— 缺了它 `sudo` 会报解析告警。
+
+**swap 永久关闭**。只跑 `swapoff -a` 是不够的 —— 重启后 swap 会回来。要"永久"必须同时做四件事，`os-init` 的 swap 步骤全做了：
+
+1. `swapoff -a` 关掉当前启用的
+2. 注释 `/etc/fstab` 里的 swap 条目（保留原行便于回滚，不是删除）
+3. **mask `swap.target` 和所有 `.swap` unit** —— Ubuntu 22.04 的 swapfile 常由 systemd unit 拉起，`systemd-gpt-auto-generator` 还会按 GPT 分区类型自动生成 `.swap` unit，这类不在 fstab 里，光删 fstab 拦不住
+4. `vm.swappiness` 落盘到 `/etc/sysctl.d/99-os-swap.conf` —— `sysctl -w` 只在当前内核生效，重启就丢
+
+> ⚠ 注意 `init` 角色里那段 `lineinfile: regexp: 'swap'` 用的是**无锚点**正则，会把 `/data/swaparea`、`/var/log/swapstats` 这类路径里带 swap 字样的**正常挂载行一起删掉**。`os-init` 用的是锚定第 3 列 `fstype == swap` 的正则，只动真正的 swap 条目，已验证幂等。
+
+swap 文件本身默认**不删**（不可逆）。要连文件一起删：`-e osinit_swap_remove_file=true`。
+
+**root 密码**。默认**和 `wwxq` 设成同一个密码**（交付标准要求"系统登录账户使用统一账密"，root 也算登录账户）。`osacct_root_password` 默认回落到 `osacct_user_password`，所以 `env.yaml` 里配好统一密码之后，什么参数都不用加：
+
+```bash
+ansible-playbook playbook/os-init.yaml            # root 和 wwxq 同一个密码
+```
+
+想给 root 单独设别的密码，在 `env.yaml` 里加一行 `osacct_root_password: '另一个密码'`；或者要保留机器原有的 root 密码：
+
+```bash
+export OSACCT_ROOT_PASSWORD='另一个密码'              # root 用别的密码（也可写进 env.yaml）
+ansible-playbook playbook/os-init.yaml -e osacct_do_root_password=false   # 完全不动 root
+```
+
+> ⚠ 改 root 密码**不可逆**（旧密码找不回）。这台是靠 root **密码**（`bootstrap_ssh_pass`）连进来的话，改完 ansible 自己就连不上了，要么同步改 `env.yaml`，要么这台用 `-e osacct_do_root_password=false`。**root 免密/密钥登录不受影响**，本项目这 6 台是 root 免密直连，可放心改。
+
+root 密码这几步放在**单独的 `rootpw.yaml` / 单独的 tag `rootpw`**，不在 `user.yaml` 里 —— 所以只想调 `wwxq` 的账号或 sudo 免密时，`--tags user` **完全不会碰 root**：
+
+```bash
+ansible-playbook playbook/os-init.yaml --tags user     # 只碰 wwxq / sudoers / 多余用户
+ansible-playbook playbook/os-init.yaml --tags rootpw   # 只设 root 密码
+```
+
+> 原来两者混在一个文件里，想改一下 sudo 免密就会顺带把 root 密码重设一遍，只能靠每次记得加 `-e osacct_do_root_password=false`，忘一次就动了 root 凭据而且不可逆。拆开后 `--tags os`（或不带 tags 全跑）的行为和拆分前一致。
+
+本角色**不改 sshd 配置**，只在设完后打印 `sshd -T` 的实际 `PermitRootLogin` / `PasswordAuthentication` 供人工判断 —— 多数机器是 `prohibit-password`，设了密码也不能拿它 ssh 进来，需要放开得人工改 `sshd_config`。
+
+**PCIe ACSCtl 关闭**。交付标准要求"确认所有 PCIe 设备的 ACSCtl 均已关闭"。ACS 开启时 PCIe switch 会把 P2P 流量强制上送 Root Complex 再转回来，GPU 间 P2P DMA 直通被打断，NCCL / GPUDirect 带宽显著下降。
+
+**首选在 BIOS 里关**（部分机型有 ACS Enable 开关），最干净。BIOS 里没这个选项时才用系统侧兜底 —— 和交付标准对 CPU 供电模式说的"若无法从 bios 配置，则通过在系统内配置服务来实现"同一个思路。`osinit_do_acs` 默认 `true`，跟着 `os-init` 一起跑，不用额外加参数：
+
+```bash
+ansible-playbook playbook/os-init.yaml --tags acs      # 只跑这一项
+ansible-playbook playbook/os-init.yaml --skip-tags acs # 单独跳过
+```
+
+> ⚠ **CPU 管理节点上关 ACS 的实际性能收益接近于零** —— 收益全在 GPU 之间的 P2P/NCCL 带宽上，这几台没有 GPU。默认开启纯粹是因为交付标准写的是"所有 PCIe 设备"，不做这一步 `os-check` 的 PCIe 项会判 FAIL。
+
+实现是 `setpci` 把 ACS 扩展能力里的 ACS Control Register（`ECAP_ACS+0x6.w`）整体写 0。**这个寄存器重启后会被固件重新置位**，所以配套装了 `os-acs-disable.service` 每次开机重跑一次，并且排在 `nvidia-fabricmanager` / `nvidia-persistenced` 之前（否则 P2P 拓扑会按 ACS 开启的状态初始化）。
+
+脚本落在 `/usr/local/sbin/os-acs-disable.sh`，可以单独用：
+
+```bash
+os-acs-disable.sh status    # 只统计, 全关返回 0
+os-acs-disable.sh dryrun    # 打印会改哪些设备, 不写入
+os-acs-disable.sh apply     # 执行(先备份原值到 /var/lib/os-init/acs-backup.txt)
+os-acs-disable.sh restore   # 从备份回滚
+```
+
+有些设备的 ACSCtl 被固件锁定，写进去回读还是原值 —— 脚本会把这类逐个报出来（返回码 3），playbook 默认**不因此中断**，只提示需要去 BIOS 关。想让它严格中断：`-e osinit_acs_strict=true`。
+
+> ⚠ 关 ACS 会降低 PCIe 设备间隔离性，和 VFIO 直通、IOMMU 分组隔离冲突。交付标准同时要求关闭 vt-d/IOMMU，两者方向一致（都为 P2P 性能），所以不矛盾。但如果这批机器要跑虚拟化直通，用 `-e osinit_do_acs=false` 关掉这一项。
+
+**GRUB**。这是本 playbook 风险最高的一步：解析 `/boot/grub/grub.cfg` 拿到当前内核的 menuentry id，写进 `GRUB_DEFAULT`，然后 `update-grub` 并回验 id 确实存在，回验不过会直接中止。原始 `/etc/default/grub` 备份在 `/etc/default/grub.os-init.bak`（只备份一次，重跑不覆盖）。不放心就 `--skip-tags grub`，改用手工确认。
+
+> ⚠ **换内核的正确顺序：装 → reboot → 再跑 `--tags grub`。** 本角色固定的是**当前正在运行**的内核，不是 `/boot` 里最新的那个。装好新内核但没重启就跑，它会按运行中的旧内核重写 `GRUB_DEFAULT`，把人工刚改好的配置覆盖回去。
+>
+> 现在有保护：检测到"`/boot` 里有更新的内核但当前没在跑它"，GRUB 段**整段跳过、一步都不做**，只打一条告警说明该先 reboot。新内核起不来要回退、就是要钉住当前运行的旧内核时，用 `-e osinit_grub_force=true` 强行执行。
+
+### ⚠ fact 缓存会让 GRUB 钉错内核（已在代码里堵掉）
+
+`ansible.cfg` 配的是：
+
+```ini
+gathering = smart
+fact_caching = jsonfile
+fact_caching_timeout = 86400          # 24 小时
+fact_caching_connection = /tmp/.ansible_fact_cache
+```
+
+所以**重启换了内核后，24 小时内 ansible 仍然拿缓存里的旧 `ansible_kernel`**。现网 `maascpu-011` 就是这么被反复钉回 `5.15.0-119` 的 —— `uname -r` 早就是 185，但缓存里还是 119，playbook 按 119 去解析 menuentry、写 `GRUB_DEFAULT`、加 `apt hold`，人工改好的配置每跑一次就被覆盖回去一次。表现上像"改了又被改回来"，实际是 ansible 根本不知道内核已经换了。
+
+修法不是"记得加 `--flush-cache`"（记不住就是隐患），而是 **`grub.yaml` 每次实时跑 `uname -r`**，完全不依赖 fact 缓存：
+
+```yaml
+- name: 实时读取当前运行内核版本(不用 ansible_kernel, 避开 fact 缓存)
+  command: uname -r
+  register: osinit_uname
+  changed_when: false
+  check_mode: false
+```
+
+顺带加了一条比对：`ansible_kernel != uname -r` 时打告警，把缓存过期这件事显式暴露出来，而不是悄悄按对的值跑完了拉倒。
+
+`os-check` 侧**不受这个问题影响** —— 它的 `os-collect.sh` 是在被检机器上直接跑 `uname -r` 的，也不读 fact 缓存。
+
+不过换内核后还是建议清一次缓存，避免别的角色踩到：
+
+```bash
+rm -rf /tmp/.ansible_fact_cache                    # 一次性清干净
+ansible cluster -m setup -a 'filter=ansible_kernel' | grep -E "SUCCESS|ansible_kernel"
+```
+
+```bash
+# 升内核的完整流程
+apt-mark unhold $(apt-mark showhold)                     # 先解锁, 否则装不上
+apt install linux-image-5.15.0-185-generic
+reboot                                                   # ⚠ 必须重启
+uname -r                                                 # 确认已是目标版本
+ansible-playbook playbook/os-init.yaml --tags grub     # 再固定
+```
+
+`apt-mark hold` 这边也做了处理：**锁当前内核之前，先解掉其他版本内核的 hold**。原来 hold 只加不减，换过内核重跑就会堆成两套（`showhold` 里 119 和 185 都在），除了列表难看，旧内核包被 hold 住 `apt autoremove` 也清不掉，`/boot` 迟早占满。`linux-generic` / `linux-image-generic` 这类**无版本号的元包保留 hold** —— 它们才是"别自动升到新内核"的关键。只解 hold，不卸载任何内核包（旧内核留着做回滚兜底，要删自己 `apt autoremove --purge`）。
+
+另外解析出的启动项 id 必须**包含当前内核版本号**，否则中止。原来解析不到会回落到 grub.cfg 顶层第一个 menuentry —— 那可能是别的内核，照样写进 `GRUB_DEFAULT` 就钉错了。
+
+**多余用户**。交付标准要求"系统上不存在其他一般用户"。角色默认只盘点报告不删。本项目在 `env.yaml` 里置了 `osacct_remove_extra_users: true` —— 现网 6 台上的多余账号就是镜像自带的 `ubuntu`，体检的「统一登录账号」项一直因它判 WARN。开这个之前必须先确认 root 免密或 wwxq 至少有一条能登进去，删除是 `remove=yes` **连家目录一起删、不可逆**。
+
+> ⚠ `osacct_protected_users`（永不删除名单）里原本还有 `ubuntu`，那是早期 root 免密没配好时留的退路。root 免密全部配好后已把它移出名单 —— 留着的话 `osacct_remove_extra_users=true` 也删不掉 `ubuntu`，体检会一直 WARN。名单现在只有 `wwxq` 和 `root`。
+
+**wwxq 的 sudo 免密**。交付标准没这项要求，是本项目运维习惯（`sudo -i` 不用再输密码），在 `env.yaml` 置 `osacct_user_sudo_nopasswd: true`，写进 `/etc/sudoers.d/90-wwxq`。注意这**不影响 Ansible 的连接方式** —— 连接身份由 `connect_as` 决定（本项目 root 免密直连），两回事。
+
+**时区**。角色默认 UTC（交付标准要求），本项目在 `env.yaml` 覆盖为 `Asia/Shanghai`，属已知偏离，见上文。
+
+**BIOS 项改不了**。vt-d/IOMMU 关闭、超线程、子 NUMA 关闭、C-state 这些只能在 BIOS 里改，`os-check` 只负责检出来。其中 CPU 供电模式和 TurboBoost，交付标准允许"若无法从 bios 配置，则通过在系统内配置服务来实现"——`os-init` 装了 `os-cpu-performance.service` 常驻服务来兜底。
+
+### ⚠ governor 重启后掉回 ondemand（已修）
+
+现网 6 台重启后 **4 台 governor 掉回 `ondemand`**（cpu-002/004/005/008），只有 cpu-001 和 maascpu-011 保住 `performance`。
+
+**元凶是 `cpufrequtils`，而且是本角色自己装进去的。** 它带进来一个 `cpufrequtils.service`（LSB 脚本经 systemd-sysv-generator 生成），开机按 `/etc/default/cpufrequtils` 里的 `GOVERNOR` 重设一遍 —— 而它跑在 `os-cpu-performance.service` **之后 14 秒**：
+
+```
+[ 11.169] os-cpu-performance  Starting     ← 本角色的服务
+[ 14.408] os-cpu-performance  Finished
+[ 29.148] cpufrequtils          ...done.     ← 14 秒后覆盖成 ondemand
+[ 29.149] Started LSB: set CPUFreq kernel parameters.
+```
+
+为什么 6 台里 2 台侥幸没掉：
+
+| | `/etc/default/cpufrequtils` | `scaling_driver` | 结果 |
+|---|---|---|---|
+| cpu-001 | `GOVERNOR="performance"` | `intel_cpufreq` | 保住（文件里恰好是对的） |
+| cpu-002/004/005/008 | **不存在** | `intel_cpufreq` | 掉回 ondemand |
+| maascpu-011 | 不存在 | `intel_pstate` | 保住（active 模式压根没有 ondemand 可选） |
+
+三处一起堵，任何一处失效另外两处还兜得住：
+
+| # | 改了什么 |
+|---|---|
+| 1 | **默认不再安装 `cpufrequtils`**（`osinit_install_cpufrequtils: false`）—— 本角色从未用过它的 `cpufreq-info`/`cpufreq-set`，装它纯粹引入一个竞争者 |
+| 2 | 已装的机器写 `/etc/default/cpufrequtils` → `GOVERNOR="performance"`，方向一致就不存在赛跑（存量 6 台都已装，靠这条拨正） |
+| 3 | unit 加 `After=cpufrequtils.service loadcpufreq.service ondemand.service tuned.service`，保证本角色最后收尾；同时**去掉了 `DefaultDependencies=no`**（它会让 `After=` 排序不可靠）。这些 unit 不存在时 `After=` 是空操作，不报错 |
+
+不卸载 `cpufrequtils` 是有意的 —— 卸载可能连带别的包，把 `GOVERNOR` 拨正就够了。
+
+**同类的第四个竞争者 `thermald`：报出来，但不动它。** 排查时没抓到它（当次 `inactive`），后来发现 6 台**全是 `enabled`**，开机会起，升温时会压频率。但它跟 `cpufrequtils` 不是一个性质 —— 后者**实锤把 4 台改回了 ondemand**，前者从没实际出过事，而且它属于过热保护的一环。为一个假想问题去 mask 掉保护不划算，所以 `os-init` 不碰，改由 `os-check` 在「CPU 供电性能模式」项里把所有竞争者（`cpufrequtils` / `ondemand` / `thermald` / `power-profiles-daemon` / `tuned`）的 enabled 状态一并报出来，真出问题再人工 mask。
+
+**还有一处是校验本身的漏洞**：原来 governor 校验紧跟在 `systemctl restart` 之后，那一刻必然是 `performance`，所以这一项**每次都判 PASS** —— 等于自己给自己作弊，这才是它一直没被报出来、直到重启才暴露的原因。现在校验前先等 `osinit_gov_verify_delay` 秒（默认 5），并且明确打印一条提示说明**本次 PASS 不代表重启后仍 PASS**，必须重启后复验：
+
+```bash
+ansible cluster -m shell -a 'cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor | sort -u'
+```
+
+### 5 台 HWP 未启用，但睿频已实测正常（不阻塞交付，无需进 BIOS）
+
+`intel_pstate` 的运行模式在这 6 台上不一致：
+
+```
+cpu-001/002/004/005/008   intel_pstate/status = passive   scaling_driver = intel_cpufreq
+maascpu-011               intel_pstate/status = active    scaling_driver = intel_pstate
+```
+
+内核 5.8+ 检测不到 HWP（Hardware P-States）时**自动退回 passive**。这 5 台的 `/proc/cmdline` 里没有 `intel_pstate=passive` 却是 passive，所以 **BIOS 里 HWP 是关的**。
+
+**⚠ 这一节最初的结论是错的，写的是「要人工去 BIOS 处置」—— 实测推翻了它。** 当时的推理是「passive ⇒ HWP 关 ⇒ 睿频可能上不去，跟之前 Xeon 8468 锁死 2100 基频是同一根因」。这个类比**判重了**，两者差别在有没有 cpufreq 驱动：
+
+| | Xeon 8468 那台（确实要进 BIOS） | 青岛这 5 台 |
+|---|---|---|
+| `scaling_driver` | **文件都不存在**，`cpupower` 报 no driver active | `intel_cpufreq`（驱动正常工作） |
+| 频率控制 | 完全没有，硬锁 2100 基频 | 内核通过 `IA32_PERF_CTL` 正常调频 |
+| 全核满载实测 | 2100 = 基频，一动不动 | **2788–2832（高出基频 21–23%）** |
+
+**实测数据（APERF/MPERF，2026-08-17）：**
+
+| 节点 | CPU | 基频 | 空载 | 全核满载 | 高出基频 | 温度墙 |
+|---|---|---|---|---|---|---|
+| cpu-001 | 8380 | 2300 | 3000 | **2812** | +22% | 0 |
+| cpu-002 | 8380 | 2300 | 3001 | **2832** | +23% | 0 |
+| cpu-004 | 8380 | 2300 | 3253 | **2788** | +21% | 0 |
+| cpu-005 | 8380 | 2300 | 2999 | **2804** | +21% | 0 |
+| cpu-008 | 8380 | 2300 | 2999 | **2831** | +23% | 0 |
+| maascpu-011 | 6530P | 2300 | 3869 | **3260** | +41% | 0 |
+
+8380 全核睿频规格 3.0 GHz，实测 **达规格的 93–94%**（差的那点是功耗墙，不是频率控制问题）；空载 3000 > 满载 2812 说明睿频档位随负载正常回落，不是钉死的假象。**结论：passive 模式不妨碍睿频，交付标准「TurboBoost 启用」这一项 6 台全部达标，不需要停机进 BIOS。**
+
+散热侧同时排除干净了（否则低频率会被误读成睿频失效）：CPU 45–56 °C / TJMAX 101 °C，BMC 风扇占空比仅 **23%**，`core_throttle_count` 与 `package_throttle_count` **6 台全 0**，从未撞过温度墙。风扇保持**自动模式**即可，不要切手动 —— 手动是把转速钉死，BMC 不再跟温度联动，等于把过热保护拆了。
+
+HWP 仍然只能在 BIOS 里开（改 cmdline 强制 `active` 在 HWP 关闭时无效，8468 那次 `force` / `disable` 都试过挂不上），`os-init` 不改这项。但**现在它只是个「模式差异」记录项，不是整改项**。唯一实际影响是：passive 才暴露 `ondemand` governor，所以上面那个覆盖问题只可能发生在 passive 机器上 —— maascpu-011 保住 performance 是结构性的（active 模式没有 ondemand 可选），不是配得对。而软件侧现在已经堵死了，passive 也不会再掉。
+
+**⚠ 两个不能用作睿频判据的指标（都踩过）：**
+
+1. **`/proc/cpuinfo` 的 `cpu MHz`** —— passive 模式下它报的是内核**请求值**（performance governor 钉在 max），不是测量值。实证：空载报 3398，同一时刻 APERF/MPERF 实测只有 3000。`os-collect.sh` 的 `cpu_mhz_now` 采的正是这个字段，**在 passive 机器上不可信**。
+2. **`cpufreq/base_frequency`** —— 这个 sysfs 文件**只在 active 模式存在**，passive 下读不到会得 0。基频要从 MSR `0xCE` bits 15:8 读（×100 MHz）。
+
+真实频率的取法（无需 `turbostat`，直接 `dd` 读 MSR）：
+
+```bash
+# 0xE7=MPERF(231) 0xE8=APERF(232) 0xCE=PLATFORM_INFO(206), 按字节偏移寻址
+rd() { dd if=/dev/cpu/0/msr bs=8 count=1 skip=$1 iflag=skip_bytes 2>/dev/null | od -An -tu8 | tr -d ' '; }
+modprobe msr
+BASE=$(( ($(rd 206) >> 8 & 0xFF) * 100 ))
+for i in $(seq $(nproc)); do timeout 30 bash -c 'while :; do :; done' & done
+sleep 14; A1=$(rd 232); M1=$(rd 231); sleep 10; A2=$(rd 232); M2=$(rd 231); wait
+awk -v a=$((A2-A1)) -v m=$((M2-M1)) -v b=$BASE 'BEGIN{printf "全核满载 %.0f MHz (基频 %d)\n", b*a/m, b}'
+```
+
+判读：**高出基频 10% 以上 = 睿频正常**；卡在基频 ±3% 且温度墙计数无增长 = 才是 8468 同款，需进 BIOS；温度墙计数有增长 = 散热问题，与 HWP 无关，本次数据作废。
+
+
+## 七、体检覆盖的 33 项
+
+`os-check` 逐项判定，输出 `PASS` / `FAIL` / `WARN` / `SKIP` / `INFO`：
+
+- **操作系统**（9）：OS 版本、内核版本、GRUB 固定、时区、时间同步、cloud-init、apt 自动更新、**swap 永久关闭**、统一登录账号
+- **BIOS**（6）：vt-d/IOMMU、超线程、子 NUMA、CPU 供电模式、TurboBoost、**睿频实测 / intel_pstate 模式**
+- **PCIe**（2）：ACSCtl 全关、链路无降速
+- **磁盘**（3）：根分区 ext4、系统盘 RAID、数据盘裸盘
+- **网络**（4）：bond mode4 hash3+4、无 VLAN 子接口、默认路由、带内/带外 IP 末段一致
+- **RDMA**（2）：hca_id 命名、OFED/DOCA 版本
+- **GPU**（3）：驱动版本、VBIOS 版本、CUDA 未安装
+- **共享存储**（1）、**软件包**（2）、**跨节点一致性**（1）
+
+报告第七节列出了 **本工具查不了、必须人工/网络侧确认** 的项目（PCIe switch 链路、PIX 拓扑、收敛比、M-LAG、端口映射、流量镜像、SSLVPN 等）。
+
+## 八、文件清单
+
+```
+playbook/os-init.yaml                    # 初始化入口
+playbook/os-check.yaml                   # 体检入口
+playbook/roles/os-init/
+  defaults/main.yaml                       # 所有开关和期望值
+  tasks/{main,packages,time,cloudinit,apt,user,cpu,swap,acs,hostname,grub,syslog}.yaml
+  files/os-acs-disable.sh                # ACSCtl 关闭/回滚脚本
+  templates/{chrony.conf,os-cpu-performance.service,os-acs-disable.service,99-os-forward.conf}.j2
+  handlers/main.yaml
+playbook/roles/os-check/
+  defaults/main.yaml                       # 交付标准期望值
+  files/os-collect.sh                    # 只读采集脚本（可单机直接跑）
+  tasks/main.yaml                          # 31 项判定
+playbook/roles/os-report/
+  templates/{report.md,report.csv}.j2
+  tasks/main.yaml
+tmp/hosts.example                          # 机器写在 [cluster]
+scripts/git-hooks/pre-commit               # 提交时拦明文密码/私钥(init.sh 自动装)
+```
+
+采集脚本可以脱离 ansible 单独在一台机器上跑，输出 JSON：
+
+```bash
+sudo bash playbook/roles/os-check/files/os-collect.sh | python3 -m json.tool
+```

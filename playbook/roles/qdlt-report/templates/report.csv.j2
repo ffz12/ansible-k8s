@@ -1,6 +1,0 @@
-节点,节点类型,带内IP,判定,分类,检查项,期望,实际
-{% for h in qdlt_hosts %}
-{%- for i in hostvars[h].qdlt_results %}
-"{{ h }}","{{ hostvars[h].qdlt_node_role | default('cpu') | upper }}","{{ hostvars[h].qdlt_mgmt_ip | default('') }}","{{ i.verdict }}","{{ i.cat }}","{{ i.item }}","{{ i.expect | replace('"', '""') }}","{{ i.actual | replace('"', '""') }}"
-{% endfor %}
-{%- endfor %}

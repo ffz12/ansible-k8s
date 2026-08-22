@@ -1,12 +1,12 @@
 # inventory 主机清单模板 —— 复制为 inventory/hosts 按实际填写(去行首 #)
 # 约定: 机器只写一次(ansible_host 等), 别的组只列主机名; 同名=同一台。
-# 详见 docs/青岛联通交付-系统初始化.md
+# 详见 docs/主机初始化-os-init.md
 # ============================================================================
 
 # 全部机器写在这。⚠ policy=inventory 时, 这里写的名字就是机器最终主机名
 [cluster]
 #cpu-001 ansible_host=192.168.1.111
-#gpu-su1-001 ansible_host=10.82.4.56  qdlt_su=1
+#gpu-su1-001 ansible_host=10.82.4.56  osinit_su=1
 
 [containerd]
 # 用 containerd 的节点(只列主机名); GPU/加速器节点加 accelerator_type=nvidia/dcu/npu(华为昇腾), 纯 CPU 不写(默认 runc)
@@ -52,19 +52,17 @@
 [master_to_delete]
 
 # ---- GPU:有算力节点时用。[gpu]=打"有GPU"标签(角色自动判 gpu); [gpu_driver]=装驱动/升内核 ----
-# ⚠ 青岛交付 GPU 节点只跑 qdlt-init, 绝不进 [gpu_driver]。机器本体仍写在上面 [cluster](带 qdlt_su)。
+# ⚠ GPU 节点只跑 os-init, 绝不进 [gpu_driver]。机器本体仍写在上面 [cluster](带 osinit_su)。
 [gpu]
 #gpu-su1-001
 #[gpu_driver]
 #gpu-su1-001
 
-# 青岛交付组 = 全部机器(qdlt-init / qdlt-check 跑这个组)
-[qdlt:children]
-cluster
+# os-init / os-check 直接跑 [cluster] 组(= 全部机器), 不再用单独的别名组。
 
-[qdlt:vars]
+[cluster:vars]
 # 主机名以清单里写的名字为准; 别用 ip(会把 cpu-001 改成 CPU-111)。其他: keep / explicit
-qdlt_hostname_policy=inventory
+osinit_hostname_policy=inventory
 
 [all:vars]
 # 集群参数(is_offline / lbvip 等)统一在 group_vars/all/env.yaml 配。

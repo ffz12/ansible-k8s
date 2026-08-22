@@ -1,0 +1,11 @@
+---
+# os-report —— 报告输出目录(控制机本地)
+osreport_dir: "{{ playbook_dir }}/../reports"
+oscheck_expect_time_skew: 15
+
+# 报告文件名。默认固定名 → 反复体检时【原地覆盖】, 不会堆一堆时间戳文件。
+# 想留档某一次: -e osreport_name=os-check-验收定稿
+# 想恢复每次一个新文件: -e "osreport_name=os-check-{{ osreport_stamp }}"
+osreport_name: os-check
+# 覆盖前是否把上一份备份成 <名字>.bak.md/.csv(只留最近一份, 不累积)
+osreport_keep_prev: true

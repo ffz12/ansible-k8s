@@ -1,0 +1,123 @@
+---
+# ============================================================================
+#  hostname.yaml —— 主机名规范
+#
+#  osinit_hostname_policy 决定怎么命名(见 defaults/main.yaml):
+#    inventory 以 inventory 里写的主机名为准(最直观: 清单是唯一事实来源)
+#                inventory 写 cpu-001 → 机器主机名就设成 cpu-001
+#                GPU 节点在 inventory 里直接写成 GPU-SU1-056 即可, 不必再算 IP 末段
+#    ip       交付标准写法, 由带内 IP 末段生成
+#               CPU 管理节点: CPU-[ip末段, 3位]        例: CPU-229
+#               GPU 算力节点: GPU-SU[SU号]-[ip末段3位]  例: GPU-SU2-056
+#               SU 号依据服务器上连的计算网 Leaf 交换机组顺序 → inventory 逐台指定 osinit_su
+#    explicit 用 inventory 里显式写的 osinit_hostname
+#    keep     不改主机名(保持机器上【现有】的名字), 只写 /etc/hosts 解析
+#
+#  ⚠ keep 和 inventory 的区别容易混: keep 保的是【机器现状】, inventory 保的是
+#    【清单里写的名字】。现网机器主机名是 CPU-111 但 inventory 写 cpu-001 时,
+#    keep 会保住 CPU-111(不动机器), inventory 会把机器改成 cpu-001(按清单纠正)。
+#  ⚠ 若集群提供 GPFS 存储, 主机名必须先于 GPFS 客户端安装完成配置。
+#  ⚠ 已装过 k8s 的节点改主机名会导致 node name 与 kubelet 注册名不一致,
+#    要么先 drain/delete node 再改, 要么用 keep。本项目是 OS 初始化阶段, 尚未装 k8s。
+# ============================================================================
+
+- name: 校验命名策略取值合法
+  assert:
+    that: osinit_hostname_policy in ['inventory', 'ip', 'explicit', 'keep']
+    fail_msg: >-
+      osinit_hostname_policy={{ osinit_hostname_policy }} 不合法,
+      只能是 inventory / ip / explicit / keep。
+
+# inventory 策略下, 清单里的名字会被直接写进 /etc/hostname, 所以先挡掉明显不能当
+# 主机名的写法(纯 IP / 带下划线 / 带点), 否则等到 hostnamectl 那步才报错更难查。
+- name: 【inventory 策略】校验 inventory 主机名可以当主机名用
+  assert:
+    that:
+      - inventory_hostname is not match('^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+      - inventory_hostname is match('^[A-Za-z0-9][A-Za-z0-9-]*$')
+    fail_msg: >-
+      inventory 里的名字 "{{ inventory_hostname }}" 不能直接当主机名
+      (不能是 IP, 只允许字母/数字/减号, 不能含下划线或点)。
+      要么在 inventory 里把名字改规范(推荐, 用 ansible_host 指 IP),
+      要么这台改用 osinit_hostname_policy=explicit 并写 osinit_hostname。
+  when: osinit_hostname_policy == 'inventory'
+
+- name: 解析带内 IP 最后一段(补足 3 位)
+  set_fact:
+    osinit_ip_last: "{{ '%03d' | format(mgmt_ip.split('.')[3] | int) }}"
+  when: osinit_hostname_policy == 'ip'
+
+- name: 【GPU 节点】校验已指定 SU 号
+  assert:
+    that:
+      - osinit_su | string | length > 0
+      - osinit_su | string is match('^[0-9]+$')
+    fail_msg: >-
+      GPU 节点 {{ inventory_hostname }} 未指定 osinit_su。
+      请在 inventory 中按上连计算网 Leaf 交换机组顺序填写, 例如:
+      GPU-SU2-058 ansible_host=10.82.4.58 osinit_su=2
+  when:
+    - osinit_hostname_policy == 'ip'
+    - node_role == 'gpu'
+
+- name: 生成目标主机名
+  set_fact:
+    osinit_target_hostname: >-
+      {%- if osinit_hostname_policy == 'inventory' -%}
+      {{ inventory_hostname }}
+      {%- elif osinit_hostname_policy == 'keep' -%}
+      {{ ansible_hostname }}
+      {%- elif osinit_hostname_policy == 'explicit' -%}
+      {{ osinit_hostname | default('', true) | trim | default(ansible_hostname, true) }}
+      {%- elif node_role == 'gpu' -%}
+      GPU-SU{{ osinit_su | string }}-{{ osinit_ip_last }}
+      {%- else -%}
+      CPU-{{ osinit_ip_last }}
+      {%- endif -%}
+
+- name: 目标主机名
+  debug:
+    msg: >-
+      节点类型={{ node_role | upper }},
+      命名策略={{ osinit_hostname_policy }},
+      带内IP={{ mgmt_ip }},
+      当前主机名={{ ansible_hostname }},
+      目标主机名={{ osinit_target_hostname }}{{
+        ' (保持不变)' if osinit_target_hostname == ansible_hostname else ' ← 将被修改' }}
+
+- name: 设置主机名
+  hostname:
+    name: "{{ osinit_target_hostname }}"
+  when: osinit_target_hostname != ansible_hostname
+
+- name: 同步 /etc/hosts 中的 127.0.1.1 记录(避免 sudo 解析告警)
+  lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s'
+    line: "127.0.1.1 {{ osinit_target_hostname }}"
+    state: present
+    backup: yes
+
+- name: 写入集群内全部节点的 hosts 解析
+  blockinfile:
+    path: /etc/hosts
+    marker: "# Ansible os-init hosts {mark}"
+    backup: yes
+    create: yes
+    block: |
+      {% for h in (groups['cluster'] | default([])) | sort %}
+      {{ hostvars[h].mgmt_ip | default(hostvars[h].ansible_host) | default('') }} {{ hostvars[h].osinit_target_hostname | default(h) }}
+      {% endfor %}
+  when:
+    - osinit_write_cluster_hosts | bool
+    - (groups['cluster'] | default([])) | length > 0
+
+# 关掉本项(osinit_write_cluster_hosts=false)时, 把以前写进去的块清掉 —— 否则机器上会
+# 留着一份再没人维护的映射, 之后改了 IP 反而被这份旧记录带偏(比 DNS 优先)。
+- name: 移除历史写入的集群 hosts 解析块
+  blockinfile:
+    path: /etc/hosts
+    marker: "# Ansible os-init hosts {mark}"
+    state: absent
+    backup: yes
+  when: not (osinit_write_cluster_hosts | bool)
