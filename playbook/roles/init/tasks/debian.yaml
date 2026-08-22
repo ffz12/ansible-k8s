@@ -297,12 +297,39 @@
       - zlib1g
       - "{{ 'libpcre2-8-0' if ansible_distribution_version.split('.')[0] | int >= 24 else 'libpcre3' }}"
 
-#- name: 配置dns
-#  block:
-#  - name: 拷贝resolved.conf
-#    template: src=debian-resolved.conf.j2 dest=/etc/systemd/resolved.conf backup=yes
-#  - name: 备份源dns 及生成链接文件
-#    shell: |
-#      mv /etc/resolv.conf /etc/resolv.conf.bak
-#      ln  -s   /run/systemd/resolve/resolv.conf    /etc/
-#      systemctl restart systemd-resolved
+# ==================== DNS(可选,默认关) ====================
+# 默认 init_config_dns=false: 不碰 DNS,保持系统装机/DHCP/netplan 原有配置。
+# 需要 ansible 统一接管时: 在 env.yaml 置 init_config_dns: true,并填 dns / domains。
+# 用 resolved.conf.d drop-in(不整覆盖主文件),幂等,可重复跑。
+- name: 配置 DNS(systemd-resolved)
+  when:
+    - init_config_dns | bool
+    - dns is defined
+  block:
+    - name: 确保 resolved.conf.d 目录存在
+      file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        mode: '0755'
+
+    - name: 写入 DNS drop-in(不覆盖 resolved.conf 主文件)
+      template:
+        src: debian-resolved.conf.j2
+        dest: /etc/systemd/resolved.conf.d/99-init-dns.conf
+        backup: yes
+      register: init_resolved_dropin
+
+    - name: 让 /etc/resolv.conf 指向 systemd-resolved(幂等, 已是软链则不动)
+      file:
+        src: /run/systemd/resolve/resolv.conf
+        dest: /etc/resolv.conf
+        state: link
+        force: yes
+      register: init_resolv_link
+
+    - name: 重启 systemd-resolved 使 DNS 生效
+      systemd:
+        name: systemd-resolved
+        state: restarted
+        enabled: yes
+      when: init_resolved_dropin is changed or init_resolv_link is changed

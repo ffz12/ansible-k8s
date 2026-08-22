@@ -1,1 +1,7 @@
 is_offline: false
+
+# 是否由 ansible 接管 DNS(写 systemd-resolved)。默认 false: 保持系统原有
+# DNS(装机/DHCP/netplan 给的)不动。需要统一接管时在 env.yaml 置 true,
+# 并填 dns(列表)/ domains(字符串)。见 tasks/debian.yaml 的「配置 DNS」段。
+init_config_dns: false
+
