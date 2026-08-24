@@ -186,7 +186,7 @@ ansible-inventory -i inventory/hosts --graph
 ansible cluster -i inventory/hosts --list-hosts
 ```
 
-首次进场机器通常只有厂商初始账号，在 `inventory/group_vars/all/env.yaml` 里配 `bootstrap_user` / `bootstrap_ssh_pass`，连接身份会自动探测（见 `group_vars/all/connection.yaml`）。
+连接身份默认 `connect_as: root`（全程 root 免密直连，见 `group_vars/all/connection.yaml`）。首次进场机器通常只有厂商初始账号、还没 root 免密，此时在 `inventory/group_vars/all/env.yaml` 置 `connect_as: sudo` 并配 `bootstrap_user` / `bootstrap_ssh_pass`（走「普通用户+sudo」），或先跑 `add-control-key.yaml -k` 下发控制机公钥后回到默认 root。
 
 ## 四、执行
 

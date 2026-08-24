@@ -1,25 +1,27 @@
 # ============================================================================
-#  connection.yaml —— 连接身份「自动探测」(入库; 与 env.yaml 的 bootstrap_* 凭据配合)
+#  connection.yaml —— 连接身份(默认 root 直连; auto 探测为可选)
 #
-#  每台独立判定:
-#    connect_as: auto  → 控制机能免密 ssh 到目标 root ? root 直连 : 普通用户 + sudo
-#    connect_as: root  → 强制 root 直连(已全部免密时用)
-#    connect_as: sudo  → 强制 普通用户 + sudo(用 bootstrap_*)
-#  connect_as 默认 auto, 在 env.yaml 覆盖。
+#  connect_as(默认 root, 在 env.yaml 覆盖):
+#    root  → 强制 root 免密直连【本项目常态】: 集群全程 root 免密时用这个, 最稳最快。
+#    sudo  → 强制 普通用户 + sudo(用 env.yaml 的 bootstrap_*; 控制机需装 sshpass)。
+#    auto  → 逐台探测: 控制机能免密 ssh 到目标 root ? root : 用户+sudo。
+#            仅用于「首次还没下发免密」的引导期(判不通即走 sudo, 正好用来跑 add-control-key)。
 #
-#  前提 / 说明:
-#    - 密码回退(sudo 分支)需要【控制机】装 sshpass。
-#    - root 探测走「控制机当前用户」的 ssh key: 先跑 add-control-key.yml 下发控制机公钥后,
-#      auto 才会判成 root。没下发前 auto 自动走 用户+sudo —— 正好用于首次下发免密。
-#      探测认 ansible_port(默认 22), 但【不认 ansible_ssh_common_args 里的跳板/ProxyJump】——
-#      走堡垒机的环境探测会直连目标而判不通, 这种场景请用 -e connect_as=root/sudo 强制指定。
-#    - bootstrap_user / bootstrap_ssh_pass / bootstrap_become_pass 在 env.yaml 配(见示例)。
-#      root 全程免密时这几个可不填(lazy: 只有回退到 sudo 分支才会用到)。
+#  ⚠ auto 的探测是「group_var 里惰性跑 ssh」(BatchMode, ConnectTimeout=4), 有已知局限:
+#     - delegate_to 场景(加节点/拿 join/etcd 等委派任务)委派机地址解析对不齐, 易误判 no →
+#       误回退到 sudo, 撞上没填的 bootstrap_user 就报错。委派密集的操作请用 connect_as: root。
+#     - 不认 ansible_ssh_common_args 里的跳板/ProxyJump; 慢节点可能 4s 超时误判。
+#     故默认给 root; auto 只在首次引导时临时 -e connect_as=auto。
+#
+#  说明:
+#    - root 探测/直连走【控制机当前用户】的 ssh key(先跑 add-control-key.yml 下发控制机公钥)。
+#    - bootstrap_user / bootstrap_ssh_pass / bootstrap_become_pass 在 env.yaml 配(见示例);
+#      root 全程免密时可不填(仅 sudo 分支才用到)。
 #    - ansible_python_interpreter / ansible_ssh_common_args 仍在 hosts [all:vars] 配, 不受本文件影响。
-#  彻底关掉自动探测: 删掉本文件, 回到 hosts/[all:vars] 手工配 ansible_user 等。
+#  彻底关掉本套逻辑: 删掉本文件, 回到 hosts/[all:vars] 手工配 ansible_user 等。
 # ============================================================================
 
-connect_as: auto          # 可被 env.yaml 覆盖
+connect_as: root          # 默认 root 直连; 可在 env.yaml 覆盖为 sudo / auto
 
 # 控制机 → 目标 root 免密是否可用(BatchMode 不交互, 4s 超时; 通=yes 否=no)
 _root_login_ok: >-
