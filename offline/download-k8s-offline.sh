@@ -21,8 +21,11 @@ esac
 
 # -------- 版本(与 inventory/group_vars/all/env.yaml 保持一致) --------
 K8S="1.34.3"                 # kubeadm/kubectl/kubelet + 组件镜像
-COREDNS="1.12.1"             # 对着 `kubeadm config images list --kubernetes-version v$K8S` 核对
-PAUSE="3.10.1"               # 同上(注意 pause tag 无 v 前缀)
+# 下面 COREDNS/PAUSE 只是【回退默认】: 脚本会下完 kubeadm 后用
+# `kubeadm config images list --kubernetes-version v$K8S` 自动校准这两个 tag(见 1.5 段),
+# 查得到就以 kubeadm 为准, 换 K8S 版本一般无需手改这里; 查不到才用这里的值兜底。
+COREDNS="1.12.1"
+PAUSE="3.10.1"               # 注意 pause tag 无 v 前缀
 CRICTL="1.34.0"
 ETCD="3.6.8"
 CALICO="3.27.5"
@@ -109,6 +112,24 @@ for a in $ARCHES; do
   cp "$tmp/crictl" "$B/kubernetes/v$K8S/bin/$a/crictl"; chmod +x "$B/kubernetes/v$K8S/bin/$a/crictl"
   rm -rf "$tmp"
 done
+
+# ========== 1.5 用 kubeadm 校准镜像 tag(消除 pause/coredns 手写漂移) ==========
+# kubeadm config images list 按 k8s 版本给出权威镜像 tag; 取到就覆盖上面的默认。
+# 需要一个本机架构可跑的 kubeadm(上面按 ARCHES 已下, 本机架构不在 ARCHES 时临时补下一个)。
+host_arch(){ case "$(uname -m)" in x86_64) echo amd64;; aarch64|arm64) echo arm64;; *) echo amd64;; esac; }
+HA="$(host_arch)"; KUBEADM="$B/kubernetes/v$K8S/bin/$HA/kubeadm"
+if [ ! -x "$KUBEADM" ]; then
+  dl "$K8S_BIN/v$K8S/bin/linux/$HA/kubeadm" "$KUBEADM"; chmod +x "$KUBEADM"
+fi
+IMG_LIST="$("$KUBEADM" config images list --kubernetes-version "v$K8S" 2>/dev/null || true)"
+if [ -n "$IMG_LIST" ]; then
+  get_tag(){ echo "$IMG_LIST" | grep -E "$1" | head -1 | sed 's/.*://'; }
+  CD="$(get_tag '/coredns')"; [ -n "$CD" ] && COREDNS="${CD#v}"
+  PZ="$(get_tag '/pause')";   [ -n "$PZ" ] && PAUSE="${PZ#v}"
+  say "kubeadm 校准: coredns=v$COREDNS pause=$PAUSE (k8s v$K8S)"
+else
+  say "⚠ kubeadm 未给出镜像清单, 沿用默认 coredns=v$COREDNS pause=$PAUSE"
+fi
 
 # ========== 2. k8s 组件镜像 + pause + coredns ==========
 KIMG="$B/kubernetes/v$K8S/images"
