@@ -14,6 +14,25 @@
   delegate_to: "{{ groups['k8s_master'][0] }}"
   when: not kubelet_conf.stat.exists
 
+# kk 集群的 controlPlaneEndpoint 是域名(如 lb.kubesphere.local), join 命令里写死该域名;
+# 新加的 worker 无此 /etc/hosts 解析且无 kk 本地 LB, 直接 join 会在 preflight 解析失败。
+- name: "[Add Node] 解析 controlPlaneEndpoint 主机名"
+  set_fact:
+    _cp_endpoint_host: "{{ _join_cmd_result.stdout | regex_search('join\\s+([^:\\s]+):', '\\1') | first }}"
+  when: not kubelet_conf.stat.exists
+
+- name: "[Add Node] 为 controlPlaneEndpoint 写 /etc/hosts 解析({{ _cp_endpoint_host | default('') }} -> {{ kube_cp_endpoint_ip }})"
+  lineinfile:
+    path: /etc/hosts
+    regexp: '\s{{ _cp_endpoint_host | regex_escape }}(\s|$)'
+    line: "{{ kube_cp_endpoint_ip }} {{ _cp_endpoint_host }}"
+    state: present
+  become: yes
+  when:
+    - not kubelet_conf.stat.exists
+    - _cp_endpoint_host is defined and (_cp_endpoint_host | length > 0)
+    - not (_cp_endpoint_host | regex_search('^[0-9]{1,3}(\.[0-9]{1,3}){3}$'))
+
 - name: "[Add Node] 执行 kubeadm join (Worker)"
   command: "{{ _join_cmd_result.stdout }} --cri-socket {{ kube_criSocket }} --ignore-preflight-errors=SystemVerification"
   become: yes

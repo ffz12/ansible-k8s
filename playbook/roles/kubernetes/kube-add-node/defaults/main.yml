@@ -1,0 +1,7 @@
+# kube-add-node 角色默认变量
+
+# controlPlaneEndpoint 域名(如 kk 集群的 lb.kubesphere.local)在新加节点上解析到的地址。
+# join 命令由首 master 生成、写死该域名; ansible 新加的 worker 既无该 /etc/hosts 解析、
+# 也无 kk 的每节点本地 LB, 故 join 前需自行写解析。
+# 默认: 有 VIP 用 lbvip, 否则用首 master 的 IP。可在 env.yaml / -e 覆盖成真 VIP(保 HA)或指定 master。
+kube_cp_endpoint_ip: "{{ lbvip | default(hostvars[groups['k8s_master'][0]].ansible_host, true) }}"
