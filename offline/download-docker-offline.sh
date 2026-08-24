@@ -24,13 +24,17 @@ case "${1:-all}" in
   *) echo "用法: bash $0 [amd64|arm64|all]  (默认 all)"; exit 1 ;;
 esac
 
-# -------- 版本(与 inventory/group_vars/all/defaults.yaml 的 docker_arch_map / cri_dockerd_* 对齐) --------
-DOCKER="29.4.2"        # docker 静态二进制包 -> {amd,arm}-docker-$DOCKER.tgz
-BUILDX="0.32.1"        # docker/buildx        -> buildx-v$BUILDX.linux-{amd64,arm64}
-COMPOSE="2.32.4"       # docker/compose       -> docker-compose-linux-{x86_64,aarch64}(换版本核对 releases)
-CRIDOCKERD="0.3.16"    # Mirantis/cri-dockerd -> cri-dockerd-$CRIDOCKERD.{amd64,arm64}.tgz
-CONTAINERD="1.7.32"    # containerd 静态包(与 env.yaml containerd_version 一致; 换 2.2.3 改这里重下)
-RUNC="1.1.12"          # runc(containerd 依赖; 官方 containerd 包不含 runc, 单独下)
+# -------- 版本(单一源) --------
+# 优先 source 由 gen-offline-versions.yaml 从 ansible 变量生成的 versions.env(与部署同源);
+# 没有该文件时用下面 :=兜底默认, 脚本仍可脱离 ansible 独立跑。
+# 文件名/tag 与 defaults.yaml 的 docker_arch_map / cri_dockerd_* / containerd_version / runc_version 一致。
+[ -f "$(dirname "$0")/versions.env" ] && . "$(dirname "$0")/versions.env"
+: "${DOCKER:=29.4.2}"        # docker 静态二进制包 -> {amd,arm}-docker-$DOCKER.tgz
+: "${BUILDX:=0.32.1}"        # docker/buildx        -> buildx-v$BUILDX.linux-{amd64,arm64}
+: "${COMPOSE:=2.32.4}"       # docker/compose       -> docker-compose-linux-{x86_64,aarch64}(换版本核对 releases)
+: "${CRIDOCKERD:=0.3.16}"    # Mirantis/cri-dockerd -> cri-dockerd-$CRIDOCKERD.{amd64,arm64}.tgz
+: "${CONTAINERD:=1.7.32}"    # containerd 静态包(与 env.yaml containerd_version 一致; 换 2.2.3 改那里重生成)
+: "${RUNC:=1.1.12}"          # runc(containerd 依赖; 官方 containerd 包不含 runc, 单独下)
 
 # -------- 源 --------
 DOCKER_STATIC="https://download.docker.com/linux/static/stable"

@@ -50,6 +50,16 @@ case " $LAYERS " in *" k8s "*|*" docker "*|*" harbor "*)
   command -v skopeo >/dev/null 2>&1 || { echo "✗ 拉镜像需 skopeo: yum install -y skopeo 或 apt install -y skopeo"; exit 1; } ;;
 esac
 
+# -------- 版本单一源: 先用 ansible 把部署侧解析后的版本 dump 成 versions.env --------
+# 有 ansible + inventory 就刷新(保证下载版本 == 部署版本); 没有则用各脚本内置兜底默认。
+REPO="$(cd .. && pwd)"
+if command -v ansible-playbook >/dev/null 2>&1 && [ -f "$REPO/inventory/hosts" ]; then
+  say "生成 versions.env(与 ansible 部署同源)"
+  ansible-playbook -i "$REPO/inventory/hosts" "$REPO/playbook/gen-offline-versions.yaml"
+else
+  say "⚠ 无 ansible-playbook 或 inventory/hosts, 跳过版本生成, 下载脚本用内置兜底默认版本"
+fi
+
 for L in $LAYERS; do run_layer "$L"; done
 
 ART="$(pwd)/artifacts"

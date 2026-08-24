@@ -19,20 +19,22 @@ case "${1:-all}" in
   *) echo "用法: bash $0 [amd64|arm64|all]  (默认 all)"; exit 1 ;;
 esac
 
-# -------- 版本(与 inventory/group_vars/all/env.yaml 保持一致) --------
-K8S="1.34.3"                 # kubeadm/kubectl/kubelet + 组件镜像
-# 下面 COREDNS/PAUSE 只是【回退默认】: 脚本会下完 kubeadm 后用
-# `kubeadm config images list --kubernetes-version v$K8S` 自动校准这两个 tag(见 1.5 段),
-# 查得到就以 kubeadm 为准, 换 K8S 版本一般无需手改这里; 查不到才用这里的值兜底。
-COREDNS="1.12.1"
-PAUSE="3.10.1"               # 注意 pause tag 无 v 前缀
-CRICTL="1.34.0"
-ETCD="3.6.8"
-CALICO="3.27.5"
-FLANNEL="0.26.7"
-FLANNEL_CNI="1.6.2-flannel1"
-CILIUM="1.16.5"
-HELM="3.16.4"
+# -------- 版本(单一源) --------
+# 优先 source 由 gen-offline-versions.yaml 从 ansible 变量生成的 versions.env(与部署同源);
+# 没有该文件时用下面 :=兜底默认, 脚本仍可脱离 ansible 独立跑。
+[ -f "$(dirname "$0")/versions.env" ] && . "$(dirname "$0")/versions.env"
+: "${K8S:=1.34.3}"                 # kubeadm/kubectl/kubelet + 组件镜像
+# COREDNS/PAUSE 还会在下完 kubeadm 后由 `kubeadm config images list` 自动校准(见 1.5 段),
+# 查得到以 kubeadm 为准; versions.env / 下面兜底只是查不到时用。
+: "${COREDNS:=1.12.1}"
+: "${PAUSE:=3.10.1}"               # 注意 pause tag 无 v 前缀
+: "${CRICTL:=1.34.0}"
+: "${ETCD:=3.6.8}"
+: "${CALICO:=3.27.5}"
+: "${FLANNEL:=0.26.7}"
+: "${FLANNEL_CNI:=1.6.2-flannel1}"
+: "${CILIUM:=1.16.5}"
+: "${HELM:=3.16.4}"
 
 CNIS="calico flannel cilium"   # 只打包用得到的可删减, 如 CNIS="calico"
 

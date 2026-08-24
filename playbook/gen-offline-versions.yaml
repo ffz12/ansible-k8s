@@ -1,0 +1,35 @@
+# =============================================================================
+#  gen-offline-versions.yaml —— 把 ansible 解析后的版本变量 dump 成 offline/versions.env,
+#  供离线下载脚本(download-*-offline.sh)source, 使【下载版本】与【部署版本】同源一致。
+#
+#  用法(控制机上): ansible-playbook -i inventory/hosts playbook/gen-offline-versions.yaml
+#  prefetch-all.sh 会自动先跑它。
+#
+#  显式 include_vars 载入 group_vars/all(而非依赖 localhost 自动继承 group_vars):
+#  先 defaults(定参/派生), 再 env(变参, 覆盖); env.yaml 不存在则跳过(用 defaults 兜底)。
+# =============================================================================
+- hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    _gv_dir: "{{ playbook_dir | dirname }}/inventory/group_vars/all"
+  tasks:
+    - name: 载入 defaults.yaml(定参/派生)
+      include_vars: "{{ _gv_dir }}/defaults.yaml"
+
+    - name: 载入 env.yaml(变参, 覆盖 defaults; 不存在则跳过)
+      include_vars: "{{ item }}"
+      with_first_found:
+        - files:
+            - "{{ _gv_dir }}/env.yaml"
+          skip: yes
+
+    - name: 生成 offline/versions.env
+      template:
+        src: "{{ playbook_dir | dirname }}/offline/versions.env.j2"
+        dest: "{{ playbook_dir | dirname }}/offline/versions.env"
+        mode: "0644"
+
+    - name: 提示
+      debug:
+        msg: "已生成 {{ playbook_dir | dirname }}/offline/versions.env (k8s={{ k8s_version }} containerd={{ containerd_version }})"
