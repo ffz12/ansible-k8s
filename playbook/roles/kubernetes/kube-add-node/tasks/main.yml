@@ -14,6 +14,12 @@
   delegate_to: "{{ groups['k8s_master'][0] }}"
   when: not kubelet_conf.stat.exists
 
+# 新增: 打印 join 完整命令
+- name: "[Join CMD] 输出 kubeadm join 完整命令"
+  debug:
+    msg: "JOIN_CMD: {{ _join_cmd_result.stdout }}"
+  when: not kubelet_conf.stat.exists and _join_cmd_result.stdout is defined
+
 # kk 集群的 controlPlaneEndpoint 是域名(如 lb.kubesphere.local), join 命令里写死该域名;
 # 新加的 worker 无此 /etc/hosts 解析且无 kk 本地 LB, 直接 join 会在 preflight 解析失败。
 - name: "[Add Node] 解析 controlPlaneEndpoint 主机名"
