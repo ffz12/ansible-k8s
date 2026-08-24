@@ -1,19 +1,40 @@
 #!/bin/bash
 # =============================================================================
-#  buildx-env.sh —— 手动跑一次, 配置 buildx 交叉构建环境(binfmt + docker-container builder)。
-#  交叉构建 arm64(在 amd64 机器上)需要它; 配好后再跑 build-all.sh / build-ub.sh。
+#  buildx-env.sh —— 配置 buildx 交叉构建环境(binfmt + docker-container builder)。
+#  自包含: buildkitd 配置(registry mirror / 私有 harbor insecure)内联在本脚本, 跑时写临时文件,
+#  不依赖任何外部 buildkitd.toml。手动跑一次即可, 之后再跑 nginx-ha 的 build-all.sh / build-ub.sh。
 #
-#  镜像加速: tonistiigi/binfmt 与 moby/buildkit 由 docker daemon 直接拉, 不走 buildkitd.toml
-#    的 mirror, 直连 docker.io 常慢/失败, 故这里给这两个镜像加国内 mirror 前缀。
-#    默认 docker.m.daocloud.io; 用 BUILDX_MIRROR=其它 覆盖, 或 BUILDX_MIRROR= 置空回退 docker.io。
+#  用法: bash scripts/buildx-env.sh        # 从任意目录都能跑
+#  镜像加速: tonistiigi/binfmt 与 moby/buildkit 由 docker daemon 直接拉(不吃 buildkit 内部
+#    的 registry mirror), 故这里给这两个镜像加国内 mirror 前缀。默认 docker.m.daocloud.io;
+#    BUILDX_MIRROR=其它 覆盖, BUILDX_MIRROR= 置空回退 docker.io。
 # =============================================================================
 set -e
-cd "$(dirname "$0")"   # 确保能读到同目录 buildkitd.toml
 
 BUILDER="${BUILDX_BUILDER:-mybuilder}"
 MIRROR="${BUILDX_MIRROR-docker.m.daocloud.io}"      # 单横线: 置空(BUILDX_MIRROR=)则不加前缀
 BINFMT_IMG="${MIRROR:+$MIRROR/}tonistiigi/binfmt"
 BUILDKIT_IMG="${MIRROR:+$MIRROR/}moby/buildkit:latest"
+
+# buildkitd 配置内联生成到临时文件(Dockerfile 内引用的镜像走这些 mirror; 私有 harbor 免 TLS)
+TOML="$(mktemp)"
+trap 'rm -f "$TOML"' EXIT
+cat > "$TOML" <<'EOF'
+[registry."docker.io"]
+  mirrors = [
+     "https://docker.m.daocloud.io",
+     "https://docker.1ms.run",
+     "https://proxy.1panel.live",
+     "https://hub1.nat.tf",
+     "https://hub2.nat.tf",
+     "https://docker.ketches.cn",
+     "https://docker.hlmirror.com"
+  ]
+[registry."harbor.unisound.ai"]
+  insecure = true
+[registry."harbor.unidev.ai"]
+  insecure = true
+EOF
 
 # 1) binfmt: 内核没注册 qemu-aarch64 才装, 否则跳过(可重复跑)
 if [ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
@@ -37,7 +58,7 @@ else
     --driver-opt image="$BUILDKIT_IMG" \
     --driver-opt network=host \
     --buildkitd-flags '--allow-insecure-entitlement network.host' \
-    --config ./buildkitd.toml
+    --config "$TOML"
 fi
 
-echo "🎉 buildx 交叉构建环境就绪, 可跑 build-all.sh / build-ub.sh"
+echo "🎉 buildx 交叉构建环境就绪, 可跑 nginx-ha 的 build-all.sh / build-ub.sh"
