@@ -43,7 +43,37 @@ build() {
 # 检查源码
 [[ -f "$NGINX_TAR" && -f "$KEEPALIVED_TAR" ]] || { echo "❌ 缺少源码"; exit 1; }
 
-docker buildx create --use --name mybuilder 2>/dev/null || true
+# ---- 幂等配置 buildx: 交叉构建 arm64 需 binfmt(qemu) + docker-container 驱动的 builder ----
+# 原来这步(binfmt 注册 + docker buildx create --driver docker-container)得手动跑 buildx-env.sh,
+# 且下面若只 `docker buildx create --use` 用的是默认 docker 驱动, 交叉构建 arm 会失败。
+# 这里做成幂等自动执行: 已注册/已存在就跳过, 没有才建。构建机需在线(拉 tonistiigi/binfmt + moby/buildkit)。
+BUILDER="mybuilder"
+setup_buildx(){
+  # 1) binfmt: 没有 arm 模拟就装(把 qemu-aarch64 等注册进内核 binfmt_misc)
+  if [ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+    echo "🔧 注册 binfmt(qemu) 以支持交叉架构 ..."
+    docker run --privileged --rm tonistiigi/binfmt --install all
+  else
+    echo "✅ binfmt 已注册 qemu-aarch64, 跳过"
+  fi
+  # 2) builder: 没有 mybuilder(docker-container 驱动)就建, 有就直接切换使用
+  if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
+    echo "✅ buildx builder $BUILDER 已存在, 切换使用"
+    docker buildx use "$BUILDER"
+  else
+    echo "🔧 创建 buildx builder $BUILDER (docker-container 驱动) ..."
+    docker buildx create \
+      --name "$BUILDER" \
+      --use \
+      --bootstrap \
+      --driver docker-container \
+      --driver-opt image=moby/buildkit:latest \
+      --driver-opt network=host \
+      --buildkitd-flags '--allow-insecure-entitlement network.host' \
+      --config ./buildkitd.toml
+  fi
+}
+setup_buildx
 
 #for os in ubuntu22 rocky8 rocky9; do
 for os in ubuntu22 rocky8 ubuntu24 ; do
