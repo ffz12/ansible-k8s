@@ -1,31 +1,68 @@
 ---
-# 交付收尾: 从所有节点清除【Ansible 控制机】root 的免密公钥。
-# 场景: 控制机(跑 ansible 这台)为免密登录各节点, 把自己的 id_rsa.pub 塞进了每个
-#       节点的 /root/.ssh/authorized_keys(单向: 控制机 -> 各节点)。交付时需撤掉这把钥匙。
+# 免密公钥撤除: 从目标节点 authorized_keys 移除【某个"源"】的 root 公钥。add-control-key.yaml 的逆操作。
+#   默认源 = 控制机(跑 ansible 这台)      → 撤掉控制机对各节点的免密(交付收尾)
+#   -e source_node=<主机> 源 = 该节点       → 撤掉该节点(如 MPI launcher)对其他机器的免密
 #
-# 与 add-control-key.yaml(加)成对(精确逆操作)。
-# 只删【控制机这一把】公钥(控制机通常不在 inventory 里)。方向: 控制机 -> 各节点(单向)。
+# ⚠️ 跑完对应免密即失效, 之后再连需密码。作为交付/清理的【最后一步】执行(其余 playbook 先跑完)。
 #
-# ⚠️ 注意: 跑完控制机对各节点的免密即失效, 之后再连需要密码。请作为交付【最后一步】执行,
-#          之前若还要跑别的 playbook, 先跑完再清。
-#
-# 用法: ansible-playbook remove-control-key.yaml                       # 全 cluster
-#       ansible-playbook remove-control-key.yaml -l cpu-001,cpu-002    # 只指定节点(--limit, 推荐)
-#       ansible-playbook remove-control-key.yaml -e target_hosts=gpu   # 或指定别的组/主机(默认 cluster)
-#       控制机公钥路径可覆盖: -e control_pubkey_file=/root/.ssh/id_rsa.pub
-- name: 清除控制机免密公钥(交付收尾)
+# 用法:
+#   ansible-playbook remove-control-key.yaml                          # 撤控制机 -> 全 cluster
+#   ansible-playbook remove-control-key.yaml -e source_node=gpu-001   # 撤 gpu-001 -> 全 cluster
+#   目标可再缩:  -l cpu-001,cpu-002   或   -e target_hosts=gpu
+#   默认源公钥路径可覆盖: -e control_pubkey_file=/root/.ssh/id_rsa.pub
+
+- name: 取得"源"的 root 公钥(用于精确移除)
+  hosts: "{{ source_node | default('localhost') }}"
+  become: yes
+  gather_facts: no
+  run_once: true
+  vars:
+    control_pubkey_file: /root/.ssh/id_rsa.pub
+    _src_pubfile: "{{ '/root/.ssh/id_rsa.pub' if source_node is defined else control_pubkey_file }}"
+  tasks:
+    - name: 探测源公钥是否存在
+      stat:
+        path: "{{ _src_pubfile }}"
+      register: _src_stat
+
+    - name: 读取源公钥
+      slurp:
+        src: "{{ _src_pubfile }}"
+      register: _src_pub
+      when: _src_stat.stat.exists
+
+    - name: 存为 fact(不存在则空)
+      set_fact:
+        _source_pubkey: "{{ (_src_pub.content | b64decode | trim) if _src_stat.stat.exists else '' }}"
+
+    - name: (指定源节点时)撤掉源节点 ~/.ssh/config 里的 host key 放行块
+      blockinfile:
+        path: /root/.ssh/config
+        marker: "# {mark} ANSIBLE add-control-key"
+        state: absent
+      when: source_node is defined
+
+- name: 从目标节点移除源公钥
   hosts: "{{ target_hosts | default('cluster') }}"
   become: yes
   gather_facts: no
   vars:
-    control_pubkey_file: /root/.ssh/id_rsa.pub
+    _src_host: "{{ source_node | default('localhost') }}"
   tasks:
-    - name: 从各节点 authorized_keys 移除控制机公钥
+    - name: 源无公钥则跳过(无从精确移除)
+      debug:
+        msg: "源 [{{ _src_host }}] 无 id_rsa.pub, 跳过移除。"
+      run_once: true
+      when: hostvars[_src_host]._source_pubkey | length == 0
+
+    - name: 从 root authorized_keys 移除源公钥
       authorized_key:
         user: root
         state: absent
-        key: "{{ lookup('file', control_pubkey_file) }}"
+        key: "{{ hostvars[_src_host]._source_pubkey }}"
+      when: hostvars[_src_host]._source_pubkey | length > 0
 
     - name: 提示
       debug:
-        msg: "控制机公钥已从本节点 authorized_keys 移除。控制机对本节点的免密登录即刻失效。"
+        msg: "已从本节点移除 [{{ _src_host }}] 的 root 公钥; 其对本节点的免密即失效。"
+      when: hostvars[_src_host]._source_pubkey | length > 0
