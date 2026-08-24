@@ -1,6 +1,7 @@
 [Service]
 Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig={{ kube_config_dir }}/bootstrap-kubelet.conf --kubeconfig={{ kube_config_dir }}/kubelet.conf"
 Environment="KUBELET_CONFIG_ARGS=--config={{ kubelet_config_dir }}/config.yaml"
-Environment="KUBELET_EXTRA_ARGS="
+{% set _node_ip = kube_node_ip | default('', true) | trim %}
+Environment="KUBELET_EXTRA_ARGS={% if _node_ip %}--node-ip={{ _node_ip }}{% endif %}"
 ExecStart=
 ExecStart={{ kube_bin_dir }}/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS $KUBELET_EXTRA_ARGS

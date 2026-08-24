@@ -7,6 +7,7 @@
     owner: root
     group: root
     mode: "0644"
+  notify: reload systemd and restart kubelet
 
 - name: 部署 kubeadm 配置片段
   template:
@@ -15,3 +16,4 @@
     owner: root
     group: root
     mode: "0644"
+  notify: reload systemd and restart kubelet

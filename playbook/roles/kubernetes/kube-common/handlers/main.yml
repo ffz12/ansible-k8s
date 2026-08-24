@@ -1,0 +1,8 @@
+# roles/kubernetes/kube-common/handlers/main.yml
+# kubelet systemd unit / drop-in 变更后, reload + 重启 kubelet 使其生效
+# (改 --node-ip 等 KUBELET_EXTRA_ARGS 必须重启才刷新 Node InternalIP)。
+- name: reload systemd and restart kubelet
+  systemd:
+    name: kubelet
+    daemon_reload: yes
+    state: restarted

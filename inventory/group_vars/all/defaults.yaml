@@ -194,6 +194,11 @@ kube_config_dir: /etc/kubernetes
 kubelet_config_dir: /var/lib/kubelet
 kubelet_service_dir: /etc/systemd/system/kubelet.service.d
 # kubelet 资源预留已移到 env.yaml(kubelet_kube_reserved_* / kubelet_system_reserved_*)
+# kubelet 上报的 Node InternalIP。默认取 ansible_host(与 etcd/master advertiseAddress 同源),
+# 钉死后 kubelet 不再靠「默认路由网卡」自选 IP(多网卡节点会选错, 如落到 10.101.16.x)。
+# 每台可在 inventory 里单独覆盖: `cpu06 ansible_host=172.18.1.66 kube_node_ip=172.18.1.66`。
+# 留空(既无 ansible_host 也未指定)则不下发 --node-ip, 退回 kubelet 默认自选行为。
+kube_node_ip: "{{ ansible_host | default('', true) }}"
 crictl_arch_map:
   x86_64: "crictl-v{{ crictl_version }}-linux-amd64.tar.gz"
   aarch64: "crictl-v{{ crictl_version }}-linux-arm64.tar.gz"
