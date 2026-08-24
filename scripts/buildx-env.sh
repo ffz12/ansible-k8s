@@ -15,11 +15,20 @@ BUILDER="${BUILDX_BUILDER:-mybuilder}"
 MIRROR="${BUILDX_MIRROR-docker.m.daocloud.io}"      # 单横线: 置空(BUILDX_MIRROR=)则不加前缀
 BINFMT_IMG="${MIRROR:+$MIRROR/}tonistiigi/binfmt"
 BUILDKIT_IMG="${MIRROR:+$MIRROR/}moby/buildkit:latest"
+# 私有 harbor 免 TLS 域名(可多个, 空格/逗号分隔); 默认当前 harbor, 换环境用 HARBOR_INSECURE=覆盖
+HARBOR_INSECURE="${HARBOR_INSECURE:-harbor.local.clusters}"
 
-# buildkitd 配置内联生成到临时文件(Dockerfile 内引用的镜像走这些 mirror; 私有 harbor 免 TLS)
-TOML="$(mktemp)"
-trap 'rm -f "$TOML"' EXIT
-cat > "$TOML" <<'EOF'
+# buildkitd 配置来源:
+#   自带一份完整 toml → BUILDKITD_CONFIG=/path/to/你的.toml 直接用它(想写什么写什么, 脚本不再生成);
+#   没设 → 用下面的 mirror + HARBOR_INSECURE 变量拼一份临时 toml。
+if [ -n "${BUILDKITD_CONFIG:-}" ]; then
+  [ -f "$BUILDKITD_CONFIG" ] || { echo "✗ BUILDKITD_CONFIG 指定的文件不存在: $BUILDKITD_CONFIG"; exit 1; }
+  TOML="$BUILDKITD_CONFIG"
+  echo "📄 使用自定义 buildkitd 配置: $TOML"
+else
+  TOML="$(mktemp)"
+  trap 'rm -f "$TOML"' EXIT
+  cat > "$TOML" <<'EOF'
 [registry."docker.io"]
   mirrors = [
      "https://docker.m.daocloud.io",
@@ -30,13 +39,12 @@ cat > "$TOML" <<'EOF'
      "https://docker.ketches.cn",
      "https://docker.hlmirror.com"
   ]
-[registry."harbor.local.clusters"]
-  insecure = true
-[registry."harbor.unisound.ai"]
-  insecure = true
-[registry."harbor.unidev.ai"]
-  insecure = true
 EOF
+  # 追加私有 harbor insecure(变量驱动, 支持多域名)
+  for h in ${HARBOR_INSECURE//,/ }; do
+    printf '[registry."%s"]\n  insecure = true\n' "$h" >> "$TOML"
+  done
+fi
 
 # 1) binfmt: 内核没注册 qemu-aarch64 才装, 否则跳过(可重复跑)
 if [ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
