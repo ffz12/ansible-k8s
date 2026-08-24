@@ -1,3 +1,6 @@
-- hosts: cluster
+# 系统初始化: 只跑 [init] 组(在 inventory 里指定要初始化哪些节点),
+# 不再对 [cluster] 全量跑。加新节点时把新机名填进 [init] 即可只初始化它。
+# ⚠ 机器本体仍写在 [cluster](带 ansible_host); [init] 只列主机名(同名=同一台)。
+- hosts: init
   roles:
   - init
