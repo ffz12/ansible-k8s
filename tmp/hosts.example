@@ -8,6 +8,17 @@
 #cpu-001 ansible_host=192.168.1.111
 #gpu-su1-001 ansible_host=10.82.4.56  osinit_su=1
 
+[init]
+# 要跑系统初始化(init.yaml)的节点(只列主机名; 同名=同一台, 机器本体仍写在 [cluster])。
+# 加新节点时把新机名填这, init.yaml 只初始化它, 不动已交付的老机器。
+#cpu-005
+
+[stager]
+# 预取物料(prefetch-artifacts.yaml)用: 填一台【能联网且网速好】的节点(通常集群里出网最好的那台)。
+# 它下齐全部离线物料(二进制+镜像)后汇回控制机 offline/artifacts/, 之后各节点走 is_offline=true 离线装,
+# 拉不动/拉得慢的节点不再逐台公网拉。只填一台即可。
+#cpu-001
+
 [containerd]
 # 用 containerd 的节点(只列主机名); GPU/加速器节点加 accelerator_type=nvidia/dcu/npu(华为昇腾), 纯 CPU 不写(默认 runc)
 #cpu-001

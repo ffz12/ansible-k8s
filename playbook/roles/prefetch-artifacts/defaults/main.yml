@@ -1,0 +1,17 @@
+# prefetch-artifacts 角色默认变量(可在 env.yaml / -e 覆盖)
+
+# 架构: amd64 | arm64 | all(双架构)。纯单架构集群指定一个省一半体积/时间(镜像大头)。
+prefetch_arch: all
+
+# stager 节点上的工作目录: 下载脚本和产物(artifacts/)都落在这。
+stager_work_dir: /opt/offline-stage
+
+# 默认预取 k8s 层 + 底座运行时(docker/containerd/runc)——最常用两层。
+# 需要更多按需加(与 offline/ 下脚本同名):
+#   download-harbor-offline.sh    Harbor 镜像
+#   download-lb-offline.sh        haproxy+keepalived 离线包
+#   download-gpu-offline.sh       nvidia-container-toolkit
+#   download-packages-offline.sh  各发行版系统依赖包
+prefetch_scripts:
+  - download-k8s-offline.sh
+  - download-docker-offline.sh
