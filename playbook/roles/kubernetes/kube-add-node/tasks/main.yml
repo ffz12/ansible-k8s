@@ -43,6 +43,17 @@
   command: "{{ _join_cmd_result.stdout }} --cri-socket {{ kube_criSocket }} --ignore-preflight-errors=SystemVerification"
   become: yes
   when: not kubelet_conf.stat.exists
+
+# worker 节点默认无 role 标签(ROLES 显示 <none>), 从首 master 打 worker 标签(幂等)
+- name: "[Add Node] 打 worker 角色标签"
+  command: >
+    kubectl --kubeconfig /etc/kubernetes/admin.conf
+    label node {{ inventory_hostname }} node-role.kubernetes.io/worker= --overwrite
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  become: yes
+  changed_when: false
+  when: not kubelet_conf.stat.exists
+
 - name: 设置 kubectl 别名 k(软链接,幂等)
   file:
     src: "{{ kube_bin_dir }}/kubectl"
