@@ -2,10 +2,12 @@
 # 交付前置: 建立【控制机 -> 各节点】单向免密——把控制机 root 公钥下发到所有节点。
 # 与 remove-control-key.yaml(删)成对。方向: 控制机 -> 各节点(单向), 不是节点间互信。
 # 前提: 控制机已有 /root/.ssh/id_rsa.pub; 首次控制机还没免密时带 -k 输密码执行。
-# 用法: ansible-playbook add-control-key.yaml
+# 用法: ansible-playbook add-control-key.yaml                        # 全 cluster
+#       ansible-playbook add-control-key.yaml -l cpu-001,cpu-002     # 只指定节点(--limit, 推荐)
+#       ansible-playbook add-control-key.yaml -e target_hosts=gpu    # 或指定别的组/主机(默认 cluster)
 #       控制机公钥路径可覆盖: -e control_pubkey_file=/root/.ssh/id_rsa.pub
 - name: 下发控制机免密公钥到各节点
-  hosts: cluster
+  hosts: "{{ target_hosts | default('cluster') }}"
   become: yes
   gather_facts: no
   vars:

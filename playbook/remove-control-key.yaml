@@ -9,10 +9,12 @@
 # ⚠️ 注意: 跑完控制机对各节点的免密即失效, 之后再连需要密码。请作为交付【最后一步】执行,
 #          之前若还要跑别的 playbook, 先跑完再清。
 #
-# 用法: ansible-playbook remove-control-key.yaml
+# 用法: ansible-playbook remove-control-key.yaml                       # 全 cluster
+#       ansible-playbook remove-control-key.yaml -l cpu-001,cpu-002    # 只指定节点(--limit, 推荐)
+#       ansible-playbook remove-control-key.yaml -e target_hosts=gpu   # 或指定别的组/主机(默认 cluster)
 #       控制机公钥路径可覆盖: -e control_pubkey_file=/root/.ssh/id_rsa.pub
 - name: 清除控制机免密公钥(交付收尾)
-  hosts: cluster
+  hosts: "{{ target_hosts | default('cluster') }}"
   become: yes
   gather_facts: no
   vars:
