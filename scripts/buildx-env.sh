@@ -30,6 +30,8 @@ cat > "$TOML" <<'EOF'
      "https://docker.ketches.cn",
      "https://docker.hlmirror.com"
   ]
+[registry."harbor.local.clusters"]
+  insecure = true
 [registry."harbor.unisound.ai"]
   insecure = true
 [registry."harbor.unidev.ai"]
