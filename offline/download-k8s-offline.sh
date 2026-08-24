@@ -113,8 +113,8 @@ for a in $ARCHES; do
   rm -rf "$tmp"
 done
 
-# ========== 1.5 用 kubeadm 校准镜像 tag(消除 pause/coredns 手写漂移) ==========
-# kubeadm config images list 按 k8s 版本给出权威镜像 tag; 取到就覆盖上面的默认。
+# ========== 1.5 用 kubeadm 校准镜像/etcd tag(消除 pause/coredns/etcd 手写漂移) ==========
+# kubeadm config images list 按 k8s 版本给出权威 tag; 取到就覆盖上面的默认。
 # 需要一个本机架构可跑的 kubeadm(上面按 ARCHES 已下, 本机架构不在 ARCHES 时临时补下一个)。
 host_arch(){ case "$(uname -m)" in x86_64) echo amd64;; aarch64|arm64) echo arm64;; *) echo amd64;; esac; }
 HA="$(host_arch)"; KUBEADM="$B/kubernetes/v$K8S/bin/$HA/kubeadm"
@@ -126,9 +126,11 @@ if [ -n "$IMG_LIST" ]; then
   get_tag(){ echo "$IMG_LIST" | grep -E "$1" | head -1 | sed 's/.*://'; }
   CD="$(get_tag '/coredns')"; [ -n "$CD" ] && COREDNS="${CD#v}"
   PZ="$(get_tag '/pause')";   [ -n "$PZ" ] && PAUSE="${PZ#v}"
-  say "kubeadm 校准: coredns=v$COREDNS pause=$PAUSE (k8s v$K8S)"
+  # etcd: kubeadm 给的是镜像 tag(如 3.6.4-0), 剥掉 -N 构建后缀得二进制版本
+  ET="$(get_tag '/etcd')";    [ -n "$ET" ] && { ET="${ET%-*}"; ETCD="${ET#v}"; }
+  say "kubeadm 校准: coredns=v$COREDNS pause=$PAUSE etcd=v$ETCD (k8s v$K8S)"
 else
-  say "⚠ kubeadm 未给出镜像清单, 沿用默认 coredns=v$COREDNS pause=$PAUSE"
+  say "⚠ kubeadm 未给出镜像清单, 沿用默认 coredns=v$COREDNS pause=$PAUSE etcd=v$ETCD"
 fi
 
 # ========== 2. k8s 组件镜像 + pause + coredns ==========
