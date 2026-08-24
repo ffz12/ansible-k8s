@@ -6,17 +6,18 @@
 # ============================================================================
 
 # ================= Docker =================
+# 版本(docker/buildx/compose/cri_dockerd)是变参, 定义在 env.yaml; 这里(定参)按版本变量拼文件名。
 docker_arch_map:
   x86_64:
-    pkg: "amd-docker-29.4.2.tgz"
-    buildx: "buildx-v0.32.1.linux-amd64"
+    pkg: "amd-docker-{{ docker_version }}.tgz"
+    buildx: "buildx-v{{ buildx_version }}.linux-amd64"
     compose: "docker-compose-linux-x86_64"
   aarch64:
-    pkg: "arm-docker-29.4.2.tgz"
-    buildx: "buildx-v0.32.1.linux-arm64"
+    pkg: "arm-docker-{{ docker_version }}.tgz"
+    buildx: "buildx-v{{ buildx_version }}.linux-arm64"
     compose: "docker-compose-linux-aarch64"
-cri_dockerd_x86: cri-dockerd-0.3.16.amd64.tgz
-cri_dockerd_aarch64: cri-dockerd-0.3.16.arm64.tgz
+cri_dockerd_x86: "cri-dockerd-{{ cri_dockerd_version }}.amd64.tgz"
+cri_dockerd_aarch64: "cri-dockerd-{{ cri_dockerd_version }}.arm64.tgz"
 docker_services:
 - containerd.service
 - docker.service
@@ -156,7 +157,7 @@ calico_images:
   kube_controllers: "{{ (registry ~ '/calico-kube-controllers') if (is_offline | default(false) | bool) else (calico_registry_online ~ '/kube-controllers') }}:v{{ calico_version }}"
 flannel_images:
   flannel:        "{{ (registry ~ '/flannel')        if (is_offline | default(false) | bool) else (flannel_registry_online ~ '/flannel') }}:v{{ flannel_version }}"
-  flannel_cni:    "{{ (registry ~ '/flannel-cni-plugin') if (is_offline | default(false) | bool) else (flannel_registry_online ~ '/flannel-cni-plugin') }}:v1.6.2-flannel1"
+  flannel_cni:    "{{ (registry ~ '/flannel-cni-plugin') if (is_offline | default(false) | bool) else (flannel_registry_online ~ '/flannel-cni-plugin') }}:v{{ flannel_cni_version }}"
 cilium_image_repo: "{{ registry if (is_offline | default(false) | bool) else cilium_registry_online }}"
 
 # ================= 离线包路径(多版本 v{{k8s_version}}) =================
