@@ -5,7 +5,7 @@
 OFFLINE_PKGS="ansible"
 
 # 最终存放最新版 Ansible TAR 包的根目录（按脚本所在目录定位, 不依赖 CWD）
-BASE_OUT_DIR="$(cd "$(dirname "$0")" && pwd)/ansible-pkg-install"
+BASE_OUT_DIR="$(cd "$(dirname "$0")/../../offline" && pwd)/ansible-pkg-install"
 
 # 架构选择(默认双架构; 单架构指定一个即可)。arch:tag_name 成对: amd64->x86_64, arm64->arm64
 case "${1:-all}" in

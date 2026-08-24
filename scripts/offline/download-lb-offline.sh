@@ -15,18 +15,19 @@
 #
 #  依赖: docker; arm64 在 x86 主机上需先装一次 qemu binfmt:
 #          docker run --privileged --rm tonistiigi/binfmt --install arm64
-#  用法: bash offline/download-lb-offline.sh [kylin|ubuntu|openeuler|all] [amd64|arm64|all]
+#  用法: bash scripts/offline/download-lb-offline.sh [kylin|ubuntu|openeuler|all] [amd64|arm64|all]
 #        (默认 all all; 单架构集群指定一个可省一半)
 #  镜像源不可达(docker.io 拉不动)时, 用环境变量指向内网 mirror:
 #        UBUNTU_IMAGE_PREFIX=dce-boot.io/library/ubuntu \
 #        EULER_IMAGE=dce-boot.io/openeuler/openeuler:22.03-lts-sp4 \
-#        bash offline/download-lb-offline.sh
+#        bash scripts/offline/download-lb-offline.sh
 #        某发行版镜像拉不到只会跳过并提示, 不影响其它发行版继续。
 # =============================================================================
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-OUT="$DIR/artifacts/lb-offline"
+OFFLINE="$(cd "$DIR/../../offline" && pwd)"   # scripts/offline/ -> offline/
+OUT="$OFFLINE/artifacts/lb-offline"
 mkdir -p "$OUT"
 
 TARGET="${1:-all}"

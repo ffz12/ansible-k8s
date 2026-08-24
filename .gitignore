@@ -16,8 +16,8 @@ playbook/roles/certs/files/etcd-*/
 # env.yaml 是每套环境的实际配置(由 init.sh 从 tmp/env.yaml.example 生成),不入库
 inventory/group_vars/all/env.yaml
 
-# offline/versions.env 由 playbook/gen-offline-versions.yaml 从 ansible 版本变量生成,不入库
-offline/versions.env
+# scripts/offline/versions.env 由 playbook/gen-offline-versions.yaml 从 ansible 版本变量生成,不入库
+scripts/offline/versions.env
 
 # 体检报告产物 (os-check)
 # ⚠ .gitignore 拦不住 git add -f, 兜底靠 scripts/git-hooks/pre-commit(init.sh 自动装)

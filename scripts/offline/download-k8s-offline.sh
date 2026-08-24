@@ -5,7 +5,7 @@
 #  按 offline/artifacts/ 版本目录摆好, 镜像 tag 严格对齐 ansible sync 的期望。
 #  拷回内网后, 部署时 -e is_offline=true 即可。
 #
-#  用法: bash download-k8s-offline.sh [amd64|arm64|all]   (默认 all=双架构)
+#  用法: bash scripts/offline/download-k8s-offline.sh [amd64|arm64|all]   (默认 all=双架构)
 #        集群是纯 amd64 或纯 arm64 时, 指定单架构可省一半体积/时间(镜像大头)。
 #  依赖: skopeo(拉镜像,按架构精确)、curl、tar
 # =============================================================================
@@ -51,7 +51,8 @@ ETCD_BIN="$DAO/github.com/etcd-io/etcd/releases/download"
 HELM_BIN="$DAO/get.helm.sh"
 CILIUM_HELM_REPO="https://helm.cilium.io"
 
-B="$(cd "$(dirname "$0")/artifacts" && pwd)"    # offline/artifacts
+OFFLINE="$(cd "$(dirname "$0")/../../offline" && pwd)"   # scripts/offline/ -> offline/(物料仍落 offline)
+B="$OFFLINE/artifacts"; mkdir -p "$B"           # offline/artifacts
 say(){ echo -e "\033[0;32m[+] $*\033[0m"; }
 
 # 依赖检查: skopeo(镜像) + curl(二进制)

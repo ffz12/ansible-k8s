@@ -16,14 +16,15 @@
 #
 #  实现: 不走 yum/apt 源(github.io 拉 repodata 索引易超时), 直接按 URL curl 单个包,
 #        curl 带重试 + 断点续传, 比走源稳。
-#  用法: bash offline/download-gpu-offline.sh [版本]   # 默认 1.19.0-1
+#  用法: bash scripts/offline/download-gpu-offline.sh [版本]   # 默认 1.19.0-1
 #  依赖: curl
 # =============================================================================
 set -e
 
 VER="${1:-1.19.0-1}"                                        # 包版本, 如 1.19.0-1
 
-GPU="$(cd "$(dirname "$0")/artifacts" && pwd)/nvidia-gpu"   # offline/artifacts/nvidia-gpu
+OFFLINE="$(cd "$(dirname "$0")/../../offline" && pwd)"     # scripts/offline/ -> offline/
+GPU="$OFFLINE/artifacts/nvidia-gpu"                        # offline/artifacts/nvidia-gpu
 RHEL_DIR="$GPU/rhel-gpu"
 DEB_DIR="$GPU/debian-gpu"
 mkdir -p "$RHEL_DIR" "$DEB_DIR"

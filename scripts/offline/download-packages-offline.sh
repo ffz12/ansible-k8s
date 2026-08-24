@@ -14,12 +14,12 @@
 #          docker run --privileged --rm tonistiigi/binfmt --install arm64
 #
 #  说明: 各 *_packages.sh 固定下载 amd64+arm64 双架构(不接架构参数), 故本入口只选发行版。
-#  用法: bash offline/download-packages-offline.sh [kylin|ubuntu|openeuler|all]   (默认 all)
+#  用法: bash scripts/offline/download-packages-offline.sh [kylin|ubuntu|openeuler|all]   (默认 all)
 # =============================================================================
 set -e
 
-DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$DIR"                    # 使各脚本的 $(pwd)/artifacts/ios-offline 稳定落到 offline/ 下, 不随调用目录漂移
+SELF="$(cd "$(dirname "$0")" && pwd)"
+OFFLINE="$(cd "$SELF/../../offline" && pwd)"   # scripts/offline/ -> offline/(各子脚本自锚定到此, 产物落 offline)
 TARGET="${1:-all}"
 
 command -v docker >/dev/null 2>&1 || { echo "缺 docker(脚本用容器按架构精确拉包), 请先安装"; exit 1; }
@@ -29,7 +29,7 @@ run() {
   echo "=========================================================="
   echo " 调用 $script"
   echo "=========================================================="
-  bash "$DIR/$script"
+  bash "$SELF/$script"
 }
 
 case "$TARGET" in
@@ -46,5 +46,5 @@ case "$TARGET" in
 esac
 
 echo -e "\n=========================================================="
-echo " 全部完成! 离线 OS 依赖包在: $DIR/artifacts/ios-offline/"
+echo " 全部完成! 离线 OS 依赖包在: $OFFLINE/artifacts/ios-offline/"
 echo "=========================================================="

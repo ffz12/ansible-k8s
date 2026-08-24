@@ -12,12 +12,13 @@
 #  版本: 全部取该系统当前【可得的最新版】(Ubuntu 走官方 PPA; 麒麟走 EPEL + 默认源)。
 #
 #  依赖: docker(用多架构镜像拉包, 需能 --platform linux/arm64)。
-#  用法: bash offline/download-ansible-offline.sh [kylin|ubuntu|openeuler|all] [amd64|arm64|all]
+#  用法: bash scripts/offline/download-ansible-offline.sh [kylin|ubuntu|openeuler|all] [amd64|arm64|all]
 #        第 1 参数 = 发行版(默认 all);  第 2 参数 = 架构(默认 all=双架构, 单架构集群指定一个省一半)。
 # =============================================================================
 set -e
 
-DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF="$(cd "$(dirname "$0")" && pwd)"
+OFFLINE="$(cd "$SELF/../../offline" && pwd)"   # scripts/offline/ -> offline/(产物落 offline)
 TARGET="${1:-all}"
 ARCH_ARG="${2:-all}"
 case "$ARCH_ARG" in amd64|arm64|all) ;; *) echo "架构参数须为 amd64|arm64|all"; exit 1 ;; esac
@@ -29,7 +30,7 @@ run() {
   echo "=========================================================="
   echo " 调用 $script  (架构: $ARCH_ARG)"
   echo "=========================================================="
-  bash "$DIR/$script" "$ARCH_ARG"
+  bash "$SELF/$script" "$ARCH_ARG"
 }
 
 case "$TARGET" in
@@ -46,7 +47,7 @@ case "$TARGET" in
 esac
 
 echo -e "\n=========================================================="
-echo " 全部完成! 离线 ansible 安装包在: $DIR/ansible-pkg-install/"
+echo " 全部完成! 离线 ansible 安装包在: $OFFLINE/ansible-pkg-install/"
 echo " 内网安装示例:"
 echo "   麒麟/openEuler:  tar xzf ansible_kylin_x86_64.tar.gz && cd ansible_kylin_x86_64 && rpm -Uvh --force ./*.rpm"
 echo "   Ubuntu:          tar xzf ansible_ubuntu22_x86_64.tar.gz && cd ansible_ubuntu22_x86_64 && dpkg -i ./*.deb || apt -f install"

@@ -10,7 +10,7 @@
 #      github 代理(files.m.daocloud.io/github.com, 国内快)。
 #  特性: 双架构(amd64/arm64) + curl 重试 + 远端大小校验(残缺自动重下) + 已完整则跳过。
 #
-#  用法: bash offline/download-docker-offline.sh [amd64|arm64|all]   (默认 all=双架构)
+#  用法: bash scripts/offline/download-docker-offline.sh [amd64|arm64|all]   (默认 all=双架构)
 #        集群是纯 amd64 或纯 arm64 时, 指定单架构可省一半体积/时间。
 #  依赖: curl
 # =============================================================================
@@ -43,7 +43,8 @@ GH="$DAO/github.com"
 CONTAINERD_BIN="$GH/containerd/containerd/releases/download"
 RUNC_BIN="$GH/opencontainers/runc/releases/download"
 
-A="$(cd "$(dirname "$0")/artifacts" && pwd)"    # offline/artifacts (containerd/runc 落这层)
+OFFLINE="$(cd "$(dirname "$0")/../../offline" && pwd)"   # scripts/offline/ -> offline/(物料仍落 offline)
+A="$OFFLINE/artifacts"; mkdir -p "$A"            # offline/artifacts (containerd/runc 落这层)
 D="$A/docker"                                    # offline/artifacts/docker
 mkdir -p "$D"
 say(){ echo -e "\033[0;32m[+] $*\033[0m"; }

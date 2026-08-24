@@ -1,6 +1,6 @@
 # =============================================================================
-#  gen-offline-versions.yaml —— 把 ansible 解析后的版本变量 dump 成 offline/versions.env,
-#  供离线下载脚本(download-*-offline.sh)source, 使【下载版本】与【部署版本】同源一致。
+#  gen-offline-versions.yaml —— 把 ansible 解析后的版本变量 dump 成 scripts/offline/versions.env,
+#  供离线下载脚本(scripts/offline/download-*-offline.sh)source, 使【下载版本】与【部署版本】同源一致。
 #
 #  用法(控制机上): ansible-playbook -i inventory/hosts playbook/gen-offline-versions.yaml
 #  prefetch-all.sh 会自动先跑它。
@@ -24,12 +24,12 @@
             - "{{ _gv_dir }}/env.yaml"
           skip: yes
 
-    - name: 生成 offline/versions.env
+    - name: 生成 scripts/offline/versions.env
       template:
-        src: "{{ playbook_dir | dirname }}/offline/versions.env.j2"
-        dest: "{{ playbook_dir | dirname }}/offline/versions.env"
+        src: "{{ playbook_dir | dirname }}/scripts/offline/versions.env.j2"
+        dest: "{{ playbook_dir | dirname }}/scripts/offline/versions.env"
         mode: "0644"
 
     - name: 提示
       debug:
-        msg: "已生成 {{ playbook_dir | dirname }}/offline/versions.env (k8s={{ k8s_version }} containerd={{ containerd_version }})"
+        msg: "已生成 {{ playbook_dir | dirname }}/scripts/offline/versions.env (k8s={{ k8s_version }} containerd={{ containerd_version }})"

@@ -10,7 +10,7 @@ EULER_IMAGE="openeuler/openeuler:22.03-lts"
 EULER_MAJOR="22"   # 输出文件名用: openEuler22_<arch>.tar.gz
 
 # 最终存放 TAR 包的根目录 (对齐 ubuntu 脚本)
-BASE_OUT_DIR="$(pwd)/artifacts/ios-offline"
+BASE_OUT_DIR="$(cd "$(dirname "$0")/../../offline" && pwd)/artifacts/ios-offline"
 # ============================================
 
 download_euler_pkg() {

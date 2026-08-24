@@ -13,7 +13,7 @@
 #  源: goharbor 镜像走 daocloud 加速(docker.m.daocloud.io/goharbor = docker.io/goharbor);
 #      docker-compose 走 daocloud 的 github 代理。skopeo 直接拉, 不依赖 docker daemon。
 #  依赖: skopeo、curl、gzip、tar
-#  用法: bash offline/download-harbor-offline.sh
+#  用法: bash scripts/offline/download-harbor-offline.sh
 # =============================================================================
 set -e
 
@@ -31,7 +31,8 @@ HARBOR_SRC="docker.m.daocloud.io/goharbor"                  # = docker.io/goharb
 DAO="https://files.m.daocloud.io"
 COMPOSE_BIN="$DAO/github.com/docker/compose/releases/download"
 
-A="$(cd "$(dirname "$0")/artifacts" && pwd)"    # offline/artifacts
+OFFLINE="$(cd "$(dirname "$0")/../../offline" && pwd)"   # scripts/offline/ -> offline/
+A="$OFFLINE/artifacts"                            # offline/artifacts
 D="$A/harbor/x86"                                # 角色 x86.yaml 从这里取
 mkdir -p "$D"
 say(){ echo -e "\033[0;32m[+] $*\033[0m"; }
