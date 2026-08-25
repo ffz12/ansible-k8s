@@ -180,8 +180,9 @@ cilium_chart_src: "{{ offline_artifacts }}/cni/cilium/v{{ cilium_version }}/cili
 # 查询链: Pod(clusterDNS=nodelocaldns_ip) -> nodelocaldns 本地缓存 -> CoreDNS。部署: playbook/nodelocaldns.yaml。
 nodelocaldns_ip: "169.254.25.10"                 # link-local; 必须与各节点 kubelet clusterDNS 一致(现网即此值)
 nodelocaldns_version: "1.26.4"                    # k8s-dns-node-cache 版本(现网 1.26.4), 可 env.yaml 覆盖
-# 现网镜像是 KubeSphere fork tag(hub.kubesphere.com.cn/dns), 阿里云 google_containers 没有此 tag。
-nodelocaldns_image_online: "hub.kubesphere.com.cn/dns/k8s-dns-node-cache"   # 在线源(可 env.yaml 覆盖)
+# 1.26.4 是 registry.k8s.io/dns 的正规上游 tag(现网镜像即拉自此)。在线走 daocloud 的 k8s 代理(国内快);
+# 离线由 download-k8s-offline.sh 从同源拉好存 tar, 部署时 load 进自建 Harbor。不再走 kk hub。
+nodelocaldns_image_online: "k8s.m.daocloud.io/dns/k8s-dns-node-cache"   # = registry.k8s.io/dns/...(可 env.yaml 覆盖)
 nodelocaldns_image: "{{ (registry ~ '/k8s-dns-node-cache:' ~ nodelocaldns_version) if (is_offline | default(false) | bool) else (nodelocaldns_image_online ~ ':' ~ nodelocaldns_version) }}"
 nodelocaldns_coredns_svc: "coredns"              # 上游 CoreDNS Service 名(kk=coredns; kubeadm 原生=kube-dns)
 nodelocaldns_health_port: 9254

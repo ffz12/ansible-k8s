@@ -35,7 +35,7 @@ esac
 : "${FLANNEL_CNI:=1.6.2-flannel1}"
 : "${CILIUM:=1.16.5}"
 : "${HELM:=3.16.4}"
-: "${NODELOCALDNS:=1.26.4}"        # NodeLocal DNSCache (k8s-dns-node-cache); 现网 KubeSphere fork tag
+: "${NODELOCALDNS:=1.26.4}"        # NodeLocal DNSCache (k8s-dns-node-cache); registry.k8s.io/dns 正规上游 tag
 
 CNIS="calico flannel cilium"   # 只打包用得到的可删减, 如 CNIS="calico"
 
@@ -44,7 +44,7 @@ IMG_MIRROR="registry.aliyuncs.com/google_containers"    # k8s 组件/pause/cored
 CALICO_SRC="docker.m.daocloud.io/calico"                # = docker.io/calico(daocloud 加速)
 FLANNEL_SRC="docker.m.daocloud.io/flannel"              # = docker.io/flannel
 CILIUM_SRC="quay.m.daocloud.io/cilium"                  # = quay.io/cilium(daocloud 加速)
-NODELOCALDNS_SRC="hub.kubesphere.com.cn/dns"            # k8s-dns-node-cache(现网 KubeSphere fork tag 1.26.4 在此)
+NODELOCALDNS_SRC="k8s.m.daocloud.io/dns"               # = registry.k8s.io/dns(daocloud 加速); 1.26.4 是上游正规 tag(现网即拉自此)
 # -------- 二进制源: daocloud 通用文件代理(国内快, 一个源代理 dl.k8s.io/github/get.helm.sh) --------
 DAO="https://files.m.daocloud.io"
 K8S_BIN="$DAO/dl.k8s.io/release"
