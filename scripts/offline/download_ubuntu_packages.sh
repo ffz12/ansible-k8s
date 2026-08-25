@@ -1,7 +1,11 @@
 #!/bin/bash
 
 # ================= 配置区域 =================
-OFFLINE_PKGS="socat ebtables ipset iotop sysstat ipvsadm conntrack net-tools nfs-common nfs-kernel-server libseccomp2 netcat-openbsd ca-certificates bash-completion apt-transport-https software-properties-common gcc make bzip2 unzip freeipa-client chrony"
+# 注: haproxy keepalived 只有 LB 节点用 —— 但放进同一次解析(下面 apt-cache depends --recurse | sort -u)
+#     不会重复(公共依赖去重),LB 包与基础包合成一个 tar; init 只装显式列表(debian_offline_pkgs),
+#     不含 haproxy/keepalived, 故非 LB 节点只存不装; haproxy-ha 在 LB 节点从同一本地源按名安装。
+#     改这里的包名需同步 playbook/roles/init/tasks/debian.yaml 的 debian_offline_pkgs(不含 LB 那两个)。
+OFFLINE_PKGS="socat ebtables ipset iotop sysstat ipvsadm conntrack net-tools nfs-common nfs-kernel-server libseccomp2 netcat-openbsd ca-certificates bash-completion apt-transport-https software-properties-common gcc make bzip2 unzip freeipa-client chrony haproxy keepalived"
 
 # 最终存放 TAR 包的根目录 (对齐你的现状)
 BASE_OUT_DIR="$(cd "$(dirname "$0")/../../offline" && pwd)/artifacts/ios-offline"

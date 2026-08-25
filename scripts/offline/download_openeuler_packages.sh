@@ -3,7 +3,10 @@
 # ================= 配置区域 =================
 # 要打包的 RPM(用户指定 + 常用基础依赖); dnf 会自动带上全部依赖
 # 注: 不含 ansible —— ansible 只装在控制机, 由 download-ansible-offline.sh 单独打包(避免重复)
-OFFLINE_PKGS="openssl-libs pcre zlib socat chrony ipvsadm conntrack-tools nfs-utils unzip wget net-tools lrzsz vim tar rsync tmux htop bash-completion curl gcc gcc-c++ make cmake git ipset ebtables libseccomp bzip2 sysstat iotop lsof psmisc nmap-ncat telnet jq device-mapper-persistent-data lvm2 python3"
+# 注: haproxy keepalived 只有 LB 节点用 —— 放进同一次 dnf 解析(--resolve --alldeps)不会重复(公共依赖去重),
+#     与基础包合成一个 tar; init 只装显式列表(euler_offline_pkgs, 不含 LB), 故非 LB 节点只存不装;
+#     haproxy-ha 在 LB 节点从同一本地源按名安装。改这里需同步 roles/init/tasks/openEuler.yaml 的 euler_offline_pkgs。
+OFFLINE_PKGS="openssl-libs pcre zlib socat chrony ipvsadm conntrack-tools nfs-utils unzip wget net-tools lrzsz vim tar rsync tmux htop bash-completion curl gcc gcc-c++ make cmake git ipset ebtables libseccomp bzip2 sysstat iotop lsof psmisc nmap-ncat telnet jq device-mapper-persistent-data lvm2 python3 haproxy keepalived"
 
 # openEuler 容器镜像(多架构); 若拉不到可换成实际可用 tag,如 22.03-lts-sp4
 EULER_IMAGE="openeuler/openeuler:22.03-lts"

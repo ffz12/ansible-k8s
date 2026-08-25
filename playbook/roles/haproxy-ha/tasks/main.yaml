@@ -1,8 +1,9 @@
 # ==================== 安装 haproxy + keepalived ====================
-# 离线: 从 offline/artifacts/lb-offline/ 取对应发行版+架构的包本地装(由 download-lb-offline.sh 预先下好);
-# 在线: 直接 yum/apt 装。nginx-ha 走 bundled 二进制, 与此无关。
+# 离线: haproxy/keepalived 已随基础包(ios-offline)一起下好并进本地源(init 已配好本地 yum/apt 源),
+#       这里直接从该本地源【按名安装】—— 不再单独打 lb-offline 包。nginx-ha 走 bundled 二进制, 与此无关。
+# 前提: LB 节点已先跑过 init(base), /opt/<distro>-pkgs 与本地源就位; 下面对 RPM 会幂等重写 repo 以便独立重跑。
 
-- name: (离线) 计算 LB 离线包 os/arch 标签
+- name: (离线) 计算 LB 本地源 os/arch 标签
   set_fact:
     _lb_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}"
     _lb_os: >-
@@ -12,36 +13,42 @@
          else 'unsupported' }}
   when: is_offline | bool
 
-- name: (离线) 校验发行版是否有对应离线包
+- name: (离线) 校验发行版是否受支持
   assert:
     that: _lb_os != 'unsupported'
-    fail_msg: "haproxy-ha 离线暂不支持: {{ ansible_distribution }} {{ ansible_distribution_version }}; 请先用 download-lb-offline.sh 下载对应包"
+    fail_msg: "haproxy-ha 离线暂不支持: {{ ansible_distribution }} {{ ansible_distribution_version }}; 该发行版无离线 builder(仅 kylin/openEuler/ubuntu)"
   when: is_offline | bool
 
-- name: (离线) 创建 LB 离线包目录
-  file:
-    path: /opt/lb-pkgs
-    state: directory
-    mode: '0755'
-  when: is_offline | bool
-
-- name: (离线) 解压 haproxy+keepalived 离线包到节点
-  unarchive:
-    src: "{{ offline_artifacts }}/lb-offline/lb_{{ _lb_os }}_{{ _lb_arch }}.tar.gz"
-    dest: /opt/lb-pkgs/
-    mode: '0644'
+- name: (离线-RPM) 幂等重写本地 yum 源(指向 init 解压的基础包目录)
+  copy:
+    dest: /etc/yum.repos.d/local-offline.repo
+    content: |
+      [local-offline]
+      name=Local Offline Repo
+      baseurl=file:///opt/{{ 'kylin-pkgs' if ansible_distribution in ['Kylin Linux Advanced Server', 'Kylin'] else 'openEuler-pkgs' }}
+      enabled=1
+      gpgcheck=0
     owner: root
     group: root
-  when: is_offline | bool
-
-- name: (离线-RPM) 本地安装 haproxy+keepalived
-  shell: yum localinstall -y /opt/lb-pkgs/*.rpm
+    mode: '0644'
   when:
     - is_offline | bool
     - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
 
-- name: (离线-DEB) 本地安装 haproxy+keepalived
-  shell: dpkg -i /opt/lb-pkgs/*.deb || apt-get -f install -y
+- name: (离线-RPM) 从本地源安装 haproxy+keepalived
+  shell: yum install -y --disablerepo="*" --enablerepo="local-offline" haproxy keepalived
+  when:
+    - is_offline | bool
+    - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
+
+- name: (离线-DEB) 从本地源安装 haproxy+keepalived(源由 init 写入 file:///opt/ubuntu-offline-pkgs)
+  apt:
+    name:
+      - haproxy
+      - keepalived
+    state: present
+    update_cache: yes
+    allow_unauthenticated: true
   when:
     - is_offline | bool
     - ansible_distribution in ['Debian', 'Ubuntu']

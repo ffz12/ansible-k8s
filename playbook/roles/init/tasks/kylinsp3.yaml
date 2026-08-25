@@ -35,8 +35,11 @@
 
 # ==================== 2. 软件源策略分流与软件包安装 ====================
 
-- name: 【离线模式】银河麒麟双架构离线 RPM 包本地安装
+- name: 【离线模式】银河麒麟双架构离线 RPM 本地 yum 源安装
   tags: [packages]
+  # 走本地 yum 源(而非 localinstall *.rpm 整目录全装): tar 里已带 repodata(download_kylin_packages.sh 生成),
+  # 只装显式列表 kylin_offline_pkgs; haproxy/keepalived 也在同一 tar 里但不在列表 -> 非 LB 节点只存不装,
+  # LB 节点由 haproxy-ha 从这个本地源按名安装。改列表需同步 download_kylin_packages.sh 的 OFFLINE_PKGS(不含 LB 那两个)。
   block:
     - name: 创建目标服务器离线包存放目录
       file:
@@ -52,11 +55,57 @@
         owner: root
         group: root
 
-    - name: 离线批量本地安装基础软件包
-      shell: |
-          yum localinstall -y /opt/kylin-pkgs/*.rpm
-      # 使用官方 yum 模块平替 shell localinstall，能更好地跟踪任务的 changed 状态
+    - name: 检测离线包是否带 repodata(带则走本地 yum 源, 否则回退 localinstall)
+      stat:
+        path: /opt/kylin-pkgs/repodata/repomd.xml
+      register: kylin_repodata
 
+    - name: 屏蔽联网默认源(防离线联网超时卡死)
+      shell: |
+        shopt -s nullglob
+        for f in /etc/yum.repos.d/*.repo; do
+          [ "$f" = /etc/yum.repos.d/local-offline.repo ] && continue
+          mv -f "$f" "$f.disabled"
+        done
+      args:
+        executable: /bin/bash
+      when: kylin_repodata.stat.exists
+
+    - name: 写入本地离线 yum 源
+      copy:
+        dest: /etc/yum.repos.d/local-offline.repo
+        content: |
+          [local-offline]
+          name=Local Offline Repo
+          baseurl=file:///opt/kylin-pkgs
+          enabled=1
+          gpgcheck=0
+        owner: root
+        group: root
+        mode: '0644'
+      when: kylin_repodata.stat.exists
+
+    - name: 从本地源安装基础软件包(显式列表, 不含 haproxy/keepalived)
+      shell: yum install -y --disablerepo="*" --enablerepo="local-offline" {{ kylin_offline_pkgs | join(' ') }}
+      when: kylin_repodata.stat.exists
+
+    - name: (回退) 无 repodata 时整目录本地安装
+      shell: yum localinstall -y /opt/kylin-pkgs/*.rpm
+      when: not kylin_repodata.stat.exists
+
+  vars:
+    # 与 download_kylin_packages.sh 的 OFFLINE_PKGS 保持一致(去掉 haproxy/keepalived —— 那两个只 LB 节点装)
+    kylin_offline_pkgs:
+      - openssl-libs
+      - pcre
+      - zlib
+      - socat
+      - chrony
+      - ipvsadm
+      - conntrack
+      - ipset
+      - ebtables
+      - "nfs*"
   when: is_offline | bool
 
 - name: 【在线模式】银河麒麟联网批量安装必要基础软件包
