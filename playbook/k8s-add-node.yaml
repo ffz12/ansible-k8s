@@ -26,6 +26,7 @@
         kubectl --kubeconfig {{ kube_config_dir }}/admin.conf
         get node {{ inventory_hostname }} --ignore-not-found -o name
       delegate_to: "{{ groups['k8s_master'][0] }}"
+      become: yes   # admin.conf 是 root:root 0600; sudo 连接身份下不提权读不到 => rc!=0 会回退本地判断
       register: _pre_node_in_cluster
       changed_when: false
       failed_when: false
