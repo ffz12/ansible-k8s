@@ -11,17 +11,19 @@
 #      harbor / gpu   : 仅 amd64, 无 arch 参数(gpu 的 $1 是版本, 用脚本默认)
 #
 #  用法(arch/distro/回传目标走环境变量, 层名走位置参):
-#    bash scripts/offline/prefetch-all.sh [layer ...]           # 默认层: k8s docker
-#    ARCH=amd64 bash scripts/offline/prefetch-all.sh            # 纯单架构省一半(默认 all 双架构)
-#    ARCH=amd64 bash scripts/offline/prefetch-all.sh k8s docker harbor lb gpu packages   # 全量
-#    DISTRO=ubuntu bash scripts/offline/prefetch-all.sh lb packages     # lb/packages 只下 ubuntu(默认 all)
+#    bash scripts/prefetch-all.sh [layer ...]           # 默认层: k8s docker
+#    ARCH=amd64 bash scripts/prefetch-all.sh            # 纯单架构省一半(默认 all 双架构)
+#    ARCH=amd64 bash scripts/prefetch-all.sh k8s docker harbor lb gpu packages   # 全量
+#    DISTRO=ubuntu bash scripts/prefetch-all.sh lb packages     # lb/packages 只下 ubuntu(默认 all)
 #    PREFETCH_DEST=root@10.0.0.2:/root/ansible-k8s/offline/artifacts \
-#      ARCH=amd64 bash scripts/offline/prefetch-all.sh          # 跑完自动 rsync 回控制机
+#      ARCH=amd64 bash scripts/prefetch-all.sh          # 跑完自动 rsync 回控制机
 #
 #  可选层: k8s docker harbor lb gpu packages   (与 download-<层>-offline.sh 对应)
 # =============================================================================
 set -e
-cd "$(dirname "$0")"
+# 本脚本在 scripts/ 顶层, 下载分层脚本在 scripts/offline/ —— cd 进去后
+# download-*-offline.sh(相对名)与 REPO=../.. 全部原样成立, 无需再改别处。
+cd "$(dirname "$0")/offline"
 
 ARCH="${ARCH:-all}"
 DISTRO="${DISTRO:-all}"
