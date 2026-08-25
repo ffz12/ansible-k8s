@@ -15,6 +15,37 @@
   debug:
     msg: "coredns=v{{ coredns_version }}  pause={{ pause_image_version }}  (kubeadm 权威值)"
 
+# etcd 是外置二进制集群, 由 etcd-deploy.yaml 先于控制面单独部署(那时机器上还没有 kubeadm
+# 可查), 所以它的版本没法像 coredns/pause 那样在这里"自动填充"——只能在这里(kubeadm 已在)
+# 拿 kubeadm 推荐的 etcd tag 当"权威裁判", 与已部署的 etcd_version 比对, 漂移就告警。
+# 外置 etcd 版本是有意的运维选择(可比 kubeadm 建议的补丁号新), 默认只 warn 不拦;
+# 想强制一致, env.yaml 设 etcd_version_strict: true 变硬 assert。
+- name: "[Sync Images] 取 kubeadm 推荐的 etcd 版本(剥 -N 构建后缀)"
+  set_fact:
+    kubeadm_etcd_version: "{{ (kubeadm_img_list.stdout_lines | select('search', '/etcd') | list | first).split(':')[-1] | regex_replace('^v', '') | regex_replace('-[0-9]+$', '') }}"
+  when: kubeadm_img_list.stdout is search('/etcd')
+
+- name: "[Sync Images] etcd 版本一致性: 与 kubeadm 推荐比对"
+  debug:
+    msg: >-
+      {{ '✓ etcd_version=' ~ etcd_version ~ ' 与 kubeadm 推荐一致'
+         if (etcd_version == kubeadm_etcd_version)
+         else '⚠ etcd 版本漂移: 已部署 etcd_version=' ~ etcd_version
+              ~ ', 但本 k8s 版本 kubeadm 推荐 etcd=' ~ kubeadm_etcd_version
+              ~ '。外置 etcd 独立运维可接受; 若非有意, 请对齐 env.yaml 的 etcd_version 后重装 etcd。' }}
+  when: kubeadm_etcd_version is defined
+
+- name: "[Sync Images] etcd 版本严格模式(可选): 漂移即失败"
+  assert:
+    that:
+      - etcd_version == kubeadm_etcd_version
+    fail_msg: >-
+      etcd_version={{ etcd_version }} 与本 k8s 版本 kubeadm 推荐 etcd={{ kubeadm_etcd_version }} 不一致
+      (etcd_version_strict=true)。对齐 env.yaml 的 etcd_version 或关闭严格模式。
+  when:
+    - etcd_version_strict | default(false) | bool
+    - kubeadm_etcd_version is defined
+
 - name: "[Sync Images] 确保 Harbor 项目存在"
   uri:
     url: "https://{{ harbor_dns }}/api/v2.0/projects"
