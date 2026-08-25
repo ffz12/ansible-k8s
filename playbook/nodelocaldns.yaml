@@ -1,0 +1,17 @@
+# playbook/nodelocaldns.yaml
+# ============================================================================
+#  部署 NodeLocal DNSCache(每节点本地 DNS 缓存)。
+#  「不改 kubelet」模式: node-cache 同绑 169.254.20.10 + kube-dns svc IP + NOTRACK,
+#  Pod 的 clusterDNS 仍指向 kube-dns svc IP => 存量 Pod 无需重建, 零中断。
+#
+#  用法:
+#    ansible-playbook -i inventory/hosts playbook/nodelocaldns.yaml            # 在线
+#    ansible-playbook -i inventory/hosts playbook/nodelocaldns.yaml -e is_offline=true   # 离线(需先备镜像)
+#  离线镜像: scripts/offline/download-k8s-offline.sh 会拉 k8s-dns-node-cache 存 tar,
+#           部署时本 playbook 自动 load + 推 Harbor。
+# ============================================================================
+- name: 部署 NodeLocal DNSCache
+  hosts: "{{ groups['k8s_master'][0] }}"
+  gather_facts: yes
+  roles:
+    - nodelocaldns

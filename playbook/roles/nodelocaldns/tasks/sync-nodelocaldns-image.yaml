@@ -1,0 +1,48 @@
+# roles/nodelocaldns/tasks/sync-nodelocaldns-image.yaml
+# 离线: 把 k8s-dns-node-cache 镜像 load 并推到自建 Harbor({{ registry }})。
+# 仅 is_offline 时由 main.yaml 调用; 范式照抄 cni/sync-cni-images.yaml 的 sync_one。
+- name: "[NodeLocalDNS] 登录 Harbor"
+  shell: |
+    echo "{{ harbor_admin_password }}" | docker login "{{ harbor_dns }}" -u "{{ harbor_admin_username }}" --password-stdin
+  args:
+    executable: /bin/bash
+  register: nld_login
+  failed_when: "'Login Succeeded' not in nld_login.stdout"
+
+- name: "[NodeLocalDNS] 复制 node-cache 镜像到本地"
+  copy:
+    src: "{{ src_nodelocaldns_images_dir }}/amd64/k8s-dns-node-cache.tar.gz"
+    dest: "{{ nodelocaldns_images_dir }}/amd64/k8s-dns-node-cache.tar.gz"
+
+- name: "[NodeLocalDNS] 复制 node-cache 镜像到本地(arm64, 有则拷)"
+  copy:
+    src: "{{ src_nodelocaldns_images_dir }}/arm64/k8s-dns-node-cache.tar.gz"
+    dest: "{{ nodelocaldns_images_dir }}/arm64/k8s-dns-node-cache.tar.gz"
+  register: nld_arm64_copy
+  failed_when: false
+
+- name: "[NodeLocalDNS] 同步镜像并建 multi-arch manifest"
+  shell: |
+    set -e
+    REGISTRY="{{ registry }}"
+    VER="{{ nodelocaldns_version }}"
+    DST="${REGISTRY}/k8s-dns-node-cache:${VER}"
+    if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${DST} (已在 harbor)"; exit 0; fi
+    ARCHS="amd64"
+    [ -s "{{ nodelocaldns_images_dir }}/arm64/k8s-dns-node-cache.tar.gz" ] && ARCHS="amd64 arm64"
+    MANIFEST_ARGS=""
+    for a in $ARCHS; do
+      docker load -i "{{ nodelocaldns_images_dir }}/${a}/k8s-dns-node-cache.tar.gz"
+      docker tag "registry.k8s.io/dns/k8s-dns-node-cache:${VER}-${a}" "${DST}-${a}"
+      docker push "${DST}-${a}"
+      MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
+    done
+    docker manifest rm "${DST}" >/dev/null 2>&1 || true
+    docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
+    for a in $ARCHS; do
+      docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
+    done
+    docker manifest push --insecure "${DST}"
+    for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
+  args:
+    executable: /bin/bash

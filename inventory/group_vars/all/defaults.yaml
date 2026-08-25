@@ -175,6 +175,15 @@ multus_cni_images_dir: "/opt/multus_cni"
 helm_bin_src: "{{ offline_artifacts }}/helm/v{{ helm_version }}"
 cilium_chart_src: "{{ offline_artifacts }}/cni/cilium/v{{ cilium_version }}/cilium-{{ cilium_version }}.tgz"
 
+# ================= NodeLocal DNSCache (每节点本地 DNS 缓存) =================
+# 「不改 kubelet」模式: node-cache 同绑 169.254.20.10 + kube-dns svc IP + NOTRACK,
+# Pod 的 clusterDNS 不变 => 存量 Pod 无需重建, 零中断。部署: playbook/nodelocaldns.yaml。
+nodelocaldns_ip: "169.254.20.10"                 # link-local, node-cache 绑定此地址(不占 service 网段)
+nodelocaldns_version: "1.23.1"                    # k8s-dns-node-cache 版本, 可 env.yaml 覆盖
+nodelocaldns_image: "{{ (registry ~ '/k8s-dns-node-cache:' ~ nodelocaldns_version) if (is_offline | default(false) | bool) else (kube_image_mirror ~ '/k8s-dns-node-cache:' ~ nodelocaldns_version) }}"
+src_nodelocaldns_images_dir: "{{ offline_artifacts }}/kubernetes/v{{ k8s_version }}/images"   # node-cache tar 与 k8s 组件镜像同目录
+nodelocaldns_images_dir: "/opt/nodelocaldns"
+
 # ================= 组件清单 =================
 k8s_components:
 - kube-apiserver

@@ -1,0 +1,56 @@
+# roles/nodelocaldns/tasks/main.yml
+# NodeLocal DNSCache 部署(在第一个 master 上, 调用方 k8s-cni 风格保证 run_once 语义)。
+# 「不改 kubelet」模式: node-cache 同绑 nodelocaldns_ip + kube-dns svc IP, Pod clusterDNS 不变。
+# 前提: kube-proxy 为 iptables 模式(NOTRACK 规则依赖之); 现网 {{ kube_proxy_mode }}。
+
+- name: "[NodeLocalDNS] 校验 kube-proxy 为 iptables 模式(NOTRACK 依赖)"
+  assert:
+    that:
+      - kube_proxy_mode | default('iptables') == 'iptables'
+    fail_msg: >-
+      NodeLocal DNSCache(不改 kubelet 模式)依赖 kube-proxy iptables 的 NOTRACK 规则,
+      当前 kube_proxy_mode={{ kube_proxy_mode | default('iptables') }}。ipvs 模式请另议。
+
+- name: "[NodeLocalDNS] 离线同步 node-cache 镜像到 Harbor"
+  include_tasks: sync-nodelocaldns-image.yaml
+  when: is_offline | default(false) | bool
+
+- name: "[NodeLocalDNS] 查询 kube-dns Service ClusterIP"
+  shell: kubectl -n kube-system get svc kube-dns -o jsonpath='{.spec.clusterIP}'
+  args:
+    executable: /bin/bash
+  register: _kubedns_svc
+  changed_when: false
+
+- name: "[NodeLocalDNS] 校验查到了 kube-dns ClusterIP"
+  assert:
+    that:
+      - _kubedns_svc.stdout | trim | length > 0
+    fail_msg: "未查到 kube-system/kube-dns Service, CoreDNS 是否已部署?"
+
+- name: "[NodeLocalDNS] 记录 kube-dns ClusterIP"
+  set_fact:
+    kubedns_svc_ip: "{{ _kubedns_svc.stdout | trim }}"
+
+- name: "[NodeLocalDNS] 渲染 nodelocaldns manifest"
+  template:
+    src: nodelocaldns.yaml.j2
+    dest: "{{ kube_config_dir }}/nodelocaldns.yaml"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: "[NodeLocalDNS] apply nodelocaldns"
+  shell: |
+    kubectl apply -f "{{ kube_config_dir }}/nodelocaldns.yaml"
+  args:
+    executable: /bin/bash
+  register: _nld_apply
+  changed_when: "'created' in _nld_apply.stdout or 'configured' in _nld_apply.stdout"
+
+- name: "[NodeLocalDNS] 等 DaemonSet 全节点就绪"
+  shell: kubectl -n kube-system rollout status ds/node-local-dns --timeout=180s
+  args:
+    executable: /bin/bash
+  register: _nld_rollout
+  changed_when: false
