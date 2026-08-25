@@ -176,11 +176,21 @@ helm_bin_src: "{{ offline_artifacts }}/helm/v{{ helm_version }}"
 cilium_chart_src: "{{ offline_artifacts }}/cni/cilium/v{{ cilium_version }}/cilium-{{ cilium_version }}.tgz"
 
 # ================= NodeLocal DNSCache (每节点本地 DNS 缓存) =================
-# 「不改 kubelet」模式: node-cache 同绑 169.254.20.10 + kube-dns svc IP + NOTRACK,
-# Pod 的 clusterDNS 不变 => 存量 Pod 无需重建, 零中断。部署: playbook/nodelocaldns.yaml。
-nodelocaldns_ip: "169.254.20.10"                 # link-local, node-cache 绑定此地址(不占 service 网段)
-nodelocaldns_version: "1.23.1"                    # k8s-dns-node-cache 版本, 可 env.yaml 覆盖
-nodelocaldns_image: "{{ (registry ~ '/k8s-dns-node-cache:' ~ nodelocaldns_version) if (is_offline | default(false) | bool) else (kube_image_mirror ~ '/k8s-dns-node-cache:' ~ nodelocaldns_version) }}"
+# 忠实复刻现网(KubeKey/KubeSphere 风味): DS/CM/SA 名 nodelocaldns, 单绑, 转发现网 coredns svc。
+# 查询链: Pod(clusterDNS=nodelocaldns_ip) -> nodelocaldns 本地缓存 -> CoreDNS。部署: playbook/nodelocaldns.yaml。
+nodelocaldns_ip: "169.254.25.10"                 # link-local; 必须与各节点 kubelet clusterDNS 一致(现网即此值)
+nodelocaldns_version: "1.26.4"                    # k8s-dns-node-cache 版本(现网 1.26.4), 可 env.yaml 覆盖
+# 现网镜像是 KubeSphere fork tag(hub.kubesphere.com.cn/dns), 阿里云 google_containers 没有此 tag。
+nodelocaldns_image_online: "hub.kubesphere.com.cn/dns/k8s-dns-node-cache"   # 在线源(可 env.yaml 覆盖)
+nodelocaldns_image: "{{ (registry ~ '/k8s-dns-node-cache:' ~ nodelocaldns_version) if (is_offline | default(false) | bool) else (nodelocaldns_image_online ~ ':' ~ nodelocaldns_version) }}"
+nodelocaldns_coredns_svc: "coredns"              # 上游 CoreDNS Service 名(kk=coredns; kubeadm 原生=kube-dns)
+nodelocaldns_health_port: 9254
+nodelocaldns_metrics_listen: "127.0.0.1:9353"
+# 站点定制(默认空; 现网的桩区/registry hosts 写进 gitignored env.yaml, 见 env.yaml.example):
+#   nodelocaldns_stub_zones: 每项 {zone, forward, cache(可选,默认30), health(可选 true)}
+#   nodelocaldns_hosts:      .:53 里的静态解析, 每项 {ip, names:[...]}
+nodelocaldns_stub_zones: []
+nodelocaldns_hosts: []
 src_nodelocaldns_images_dir: "{{ offline_artifacts }}/kubernetes/v{{ k8s_version }}/images"   # node-cache tar 与 k8s 组件镜像同目录
 nodelocaldns_images_dir: "/opt/nodelocaldns"
 

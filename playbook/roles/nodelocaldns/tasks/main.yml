@@ -1,6 +1,6 @@
 # roles/nodelocaldns/tasks/main.yml
 # NodeLocal DNSCache 部署(在第一个 master 上, 调用方 k8s-cni 风格保证 run_once 语义)。
-# 「不改 kubelet」模式: node-cache 同绑 nodelocaldns_ip + kube-dns svc IP, Pod clusterDNS 不变。
+# 忠实复刻现网 kk 版: 单绑 nodelocaldns_ip, 转发到现网 CoreDNS svc({{ nodelocaldns_coredns_svc }})。
 # 前提: kube-proxy 为 iptables 模式(NOTRACK 规则依赖之); 现网 {{ kube_proxy_mode }}。
 
 - name: "[NodeLocalDNS] 校验 kube-proxy 为 iptables 模式(NOTRACK 依赖)"
@@ -8,29 +8,32 @@
     that:
       - kube_proxy_mode | default('iptables') == 'iptables'
     fail_msg: >-
-      NodeLocal DNSCache(不改 kubelet 模式)依赖 kube-proxy iptables 的 NOTRACK 规则,
+      NodeLocal DNSCache 依赖 kube-proxy iptables 的 NOTRACK 规则,
       当前 kube_proxy_mode={{ kube_proxy_mode | default('iptables') }}。ipvs 模式请另议。
 
 - name: "[NodeLocalDNS] 离线同步 node-cache 镜像到 Harbor"
   include_tasks: sync-nodelocaldns-image.yaml
   when: is_offline | default(false) | bool
 
-- name: "[NodeLocalDNS] 查询 kube-dns Service ClusterIP"
-  shell: kubectl -n kube-system get svc kube-dns -o jsonpath='{.spec.clusterIP}'
+- name: "[NodeLocalDNS] 查询上游 CoreDNS Service({{ nodelocaldns_coredns_svc }}) ClusterIP"
+  shell: kubectl -n kube-system get svc {{ nodelocaldns_coredns_svc }} -o jsonpath='{.spec.clusterIP}'
   args:
     executable: /bin/bash
-  register: _kubedns_svc
+  register: _coredns_svc
   changed_when: false
 
-- name: "[NodeLocalDNS] 校验查到了 kube-dns ClusterIP"
+- name: "[NodeLocalDNS] 校验查到了 CoreDNS ClusterIP"
   assert:
     that:
-      - _kubedns_svc.stdout | trim | length > 0
-    fail_msg: "未查到 kube-system/kube-dns Service, CoreDNS 是否已部署?"
+      - _coredns_svc.stdout | trim | length > 0
+    fail_msg: >-
+      未查到 kube-system/{{ nodelocaldns_coredns_svc }} Service。
+      现网 CoreDNS svc 名是否为 '{{ nodelocaldns_coredns_svc }}'?(kubeadm 原生叫 kube-dns,
+      改 env.yaml 的 nodelocaldns_coredns_svc)
 
-- name: "[NodeLocalDNS] 记录 kube-dns ClusterIP"
+- name: "[NodeLocalDNS] 记录 CoreDNS ClusterIP(Corefile forward 目标)"
   set_fact:
-    kubedns_svc_ip: "{{ _kubedns_svc.stdout | trim }}"
+    coredns_svc_ip: "{{ _coredns_svc.stdout | trim }}"
 
 - name: "[NodeLocalDNS] 渲染 nodelocaldns manifest"
   template:
@@ -49,7 +52,7 @@
   changed_when: "'created' in _nld_apply.stdout or 'configured' in _nld_apply.stdout"
 
 - name: "[NodeLocalDNS] 等 DaemonSet 全节点就绪"
-  shell: kubectl -n kube-system rollout status ds/node-local-dns --timeout=180s
+  shell: kubectl -n kube-system rollout status ds/nodelocaldns --timeout=180s
   args:
     executable: /bin/bash
   register: _nld_rollout

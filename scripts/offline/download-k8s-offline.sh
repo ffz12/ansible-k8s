@@ -35,7 +35,7 @@ esac
 : "${FLANNEL_CNI:=1.6.2-flannel1}"
 : "${CILIUM:=1.16.5}"
 : "${HELM:=3.16.4}"
-: "${NODELOCALDNS:=1.23.1}"        # NodeLocal DNSCache (k8s-dns-node-cache) tag 无 v 前缀
+: "${NODELOCALDNS:=1.26.4}"        # NodeLocal DNSCache (k8s-dns-node-cache); 现网 KubeSphere fork tag
 
 CNIS="calico flannel cilium"   # 只打包用得到的可删减, 如 CNIS="calico"
 
@@ -44,6 +44,7 @@ IMG_MIRROR="registry.aliyuncs.com/google_containers"    # k8s 组件/pause/cored
 CALICO_SRC="docker.m.daocloud.io/calico"                # = docker.io/calico(daocloud 加速)
 FLANNEL_SRC="docker.m.daocloud.io/flannel"              # = docker.io/flannel
 CILIUM_SRC="quay.m.daocloud.io/cilium"                  # = quay.io/cilium(daocloud 加速)
+NODELOCALDNS_SRC="hub.kubesphere.com.cn/dns"            # k8s-dns-node-cache(现网 KubeSphere fork tag 1.26.4 在此)
 # -------- 二进制源: daocloud 通用文件代理(国内快, 一个源代理 dl.k8s.io/github/get.helm.sh) --------
 DAO="https://files.m.daocloud.io"
 K8S_BIN="$DAO/dl.k8s.io/release"
@@ -145,7 +146,7 @@ done
 save_img "$IMG_MIRROR/pause:$PAUSE"     "registry.k8s.io/pause-__ARCH__:$PAUSE"     "$KIMG" "pause"
 save_img "$IMG_MIRROR/coredns:v$COREDNS" "registry.k8s.io/coredns-__ARCH__:v$COREDNS" "$KIMG" "coredns"
 # NodeLocal DNSCache 镜像(与组件镜像同目录; sync 时 docker load 名带 -arch 后缀)
-save_img "$IMG_MIRROR/k8s-dns-node-cache:$NODELOCALDNS" "registry.k8s.io/dns/k8s-dns-node-cache:$NODELOCALDNS-__ARCH__" "$KIMG" "k8s-dns-node-cache"
+save_img "$NODELOCALDNS_SRC/k8s-dns-node-cache:$NODELOCALDNS" "registry.k8s.io/dns/k8s-dns-node-cache:$NODELOCALDNS-__ARCH__" "$KIMG" "k8s-dns-node-cache"
 
 # ========== 3. etcd (containerd/runc 已挪到 download-docker-offline.sh 的底座层) ==========
 for a in $ARCHES; do

@@ -1,8 +1,12 @@
 # playbook/nodelocaldns.yaml
 # ============================================================================
-#  部署 NodeLocal DNSCache(每节点本地 DNS 缓存)。
-#  「不改 kubelet」模式: node-cache 同绑 169.254.20.10 + kube-dns svc IP + NOTRACK,
-#  Pod 的 clusterDNS 仍指向 kube-dns svc IP => 存量 Pod 无需重建, 零中断。
+#  部署 NodeLocal DNSCache(每节点本地 DNS 缓存)。查询链: Pod -> nodelocaldns(本地) -> CoreDNS。
+#  忠实复刻现网 KubeKey/KubeSphere 版: DS/CM/SA 名 nodelocaldns, 单绑 nodelocaldns_ip(默认 169.254.25.10),
+#  转发到运行时查到的 CoreDNS svc({{ nodelocaldns_coredns_svc | default('coredns') }}) ClusterIP。
+#  站点定制(桩区 / registry hosts)走 env.yaml 的 nodelocaldns_stub_zones / nodelocaldns_hosts。
+#
+#  ⚠ 现网已在运行(名字/结构一致), 本 playbook 对现网 apply 是 reconcile 同一 DS(幂等), 不新建。
+#    但仍建议先 --check 或先在测试集群验, 确认渲染出的 manifest 与现网一致再动生产。
 #
 #  用法:
 #    ansible-playbook -i inventory/hosts playbook/nodelocaldns.yaml            # 在线
