@@ -110,12 +110,16 @@ for a in $ARCHES; do
     dl "$K8S_BIN/v$K8S/bin/linux/$a/$bin" "$B/kubernetes/v$K8S/bin/$a/$bin"
     chmod +x "$B/kubernetes/v$K8S/bin/$a/$bin"
   done
-  # crictl: cri-tools tar -> 取 crictl 二进制放同目录
-  tmp="$(mktemp -d)"
-  dl "$CRICTL_BIN/v$CRICTL/crictl-v$CRICTL-linux-$a.tar.gz" "$tmp/crictl.tgz"
-  tar -xzf "$tmp/crictl.tgz" -C "$tmp"
-  cp "$tmp/crictl" "$B/kubernetes/v$K8S/bin/$a/crictl"; chmod +x "$B/kubernetes/v$K8S/bin/$a/crictl"
-  rm -rf "$tmp"
+  # crictl: cri-tools tar -> 取 crictl 二进制放同目录(已在则跳过, 避免每次重下 tar)
+  if [ -x "$B/kubernetes/v$K8S/bin/$a/crictl" ]; then
+    say "跳过(完整) crictl ($a)"
+  else
+    tmp="$(mktemp -d)"
+    dl "$CRICTL_BIN/v$CRICTL/crictl-v$CRICTL-linux-$a.tar.gz" "$tmp/crictl.tgz"
+    tar -xzf "$tmp/crictl.tgz" -C "$tmp"
+    cp "$tmp/crictl" "$B/kubernetes/v$K8S/bin/$a/crictl"; chmod +x "$B/kubernetes/v$K8S/bin/$a/crictl"
+    rm -rf "$tmp"
+  fi
 done
 
 # ========== 1.5 用 kubeadm 校准镜像/etcd tag(消除 pause/coredns/etcd 手写漂移) ==========
@@ -167,6 +171,7 @@ for cni in $CNIS; do case $cni in
     save_img "$CILIUM_SRC/operator-generic:v$CILIUM" "quay.io/cilium/operator-generic:v$CILIUM-__ARCH__" "$B/cni/cilium/v$CILIUM/images" "operator-generic"
     # helm 二进制 + cilium chart
     for a in $ARCHES; do
+      if [ -x "$B/helm/v$HELM/$a/helm" ]; then say "跳过(完整) helm ($a)"; continue; fi
       tmp="$(mktemp -d)"; dl "$HELM_BIN/helm-v$HELM-linux-$a.tar.gz" "$tmp/helm.tgz"
       tar -xzf "$tmp/helm.tgz" -C "$tmp"; mkdir -p "$B/helm/v$HELM/$a"; cp "$tmp/linux-$a/helm" "$B/helm/v$HELM/$a/helm"; chmod +x "$B/helm/v$HELM/$a/helm"; rm -rf "$tmp"
     done

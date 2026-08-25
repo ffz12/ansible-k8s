@@ -65,6 +65,8 @@ pack() {
 
 # RPM 系(麒麟/openEuler): $1=镜像 $2=arch $3=tag $4=文件名标签
 dl_rpm() {
+  local out="$OUT/lb_${4}_${3}.tar.gz"
+  if [ -s "$out" ]; then echo "========== $4 [$2 -> $3] 跳过(已存在 $(basename "$out"),删了可重下) =========="; return; fi
   local tmp="$OUT/.tmp_${4}_${3}"; rm -rf "$tmp"; mkdir -p "$tmp"
   echo "========== $4 [$2 -> $3] haproxy+keepalived =========="
   docker run --rm --platform "linux/$2" -v "$tmp":/tmp/download "$1" sh -c "
@@ -72,11 +74,13 @@ dl_rpm() {
     yum config-manager --set-enabled EPOL >/dev/null 2>&1 || true
     yum install --downloadonly --downloaddir=/tmp/download $LB_PKGS -y >/dev/null 2>&1 || true
   " || echo " ⚠️  $4 [$3] 容器运行失败(镜像拉取/网络?), 跳过 —— 见文末 mirror 说明"
-  pack "$tmp" "$OUT/lb_${4}_${3}.tar.gz"
+  pack "$tmp" "$out"
 }
 
 # DEB 系(Ubuntu): $1=ubuntu 版本 $2=arch $3=tag $4=主版本号
 dl_deb() {
+  local out="$OUT/lb_ubuntu${4}_${3}.tar.gz"
+  if [ -s "$out" ]; then echo "========== ubuntu$4 [$2 -> $3] 跳过(已存在 $(basename "$out"),删了可重下) =========="; return; fi
   local tmp="$OUT/.tmp_ubuntu${4}_${3}"; rm -rf "$tmp"; mkdir -p "$tmp"
   echo "========== ubuntu$4 [$2 -> $3] haproxy+keepalived =========="
   docker run --rm --platform "linux/$2" -v "$tmp":/tmp/download "${UBUNTU_IMAGE_PREFIX}":"$1" sh -c "
@@ -87,7 +91,7 @@ dl_deb() {
     apt-get download \$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances $LB_PKGS | grep '^\w' | sort -u) 2>/dev/null || true
     apt-get download $LB_PKGS 2>/dev/null || true
   " || echo " ⚠️  ubuntu$4 [$3] 容器运行失败(镜像拉取/网络?), 跳过 —— 见文末 mirror 说明"
-  pack "$tmp" "$OUT/lb_ubuntu${4}_${3}.tar.gz"
+  pack "$tmp" "$out"
 }
 
 do_kylin()     { for p in $(arch_pairs); do dl_rpm "$KYLIN_IMAGE" "${p%%:*}" "${p##*:}" kylin;        done; }
