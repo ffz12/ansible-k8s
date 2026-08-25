@@ -1,7 +1,49 @@
 ---
 - name: 初始化并加入 Kubernetes 集群
   hosts: k8s_node
+  # 加节点前先判断: 已加入的节点【整台跳过】, 不再重跑 kube-common。
+  # 目的: 避免对在网老节点重装二进制/重下发 kubelet 配置 —— 尤其别让 drop-in 变更触发
+  #       kube-common 的 handler 把在网节点 kubelet 逐台重启。判断提到 pre_tasks(最前),
+  #       原来在 kube-add-node 里(kube-common 之后), 老节点会白跑一遍 kube-common。
+  #
+  # 「是否已加入」双重判据:
+  #   ① 主判据 = 到 first master 上 kubectl get node <本机名>: 查到 => 集群里确实有 => 已加入。
+  #      查不到(rc=0 且空) => 集群里没有 => 未加入, 该跑(即使本机残留 kubelet.conf 也当重加入)。
+  #   ② 兜底 = kubectl 不可用(master 连不上/admin.conf 缺失, rc!=0)时回退看本机 kubelet.conf,
+  #      防止 API 抖动时把在网健康节点全部误判为"未加入"而重跑/重启。
+  #
+  # 需要对【已加入】节点重下发配置(如改 --node-ip)时: 加 -e force_common=true 强制跑 kube-common;
+  # 此时 kube-add-node 内部的 kubelet.conf 判断仍拦住 join, 即"只重配置、不重加入"。
+  pre_tasks:
+    - name: "[Add Node] 预检: 本机是否有 kubelet.conf"
+      stat:
+        path: "{{ kube_config_dir }}/kubelet.conf"
+      register: _pre_kubelet_conf
+      tags: always
+
+    - name: "[Add Node] 预检: 到 first master 查集群里是否已有该 Node"
+      command: >
+        kubectl --kubeconfig {{ kube_config_dir }}/admin.conf
+        get node {{ inventory_hostname }} --ignore-not-found -o name
+      delegate_to: "{{ groups['k8s_master'][0] }}"
+      register: _pre_node_in_cluster
+      changed_when: false
+      failed_when: false
+      tags: always
+
+    - name: "[Add Node] 判定是否已加入(kubectl 优先, 不可用则回退 kubelet.conf)"
+      set_fact:
+        _already_joined: >-
+          {{ (_pre_node_in_cluster.rc == 0 and (_pre_node_in_cluster.stdout | trim | length > 0))
+             or (_pre_node_in_cluster.rc != 0 and _pre_kubelet_conf.stat.exists) }}
+      tags: always
+
+    - name: "[Add Node] 已加入则整台跳过(-e force_common=true 可强制重跑 kube-common)"
+      meta: end_host
+      when:
+        - _already_joined | bool
+        - not (force_common | default(false) | bool)
+      tags: always
   roles:
     - kubernetes/kube-common
     - kubernetes/kube-add-node
-
