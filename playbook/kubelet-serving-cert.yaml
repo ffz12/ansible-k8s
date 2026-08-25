@@ -1,0 +1,22 @@
+---
+# playbook/kubelet-serving-cert.yaml
+# ============================================================================
+#  对【已跑起来的存量集群】开启 kubelet serverTLSBootstrap 并审批 serving CSR。
+#  未来新集群 kube-init-master 的 kubeadm 模板已自带 serverTLSBootstrap, 无需本 playbook。
+#
+#  做什么:
+#    · 全节点(master+worker)/var/lib/kubelet/config.yaml 幂等加 serverTLSBootstrap: true
+#      (backup=yes 留时间戳备份) → 重启 kubelet → 触发 kubernetes.io/kubelet-serving CSR。
+#    · 首 master 上 patch kubelet-config ConfigMap(新节点 join 继承)。
+#    · 首 master 上自动审批(只批 signer=kubelet-serving 且请求者是已知 inventory 节点)。
+#    · 各节点 openssl 验 10250 证书 issuer=集群 CA(非自签名)。
+#
+#  用法:
+#    ansible-playbook -i inventory/hosts playbook/kubelet-serving-cert.yaml
+#  证书到期(kube-controller-manager --cluster-signing-duration, 默认 1y)重签会再产 CSR,
+#  重跑本 playbook 即可再次审批。
+# ============================================================================
+- name: kubelet serving 证书(serverTLSBootstrap + 审批 kubelet-serving CSR)
+  hosts: k8s_master:k8s_node
+  roles:
+    - kubernetes/kubelet-serving-cert

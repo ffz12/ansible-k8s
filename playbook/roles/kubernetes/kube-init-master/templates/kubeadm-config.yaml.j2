@@ -118,6 +118,9 @@ podPidsLimit: {{ kubelet_pod_pids_limit }}
 containerLogMaxSize: {{ kubelet_container_log_max_size }}
 containerLogMaxFiles: {{ kubelet_container_log_max_files }}
 rotateCertificates: true
+serverTLSBootstrap: true                 # kubelet 向集群 CA 申请 10250 serving 证书(替自签名);
+                                         # 需审批 kubernetes.io/kubelet-serving CSR。存量集群用
+                                         # playbook/kubelet-serving-cert.yaml 下发+审批。
 {% if kubelet_security_enhancement | default(false) | bool %}
 # ---- 安全加固(CIS 基线; env.yaml: kubelet_security_enhancement=true 开启) ----
 readOnlyPort: 0                        # 关闭只读端口 10255(无认证)

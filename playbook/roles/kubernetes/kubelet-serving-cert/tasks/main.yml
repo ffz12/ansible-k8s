@@ -1,0 +1,103 @@
+# roles/kubernetes/kubelet-serving-cert/tasks/main.yml
+# ============================================================================
+#  对【已跑起来的集群】下发 serverTLSBootstrap 并审批 kubelet-serving CSR。
+#  (未来新集群由 kube-init-master 的 kubeadm 模板自带 serverTLSBootstrap, 无需本 role。)
+#
+#  相比手写 runbook 的优化:
+#   · 全节点(master+worker)—— worker 的 10250 也要正规 serving 证书(metrics-server 抓全节点)。
+#   · lineinfile 幂等替 sed(可重复跑, 已配则不动、不重启)。
+#   · 顺带 patch kubelet-config ConfigMap —— 新节点 kubeadm join 拉 CM 时也带上, 不丢。
+#   · CSR 自动审批 + 校验(只批 signer=kubelet-serving 且请求者是已知 inventory 节点), 替手工 copy CSR 名。
+# ============================================================================
+
+- name: "[serving-cert] 预检: kubelet config.yaml 是否存在(未加入集群则跳过)"
+  stat:
+    path: "{{ kubelet_config_dir }}/config.yaml"
+  register: _kubelet_cfg
+
+- name: "[serving-cert] 未加入集群(无 config.yaml)则跳过本机"
+  meta: end_host
+  when: not _kubelet_cfg.stat.exists
+
+- name: "[serving-cert] 开启 serverTLSBootstrap(幂等; backup=yes 自动留时间戳备份)"
+  lineinfile:
+    path: "{{ kubelet_config_dir }}/config.yaml"
+    regexp: '^serverTLSBootstrap:'
+    line: 'serverTLSBootstrap: true'
+    state: present
+    backup: yes
+  notify: restart kubelet
+
+# 立刻重启 kubelet(而非等 play 末), 好让它先发起 serving CSR, 后面才审批得到。
+- name: "[serving-cert] 立即触发 kubelet 重启"
+  meta: flush_handlers
+
+- name: "[serving-cert] 等 kubelet 重启后上报 serving CSR"
+  pause:
+    seconds: 10
+  run_once: true
+
+# -------- 持久化到 kubelet-config ConfigMap(新节点 join 拉 CM 时继承) --------
+- name: "[serving-cert] patch kubelet-config CM 加 serverTLSBootstrap(缺则加, 幂等)"
+  shell: |
+    set -e
+    kubectl -n kube-system get cm kubelet-config -o json > /tmp/kubelet-config-cm.json 2>/dev/null || exit 0
+    python3 - <<'PY'
+    import json
+    p="/tmp/kubelet-config-cm.json"
+    cm=json.load(open(p))
+    k=cm.get("data",{}).get("kubelet","")
+    if not k or "serverTLSBootstrap" in k:
+        open("/tmp/kubelet-config-need-patch","w").write("no"); raise SystemExit
+    cm["data"]["kubelet"]=k.rstrip()+"\nserverTLSBootstrap: true\n"
+    json.dump({"data":cm["data"]}, open("/tmp/kubelet-config-patch.json","w"))
+    open("/tmp/kubelet-config-need-patch","w").write("yes")
+    PY
+    if [ "$(cat /tmp/kubelet-config-need-patch 2>/dev/null)" = "yes" ]; then
+      kubectl -n kube-system patch cm kubelet-config --type merge -p "$(cat /tmp/kubelet-config-patch.json)"
+      echo "PATCHED"
+    else
+      echo "ALREADY"
+    fi
+  args:
+    executable: /bin/bash
+  run_once: true
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  register: _cm_patch
+  changed_when: "'PATCHED' in _cm_patch.stdout"
+  failed_when: false
+
+# -------- 审批 kubelet-serving CSR(只批已知节点, 幂等) --------
+- name: "[serving-cert] 列出 Pending 的 kubelet-serving CSR(名字 + 请求者)"
+  shell: >
+    kubectl get csr -o
+    go-template='{% raw %}{{range .items}}{{if not .status.conditions}}{{if eq .spec.signerName "kubernetes.io/kubelet-serving"}}{{.metadata.name}} {{.spec.username}}{{"\n"}}{{end}}{{end}}{{end}}{% endraw %}'
+  run_once: true
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  register: _pending_csr
+  changed_when: false
+
+- name: "[serving-cert] 审批(仅 signer=kubelet-serving 且请求者是已知 inventory 节点)"
+  shell: "kubectl certificate approve {{ item.split()[0] }}"
+  loop: "{{ _pending_csr.stdout_lines }}"
+  when:
+    - (item.split() | length) == 2
+    - item.split()[1].startswith('system:node:')
+    - (item.split()[1].split(':') | length) == 3
+    - item.split()[1].split(':')[2] in ((groups['k8s_master'] | default([])) + (groups['k8s_node'] | default([])) | unique)
+  run_once: true
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  register: _csr_approve
+  changed_when: "'approved' in (_csr_approve.stdout | default(''))"
+
+# -------- 验证:各节点 10250 serving 证书 issuer/SAN --------
+- name: "[serving-cert] 读取本机 10250 serving 证书"
+  shell: |
+    echo | openssl s_client -connect 127.0.0.1:10250 2>/dev/null | \
+      openssl x509 -noout -issuer -subject -dates -ext subjectAltName 2>/dev/null || true
+  register: _kubelet_10250
+  changed_when: false
+
+- name: "[serving-cert] 打印 10250 证书信息(issuer 应为集群 CA, 非自签名)"
+  debug:
+    var: _kubelet_10250.stdout_lines

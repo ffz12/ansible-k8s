@@ -1,0 +1,8 @@
+# roles/kubernetes/kubelet-serving-cert/handlers/main.yml
+# 改 /var/lib/kubelet/config.yaml 后重启 kubelet, 使 serverTLSBootstrap 生效
+# (kubelet 重启后会向集群 CA 发起 kubernetes.io/kubelet-serving CSR)。
+- name: restart kubelet
+  systemd:
+    name: kubelet
+    daemon_reload: yes
+    state: restarted
