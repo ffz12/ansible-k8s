@@ -37,6 +37,21 @@ DEB_BASE="$NV_REPO/deb/amd64"        # deb 直链目录(flat repo, $(ARCH)=amd64
 PKGS="nvidia-container-toolkit nvidia-container-toolkit-base libnvidia-container-tools libnvidia-container1"
 
 CURL="curl -fL --retry 5 --retry-delay 3 --retry-connrefused -C -"
+FORCE="${FORCE:-}"   # FORCE=1 强制重下(忽略已存在的完整文件)
+
+# 已完整下过就跳过(本地大小 == 远端 Content-Length); partial 交给 -C - 续传; FORCE=1 强制重下。
+fetch() {   # $1=url $2=dest -> 0 成功/已就位; 1 失败
+    local url="$1" dest="$2"
+    if [ -z "$FORCE" ] && [ -s "$dest" ]; then
+        local rsize lsize
+        rsize=$(curl -sIL --retry 2 "$url" | tr -d '\r' | awk 'tolower($1)=="content-length:"{v=$2} END{print v}')
+        lsize=$(stat -c%s "$dest" 2>/dev/null || echo 0)
+        if [ -n "$rsize" ] && [ "$lsize" = "$rsize" ]; then
+            echo "    ✓ 已完整存在(${lsize}B), 跳过(FORCE=1 强制重下)"; return 0
+        fi
+    fi
+    $CURL -o "$dest" "$url"
+}
 
 # ---------- RHEL 系 (rpm) ----------
 echo "========== 下载 nvidia-container-toolkit RPM [amd64] v$VER =========="
@@ -44,7 +59,7 @@ rpm_ok=0
 for p in $PKGS; do
     f="$p-$VER.x86_64.rpm"
     echo " -> $f"
-    if $CURL -o "$RHEL_DIR/$f" "$RPM_BASE/$f"; then rpm_ok=$((rpm_ok+1)); else
+    if fetch "$RPM_BASE/$f" "$RHEL_DIR/$f"; then rpm_ok=$((rpm_ok+1)); else
         echo "    ❌ 下载失败: $RPM_BASE/$f"; rm -f "$RHEL_DIR/$f"
     fi
 done
@@ -56,7 +71,7 @@ deb_ok=0
 for p in $PKGS; do
     f="${p}_${VER}_amd64.deb"
     echo " -> $f"
-    if $CURL -o "$DEB_DIR/$f" "$DEB_BASE/$f"; then deb_ok=$((deb_ok+1)); else
+    if fetch "$DEB_BASE/$f" "$DEB_DIR/$f"; then deb_ok=$((deb_ok+1)); else
         echo "    ❌ 下载失败: $DEB_BASE/$f"; rm -f "$DEB_DIR/$f"
     fi
 done
