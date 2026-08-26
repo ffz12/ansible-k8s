@@ -6,19 +6,18 @@
 #
 #  ★ 各下载脚本参数不统一, 本脚本按层分派:
 #      k8s / docker   : 吃 arch (amd64|arm64|all)
-#      lb             : 吃 distro + arch
-#      packages       : 吃 distro
+#      packages       : 吃 distro (含 haproxy/keepalived —— LB 包已并入基础包, 不再单独下)
 #      harbor / gpu   : 仅 amd64, 无 arch 参数(gpu 的 $1 是版本, 用脚本默认)
 #
 #  用法(arch/distro/回传目标走环境变量, 层名走位置参):
 #    bash scripts/prefetch-all.sh [layer ...]           # 默认层: k8s docker
 #    ARCH=amd64 bash scripts/prefetch-all.sh            # 纯单架构省一半(默认 all 双架构)
-#    ARCH=amd64 bash scripts/prefetch-all.sh k8s docker harbor lb gpu packages   # 全量
-#    DISTRO=ubuntu bash scripts/prefetch-all.sh lb packages     # lb/packages 只下 ubuntu(默认 all)
+#    ARCH=amd64 bash scripts/prefetch-all.sh k8s docker harbor gpu packages   # 全量
+#    DISTRO=ubuntu bash scripts/prefetch-all.sh packages        # packages 只下 ubuntu(默认 all)
 #    PREFETCH_DEST=root@10.0.0.2:/root/ansible-k8s/offline/artifacts \
 #      ARCH=amd64 bash scripts/prefetch-all.sh          # 跑完自动 rsync 回控制机
 #
-#  可选层: k8s docker harbor lb gpu packages   (与 download-<层>-offline.sh 对应)
+#  可选层: k8s docker harbor gpu packages   (与 download-<层>-offline.sh 对应)
 # =============================================================================
 set -e
 # 本脚本在 scripts/ 顶层, 下载分层脚本在 scripts/offline/ —— cd 进去后
@@ -39,7 +38,6 @@ run_layer(){
   say "==== $s (arch=$ARCH distro=$DISTRO) ===="
   case "$L" in
     k8s|docker) bash "$s" "$ARCH" ;;
-    lb)         bash "$s" "$DISTRO" "$ARCH" ;;
     packages)   bash "$s" "$DISTRO" ;;
     harbor|gpu) bash "$s" ;;              # 仅 amd64; gpu 的 $1 是版本, 走脚本默认
     *)          bash "$s" ;;
