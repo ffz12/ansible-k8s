@@ -94,6 +94,12 @@ keepalived_sbin_dir: "{{ keepalived_dir }}/sbin"
 
 # ================= 派生: 离线路径 / Harbor 地址 =================
 offline_artifacts: "{{ playbook_dir | dirname }}/offline/artifacts"
+
+# ---- 离线预取范围(prefetch-all.sh 经 versions.env 读取; 临时可用 ARCH=/DISTRO= 环境变量覆盖) ----
+# 学 kk 的思路: 本套集群「什么架构、哪些系统」在 env.yaml 声明一次, 预取自动只下这些, 不用每次手打 ARCH=/DISTRO=。
+# 默认全 all = 现状(双架构、全发行版), 不改任何人行为。优先级: 环境变量 > env.yaml(这里) > all。
+offline_arch: all              # amd64 | arm64 | all —— 下载哪些架构(对 k8s/docker/packages 各层都生效)
+offline_distros: all           # all 或列表 [ubuntu, kylin, openeuler] —— packages(系统依赖包)层下哪些发行版
 harbor_dns: "{{ harbor_instances[0].dns }}"
 harbor_ip: "{{ harbor_instances[0].ip }}"
 registry: "{{ harbor_dns }}/{{ harbor_project | default('unisound') }}"   # 自建 harbor 前缀(项目名在 env.yaml)

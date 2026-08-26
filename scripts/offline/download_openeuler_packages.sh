@@ -12,9 +12,30 @@ OFFLINE_PKGS="openssl-libs pcre zlib socat chrony ipvsadm conntrack-tools nfs-ut
 EULER_IMAGE="openeuler/openeuler:22.03-lts"
 EULER_MAJOR="22"   # 输出文件名用: openEuler22_<arch>.tar.gz
 
+# 架构过滤(prefetch 按 env.yaml 的 offline_arch export ARCH; 直接跑不设=all=双架构, 与旧行为一致)
+ARCH="${ARCH:-all}"
+# 可选: 容器解析官方源抖动时指定 DNS, 不设则与现状完全一致
+DOCKER_DNS="${DOCKER_DNS:-}"
+
 # 最终存放 TAR 包的根目录 (对齐 ubuntu 脚本)
 BASE_OUT_DIR="$(cd "$(dirname "$0")/../../offline" && pwd)/artifacts/ios-offline"
 # ============================================
+RC=0   # 任一架构失败置 1, 脚本末尾据此非零退出(不再静默)
+
+# 拉一次镜像就按架构打本地缓存标签, 之后复用不再重复拉。
+# (docker 同一 tag 本地只能存一个平台的镜像, 双架构会互相顶掉 -> 每次都重拉; 故各架构存独立缓存标签)
+ensure_image() {   # $1=镜像 $2=arch -> stdout 回显可直接 docker run 的本地缓存标签; 失败 return 1
+    local image="$1" arch="$2"
+    local cache="pkgcache/$(echo "${image}__${arch}" | tr '/:' '__')"
+    if docker image inspect "$cache" >/dev/null 2>&1; then
+        echo " -> 复用本地镜像缓存 $cache(跳过拉取)" >&2
+    else
+        echo " -> 首次拉取 $image [$arch] 并打本地缓存标签 $cache ..." >&2
+        docker pull --platform "linux/$arch" "$image" >&2 || return 1
+        docker tag "$image" "$cache" >&2 || return 1
+    fi
+    echo "$cache"
+}
 
 download_euler_pkg() {
     local arch=$1       # amd64 或 arm64
@@ -31,10 +52,16 @@ download_euler_pkg() {
     mkdir -p "$tmp_save_dir"
     mkdir -p "$BASE_OUT_DIR"
 
-    docker run --rm \
+    local img
+    if ! img="$(ensure_image "$EULER_IMAGE" "$arch")"; then
+        echo " ❌ [ 失败 ] openEuler [$arch] 镜像拉取失败(网络/DNS?)。"
+        rm -rf "$tmp_save_dir"; RC=1; return
+    fi
+
+    docker run --rm ${DOCKER_DNS:+--dns "$DOCKER_DNS"} \
         --platform "linux/$arch" \
         -v "$tmp_save_dir":/tmp/download \
-        "$EULER_IMAGE" \
+        "$img" \
         bash -c "
             set -e
             # dnf download 需要插件; createrepo_c 生成离线 repo 索引
@@ -58,17 +85,17 @@ download_euler_pkg() {
         echo " 🌟 [ 成功 ] 离线 Tar 包已生成: $BASE_OUT_DIR/$tar_name"
     else
         echo " ❌ [ 失败 ] openEuler $arch 下载失败,请检查镜像 tag / 包名 / errors.txt。"
-        rm -rf "$tmp_save_dir"
+        rm -rf "$tmp_save_dir"; RC=1
     fi
 }
 
-# 执行矩阵下载(两架构,和 ubuntu 保持一致)
-download_euler_pkg "amd64" "x86_64"
-echo -e "\n"
-download_euler_pkg "arm64" "arm64"
+# 执行矩阵下载(按 ARCH 过滤: 声明单架构就只下那个)
+case "$ARCH" in amd64|all) download_euler_pkg "amd64" "x86_64"; echo -e "\n" ;; esac
+case "$ARCH" in arm64|all) download_euler_pkg "arm64" "arm64" ;; esac
 
 echo
 echo "=============================================="
 echo " 完成。产物: $BASE_OUT_DIR/openEuler${EULER_MAJOR}_{x86_64,arm64}.tar.gz"
 echo " 注意: arm64 在 x86 主机上下载需要 qemu binfmt (与 ubuntu 脚本同样前提)。"
 echo "=============================================="
+exit $RC

@@ -7,9 +7,30 @@
 #     改这里的包名需同步 playbook/roles/init/tasks/debian.yaml 的 debian_offline_pkgs(不含 LB 那两个)。
 OFFLINE_PKGS="socat ebtables ipset iotop sysstat ipvsadm conntrack net-tools nfs-common nfs-kernel-server libseccomp2 netcat-openbsd ca-certificates bash-completion apt-transport-https software-properties-common gcc make bzip2 unzip freeipa-client chrony haproxy keepalived"
 
+# 架构过滤(prefetch 按 env.yaml 的 offline_arch export ARCH; 直接跑不设=all=双架构, 与旧行为一致)
+ARCH="${ARCH:-all}"
+# 可选: 容器解析官方源抖动时指定 DNS, 不设则与现状完全一致
+DOCKER_DNS="${DOCKER_DNS:-}"
+
 # 最终存放 TAR 包的根目录 (对齐你的现状)
 BASE_OUT_DIR="$(cd "$(dirname "$0")/../../offline" && pwd)/artifacts/ios-offline"
 # ============================================
+RC=0   # 任一 (版本×架构) 失败置 1, 脚本末尾据此非零退出(不再静默)
+
+# 拉一次镜像就按架构打本地缓存标签, 之后复用不再重复拉。
+# (docker 同一 tag 本地只能存一个平台的镜像, 双架构会互相顶掉 -> 每次都重拉; 故各架构存独立缓存标签)
+ensure_image() {   # $1=镜像 $2=arch -> stdout 回显可直接 docker run 的本地缓存标签; 失败 return 1
+    local image="$1" arch="$2"
+    local cache="pkgcache/$(echo "${image}__${arch}" | tr '/:' '__')"
+    if docker image inspect "$cache" >/dev/null 2>&1; then
+        echo " -> 复用本地镜像缓存 $cache(跳过拉取)" >&2
+    else
+        echo " -> 首次拉取 $image [$arch] 并打本地缓存标签 $cache ..." >&2
+        docker pull --platform "linux/$arch" "$image" >&2 || return 1
+        docker tag "$image" "$cache" >&2 || return 1
+    fi
+    echo "$cache"
+}
 
 download_ubuntu_pkg() {
     local ubuntu_version=$1  # 22.04 或 24.04
@@ -29,10 +50,16 @@ download_ubuntu_pkg() {
     mkdir -p "$tmp_save_dir"
     mkdir -p "$BASE_OUT_DIR"
 
-    docker run --rm \
+    local img
+    if ! img="$(ensure_image "ubuntu:$ubuntu_version" "$arch")"; then
+        echo " ❌ [ 失败 ] Ubuntu $ubuntu_version [$arch] 镜像拉取失败(网络/DNS?)。"
+        rm -rf "$tmp_save_dir"; RC=1; return
+    fi
+
+    docker run --rm ${DOCKER_DNS:+--dns "$DOCKER_DNS"} \
         --platform "linux/$arch" \
         -v "$tmp_save_dir":/tmp/download \
-        ubuntu:"$ubuntu_version" \
+        "$img" \
         sh -c "
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
@@ -56,13 +83,14 @@ download_ubuntu_pkg() {
         echo " 🌟 [ 成功 ] 离线 Tar 包已生成: $BASE_OUT_DIR/$tar_name"
     else
         echo " ❌ [ 失败 ] Ubuntu $ubuntu_version 下载失败。"
-        rm -rf "$tmp_save_dir"
+        rm -rf "$tmp_save_dir"; RC=1
     fi
 }
 
-# 执行矩阵下载
-download_ubuntu_pkg "22.04" "amd64" "x86_64"
-download_ubuntu_pkg "22.04" "arm64" "arm64"
+# 执行矩阵下载(按 ARCH 过滤: 声明单架构就只下那个)
+case "$ARCH" in amd64|all) download_ubuntu_pkg "22.04" "amd64" "x86_64" ;; esac
+case "$ARCH" in arm64|all) download_ubuntu_pkg "22.04" "arm64" "arm64"  ;; esac
 echo -e "\n"
-download_ubuntu_pkg "24.04" "amd64" "x86_64"
-download_ubuntu_pkg "24.04" "arm64" "arm64"
+case "$ARCH" in amd64|all) download_ubuntu_pkg "24.04" "amd64" "x86_64" ;; esac
+case "$ARCH" in arm64|all) download_ubuntu_pkg "24.04" "arm64" "arm64"  ;; esac
+exit $RC
