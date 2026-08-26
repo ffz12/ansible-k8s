@@ -14,8 +14,8 @@
 #    优先级(高覆低): 环境变量 ARCH=/DISTRO=  >  env.yaml(offline_arch/offline_distros)  >  all。
 #
 #  用法(层名走位置参; 架构/发行版优先读 env.yaml, 环境变量可临时覆盖):
-#    bash scripts/prefetch-all.sh [layer ...]           # 默认层: k8s docker
-#    bash scripts/prefetch-all.sh k8s docker harbor gpu packages   # 全量(范围读 env.yaml)
+#    bash scripts/prefetch-all.sh                       # 默认全量: k8s docker harbor gpu packages
+#    bash scripts/prefetch-all.sh k8s docker            # 只跑指定层(如仅镜像/二进制)
 #    ARCH=amd64 bash scripts/prefetch-all.sh            # 临时只下单架构(压过 env.yaml)
 #    DISTRO=ubuntu bash scripts/prefetch-all.sh packages        # 临时 packages 只下 ubuntu
 #    PREFETCH_DEST=root@10.0.0.2:/root/ansible-k8s/offline/artifacts \
@@ -35,7 +35,7 @@ cd "$(dirname "$0")/offline"
 _ARCH_OV="${ARCH:-}"
 _DISTRO_OV="${DISTRO:-}"
 
-LAYERS="${*:-k8s docker}"
+LAYERS="${*:-k8s docker harbor gpu packages}"   # 不带参数 = 全 5 层全量; 只想跑部分就显式列层
 
 say(){ echo -e "\033[0;32m[prefetch] $*\033[0m"; }
 
