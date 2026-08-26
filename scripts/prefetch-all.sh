@@ -86,6 +86,11 @@ if [ -n "$PREFETCH_DEST" ]; then
   rsync -a --info=progress2 "$ART/" "$PREFETCH_DEST/"
   say "已汇到 $PREFETCH_DEST ; 部署时 is_offline=true"
 else
-  say "如需汇控制机: rsync -a $ART/ <控制机>:<repo>/offline/artifacts/  (或设 PREFETCH_DEST 自动传)"
+  REPO_PARENT="$(dirname "$REPO")"; REPO_NAME="$(basename "$REPO")"
+  say "如需汇控制机(二选一):"
+  say "  ① 整仓拷贝(控制机还没有本仓库时, 推荐): cd $REPO_PARENT && rsync -a ./$REPO_NAME <控制机>:<目标父目录>/"
+  say "     (无 rsync 用: scp -r ./$REPO_NAME <控制机>:<目标父目录>/)"
+  say "  ② 只回物料(控制机已有本仓库): rsync -a $ART/ <控制机>:<repo>/offline/artifacts/"
+  say "  (或设 PREFETCH_DEST 环境变量, 跑完自动传物料)"
   say "部署时 is_offline=true"
 fi
