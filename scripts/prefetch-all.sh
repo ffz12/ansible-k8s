@@ -7,6 +7,7 @@
 #  ★ 各下载脚本参数不统一, 本脚本按层分派:
 #      k8s / docker   : 吃 arch (amd64|arm64|all)
 #      packages       : 吃 distro 列表 (含 haproxy/keepalived —— LB 包已并入基础包, 不再单独下)
+#      ansible        : 吃 distro + arch (控制机离线装 ansible 用; 逐个发行版调用, 产物落 offline/ansible-pkg-install/)
 #      harbor / gpu   : 仅 amd64, 无 arch 参数(gpu 的 $1 是版本, 用脚本默认)
 #
 #  ★ 架构/发行版「声明一次」(学 kk): 在 env.yaml 写 offline_arch / offline_distros,
@@ -14,7 +15,7 @@
 #    优先级(高覆低): 环境变量 ARCH=/DISTRO=  >  env.yaml(offline_arch/offline_distros)  >  all。
 #
 #  用法(层名走位置参; 架构/发行版优先读 env.yaml, 环境变量可临时覆盖):
-#    bash scripts/prefetch-all.sh                       # 默认全量: k8s docker harbor gpu packages
+#    bash scripts/prefetch-all.sh                       # 默认全量: k8s docker harbor gpu packages ansible
 #    bash scripts/prefetch-all.sh k8s docker            # 只跑指定层(如仅镜像/二进制)
 #    ARCH=amd64 bash scripts/prefetch-all.sh            # 临时只下单架构(压过 env.yaml)
 #    DISTRO=ubuntu bash scripts/prefetch-all.sh packages        # 临时 packages 只下 ubuntu
@@ -24,7 +25,7 @@
 #
 #  ★ 下载失败不再静默: 某发行版/架构下崩 → 末尾红字汇总 + 非零退出(不会「直接下一步了」)。
 #
-#  可选层: k8s docker harbor gpu packages   (与 download-<层>-offline.sh 对应)
+#  可选层: k8s docker harbor gpu packages ansible   (与 download-<层>-offline.sh 对应)
 # =============================================================================
 set -e
 # 本脚本在 scripts/ 顶层, 下载分层脚本在 scripts/offline/ —— cd 进去后
@@ -35,7 +36,7 @@ cd "$(dirname "$0")/offline"
 _ARCH_OV="${ARCH:-}"
 _DISTRO_OV="${DISTRO:-}"
 
-LAYERS="${*:-k8s docker harbor gpu packages}"   # 不带参数 = 全 5 层全量; 只想跑部分就显式列层
+LAYERS="${*:-k8s docker harbor gpu packages ansible}"   # 不带参数 = 全量; 只想跑部分就显式列层
 
 say(){ echo -e "\033[0;32m[prefetch] $*\033[0m"; }
 
@@ -46,6 +47,7 @@ run_layer(){
   case "$L" in
     k8s|docker) bash "$s" "$ARCH" ;;
     packages)   bash "$s" $DISTRO ;;         # 有意分词: DISTRO 可为多发行版列表(如 "ubuntu kylin")
+    ansible)    for d in $DISTRO; do bash "$s" "$d" "$ARCH"; done ;;  # ansible 脚本收单发行版, 逐个调用; 传架构
     harbor|gpu) bash "$s" ;;              # 仅 amd64; gpu 的 $1 是版本, 走脚本默认
     *)          bash "$s" ;;
   esac
@@ -80,6 +82,7 @@ for L in $LAYERS; do run_layer "$L"; done
 
 ART="$REPO/offline/artifacts"
 say "全部下载完成, 物料在 $ART"
+case " $LAYERS " in *" ansible "*) say "离线 ansible 安装包在 $REPO/offline/ansible-pkg-install/(控制机本地装)";; esac
 if [ -n "$PREFETCH_DEST" ]; then
   command -v rsync >/dev/null 2>&1 || { echo "✗ 缺 rsync, 无法自动回传; 请手动拷 $ART 回控制机"; exit 1; }
   say "rsync 回控制机: $PREFETCH_DEST"
