@@ -7,7 +7,9 @@
 # 用法:
 #   ansible-playbook add-control-key.yaml                          # 控制机 -> 全 cluster
 #   ansible-playbook add-control-key.yaml -e source_node=gpu-001   # gpu-001 -> 全 cluster(含自己, MPI 用)
-#   目标可再缩:  -l gpu-002,gpu-003   或   -e target_hosts=gpu
+#   目标可再缩(推荐 target_hosts, 别用 -l):  -e target_hosts=gpu
+#     ⚠ -l 会连带过滤掉第一个 play 的 localhost 源, 导致公钥读不到(报 _source_pubkey 未定义);
+#       非用 -l 不可时须带上 localhost:  -l gpu-002,gpu-003,localhost
 #   默认源公钥路径可覆盖: -e control_pubkey_file=/root/.ssh/id_rsa.pub
 # 前提: 首次目标节点还没免密时带 -k 输密码; 默认源需控制机已有 id_rsa.pub(指定源节点会自动生成)。
 # 注: 指定 source_node 时, 会在源节点 ~/.ssh/config 追加 StrictHostKeyChecking no(blockinfile
@@ -41,16 +43,31 @@
               StrictHostKeyChecking no
       when: source_node is defined
 
-    - name: (默认源=控制机时)校验公钥文件存在
+    - name: (默认源=控制机时)检查公钥是否存在
       stat:
         path: "{{ control_pubkey_file }}"
       register: _ctrl_pub
       when: source_node is not defined
 
-    - name: 控制机公钥不存在则报错
+    - name: (默认源=控制机时)公钥缺失且用默认路径 → 自动生成控制机 root 密钥对
+      command: ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N ""
+      args:
+        creates: /root/.ssh/id_rsa
+      when:
+        - source_node is not defined
+        - not _ctrl_pub.stat.exists
+        - control_pubkey_file == '/root/.ssh/id_rsa.pub'
+
+    - name: (默认源=控制机时)重新确认公钥存在
+      stat:
+        path: "{{ control_pubkey_file }}"
+      register: _ctrl_pub
+      when: source_node is not defined
+
+    - name: 控制机公钥仍不存在则报错(多为 -e control_pubkey_file 指了不存在的自定义路径)
       assert:
         that: _ctrl_pub.stat.exists
-        fail_msg: "控制机 {{ control_pubkey_file }} 不存在; 先 ssh-keygen 生成, 或 -e control_pubkey_file= 指定正确路径"
+        fail_msg: "控制机 {{ control_pubkey_file }} 不存在且非默认路径(无法自动生成); 先 ssh-keygen 生成, 或 -e control_pubkey_file= 指定正确路径"
       when: source_node is not defined
 
     - name: 读取源公钥
