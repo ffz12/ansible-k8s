@@ -62,6 +62,9 @@ download_by_arch() {
         sh -c "
             set -e
             yum install --downloadonly --downloaddir=/tmp/download $OFFLINE_PKGS -y
+            # 兜底: dnf 的 --downloadonly 有时把包留在 cache(日志 'saved in cache')而非 downloaddir,
+            #        导致挂载出来的 /tmp/download 为空。这里把 cache 里的 rpm 一并捞出, dnf 放哪都收全。
+            find /var/cache /var/lib/dnf -name '*.rpm' -exec cp -n {} /tmp/download/ \; 2>/dev/null || true
             cd /tmp/download
             # 生成 repodata 离线索引(供 init 作本地 yum 源 + 显式列表安装; 拿不到 createrepo 就跳过, init 回退 localinstall)
             if yum install -y createrepo_c >/dev/null 2>&1 || yum install -y createrepo >/dev/null 2>&1; then
