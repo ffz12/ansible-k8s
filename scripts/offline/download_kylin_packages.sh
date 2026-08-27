@@ -61,19 +61,24 @@ download_by_arch() {
         "$img" \
         sh -c "
             set -e
-            yum install --downloadonly --downloaddir=/tmp/download $OFFLINE_PKGS -y
-            # 兜底: dnf 的 --downloadonly 有时把包留在 cache(日志 'saved in cache')而非 downloaddir,
-            #        导致挂载出来的 /tmp/download 为空。全盘把 cache 里的 rpm 捞到 downloaddir(排除自身),
-            #        dnf 缓存放哪都收全。放在 createrepo 安装之前, 避免把 createrepo 自身包也捞进去。
-            echo ' -> 从 cache 归集已下载的 rpm 到 downloaddir...'
+            # ⚠ 工具必须在【下包之前】装好 —— dnf 提示 'saved in cache until the next successful
+            #   transaction': --downloadonly 下的包(含 --downloaddir 里的)会被【下一次成功的
+            #   transaction】清空。先下包再装 createrepo, 正好把刚下的 235 个 rpm 全清掉, 只剩 repodata。
+            dnf install -y dnf-plugins-core createrepo_c >/dev/null 2>&1 || yum install -y yum-utils createrepo >/dev/null 2>&1 || true
+
+            echo ' -> 下载包及全部依赖(含已装依赖)...'
+            # 首选 dnf download --resolve --alldeps(不产生 transaction, 不会被清; 与 openEuler 脚本一致);
+            # 老环境无该插件时回退 --downloadonly(此时工具已装完, 后续无 transaction 可清它)
+            dnf download --resolve --alldeps --destdir /tmp/download $OFFLINE_PKGS 2>/dev/null \
+                || yum install --downloadonly --downloaddir=/tmp/download $OFFLINE_PKGS -y
+
+            # 兜底: 万一 dnf 把包留在 cache 而非 destdir, 全盘捞回 downloaddir(排除自身)
             find / -name '*.rpm' ! -path '/tmp/download/*' -exec cp -n {} /tmp/download/ \; 2>/dev/null || true
+
             cd /tmp/download
-            # 生成 repodata 离线索引(供 init 作本地 yum 源 + 显式列表安装; 拿不到 createrepo 就跳过, init 回退 localinstall)
-            if yum install -y createrepo_c >/dev/null 2>&1 || yum install -y createrepo >/dev/null 2>&1; then
-                createrepo_c . >/dev/null 2>&1 || createrepo . >/dev/null 2>&1 || echo ' ⚠️  createrepo 执行失败, tar 无 repodata(init 会回退 localinstall)'
-            else
-                echo ' ⚠️  容器内装不到 createrepo, tar 无 repodata(init 会回退 localinstall)'
-            fi
+            # 生成 repodata 离线索引(纯本地命令, 不产生 dnf transaction, 不会再清包)
+            echo ' -> 生成 repodata 离线索引...'
+            createrepo_c . >/dev/null 2>&1 || createrepo . >/dev/null 2>&1 || echo ' ⚠️  createrepo 不可用, tar 无 repodata(init 会回退 localinstall)'
         "
 
     local rc=$?
