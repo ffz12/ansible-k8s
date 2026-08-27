@@ -66,6 +66,13 @@
         mode: '0644'
       when: euler_repodata.stat.exists
 
+    - name: 清 yum/dnf 元数据缓存(离线包内容变了但 repodata 缓存没过期 -> 误报 No match)
+      # 换了新 tar / 重跑时, dnf 仍按上次的 "metadata expiration check" 用旧索引, 明明有包却 "Unable to find a match"。
+      shell: yum clean all --disablerepo="*" --enablerepo="local-offline" || yum clean all
+      args:
+        executable: /bin/bash
+      when: euler_repodata.stat.exists
+
     - name: 从本地源安装基础软件包(显式列表, 不含 haproxy/keepalived)
       shell: yum install -y --disablerepo="*" --enablerepo="local-offline" {{ euler_offline_pkgs | join(' ') }}
       when: euler_repodata.stat.exists
