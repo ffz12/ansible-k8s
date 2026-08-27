@@ -38,11 +38,15 @@ _use_root: >-
      or (connect_as == 'auto' and _root_login_ok == 'yes') }}
 
 # —— 推导出的连接参数 ——
-# 回退到「普通用户+sudo」但 bootstrap_user 没填时, mandatory 给出清晰指引(而非「变量未定义」天书)。
+# 回退到「普通用户+sudo」但 bootstrap_user 没填时, mandatory 让它明确报错(而非默默用错身份)。
+# ⚠ 不给 mandatory 传自定义消息 —— 老版本 Ansible(<2.8)的 mandatory 只收 1 个参数,
+#    传消息会报 "mandatory() takes 1 positional argument but 2 were given"(与本机现象一致)。
+#    缺 bootstrap_user 时的指引: 在 env.yaml 填 bootstrap_user(及 bootstrap_ssh_pass /
+#    bootstrap_become_pass), 或用 -e connect_as=root 强制 root 免密直连。
 # ternary 只求值命中的那支: root 直连时不会触发 mandatory。
 ansible_user: >-
   {{ 'root' if (_use_root | bool)
-     else (bootstrap_user | mandatory('connect_as 回退到[普通用户+sudo], 但 bootstrap_user 未定义; 请在 inventory/group_vars/all/env.yaml 取消注释并填 bootstrap_user (及 bootstrap_ssh_pass / bootstrap_become_pass), 或用 -e connect_as=root 强制 root 免密直连')) }}
+     else (bootstrap_user | mandatory) }}
 ansible_become: "{{ not (_use_root | bool) }}"
 ansible_become_method: sudo
 # 密码仅在有 bootstrap_* 时才带(root 全程免密→omit→纯密钥); root 分支即便带上, ssh 也先走密钥
