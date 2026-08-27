@@ -11,6 +11,8 @@ KYLIN_IMAGE="hxsoong/kylin:v10-sp3"
 ARCH="${ARCH:-all}"
 # 可选: 容器解析发行版官方源抖动时(如麒麟 update.cs2c.com.cn)指定 DNS, 不设则与现状完全一致
 DOCKER_DNS="${DOCKER_DNS:-}"
+# 体积兜底: 基础依赖 tar 正常几十~上百 MB, 小于此值(默认 1MB)判打包异常; 特殊场景可 MIN_TAR_BYTES= 调
+MIN_TAR_BYTES="${MIN_TAR_BYTES:-1048576}"
 
 # 最终存放 TAR 包的根目录 (对齐你的现状)
 BASE_DIR="$(cd "$(dirname "$0")/../../offline" && pwd)/artifacts/ios-offline"
@@ -88,8 +90,15 @@ download_by_arch() {
         echo " ❌ [ 失败 ] 打包后 rpm 数不符(源 $rpm_cnt / tar $in_tar); 保留 $tmp_save_dir 供排查。"
         rm -f "$BASE_DIR/$tar_name"; RC=1; return
     fi
+    # 体积兜底: 数量对得上但 tar 异常小(损坏/内容不全)也判失败
+    local tar_bytes
+    tar_bytes=$(stat -c%s "$BASE_DIR/$tar_name" 2>/dev/null || echo 0)
+    if [ "$tar_bytes" -lt "$MIN_TAR_BYTES" ]; then
+        echo " ❌ [ 失败 ] tar 体积异常偏小(${tar_bytes}B < ${MIN_TAR_BYTES}B), 疑似打包不全; 保留 $tmp_save_dir 供排查。"
+        rm -f "$BASE_DIR/$tar_name"; RC=1; return
+    fi
     rm -rf "$tmp_save_dir"
-    echo " 🌟 [ 成功 ] 麒麟离线 Tar 包已生成($in_tar 个 rpm): $BASE_DIR/$tar_name"
+    echo " 🌟 [ 成功 ] 麒麟离线 Tar 包已生成($in_tar 个 rpm, $((tar_bytes/1024/1024))MB): $BASE_DIR/$tar_name"
 }
 
 # 执行下载(按 ARCH 过滤: 声明单架构就只下那个)
