@@ -74,17 +74,26 @@ download_ubuntu_pkg() {
             apt-ftparchive packages . > Packages
         "
 
-    if [ $? -eq 0 ] && [ -f "$tmp_save_dir/Packages" ]; then
-        echo " -> 容器内下载完成，开始在宿主机打包..."
-        cd "$tmp_save_dir"
-        tar -czf "$BASE_OUT_DIR/$tar_name" ./*
-        cd - > /dev/null
-        rm -rf "$tmp_save_dir"
-        echo " 🌟 [ 成功 ] 离线 Tar 包已生成: $BASE_OUT_DIR/$tar_name"
-    else
-        echo " ❌ [ 失败 ] Ubuntu $ubuntu_version 下载失败。"
-        rm -rf "$tmp_save_dir"; RC=1
+    local rc=$?
+    # 容器退出码 + 索引存在 + 实际下到的 deb 数, 都过才算成功(防「下 0 个包却打印成功」的静默空包)
+    local deb_cnt
+    deb_cnt=$(ls -1 "$tmp_save_dir"/*.deb 2>/dev/null | wc -l)
+    if [ "$rc" -ne 0 ] || [ ! -f "$tmp_save_dir/Packages" ] || [ "$deb_cnt" -eq 0 ]; then
+        echo " ❌ [ 失败 ] Ubuntu $ubuntu_version 下载异常(退出码=$rc, 下到 deb=$deb_cnt); 保留 $tmp_save_dir 供排查。"
+        RC=1; return
     fi
+
+    echo " -> 容器内下载完成($deb_cnt 个 deb)，开始在宿主机打包..."
+    # 用 -C 进目录打包, 比 cd + ./* 稳(避免 glob/cwd 出错只打进索引)
+    tar -C "$tmp_save_dir" -czf "$BASE_OUT_DIR/$tar_name" .
+    local in_tar
+    in_tar=$(tar tzf "$BASE_OUT_DIR/$tar_name" 2>/dev/null | grep -c '\.deb$')
+    if [ "$in_tar" -ne "$deb_cnt" ]; then
+        echo " ❌ [ 失败 ] 打包后 deb 数不符(源 $deb_cnt / tar $in_tar); 保留 $tmp_save_dir 供排查。"
+        rm -f "$BASE_OUT_DIR/$tar_name"; RC=1; return
+    fi
+    rm -rf "$tmp_save_dir"
+    echo " 🌟 [ 成功 ] 离线 Tar 包已生成($in_tar 个 deb): $BASE_OUT_DIR/$tar_name"
 }
 
 # 执行矩阵下载(按 ARCH 过滤: 声明单架构就只下那个)

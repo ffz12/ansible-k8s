@@ -75,18 +75,26 @@ download_euler_pkg() {
             (createrepo_c . || createrepo .) >/dev/null 2>&1 || true
         "
 
-    # 成功判据: 目录里有 rpm
-    if [ $? -eq 0 ] && ls "$tmp_save_dir"/*.rpm >/dev/null 2>&1; then
-        echo " -> 容器内下载完成($(ls -1 "$tmp_save_dir"/*.rpm | wc -l) 个 rpm),开始在宿主机打包..."
-        cd "$tmp_save_dir"
-        tar -czf "$BASE_OUT_DIR/$tar_name" ./*
-        cd - > /dev/null
-        rm -rf "$tmp_save_dir"
-        echo " 🌟 [ 成功 ] 离线 Tar 包已生成: $BASE_OUT_DIR/$tar_name"
-    else
-        echo " ❌ [ 失败 ] openEuler $arch 下载失败,请检查镜像 tag / 包名 / errors.txt。"
-        rm -rf "$tmp_save_dir"; RC=1
+    local rc=$?
+    # 容器退出码 + 实际下到的 rpm 数, 都过才算成功(防「下 0 个包却打印成功」的静默空包)
+    local rpm_cnt
+    rpm_cnt=$(ls -1 "$tmp_save_dir"/*.rpm 2>/dev/null | wc -l)
+    if [ "$rc" -ne 0 ] || [ "$rpm_cnt" -eq 0 ]; then
+        echo " ❌ [ 失败 ] openEuler $arch 下载异常(退出码=$rc, 下到 rpm=$rpm_cnt),请检查镜像 tag / 包名 / errors.txt; 保留 $tmp_save_dir 供排查。"
+        RC=1; return
     fi
+
+    echo " -> 容器内下载完成($rpm_cnt 个 rpm),开始在宿主机打包..."
+    # 用 -C 进目录打包(含 rpm + repodata), 比 cd + ./* 稳(避免 glob/cwd 出错只打进 repodata)
+    tar -C "$tmp_save_dir" -czf "$BASE_OUT_DIR/$tar_name" .
+    local in_tar
+    in_tar=$(tar tzf "$BASE_OUT_DIR/$tar_name" 2>/dev/null | grep -c '\.rpm$')
+    if [ "$in_tar" -ne "$rpm_cnt" ]; then
+        echo " ❌ [ 失败 ] 打包后 rpm 数不符(源 $rpm_cnt / tar $in_tar); 保留 $tmp_save_dir 供排查。"
+        rm -f "$BASE_OUT_DIR/$tar_name"; RC=1; return
+    fi
+    rm -rf "$tmp_save_dir"
+    echo " 🌟 [ 成功 ] 离线 Tar 包已生成($in_tar 个 rpm): $BASE_OUT_DIR/$tar_name"
 }
 
 # 执行矩阵下载(按 ARCH 过滤: 声明单架构就只下那个)

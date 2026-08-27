@@ -69,17 +69,27 @@ download_by_arch() {
             fi
         "
 
-    if [ $? -eq 0 ]; then
-        echo " -> 容器内下载完成，开始在宿主机打包..."
-        cd "$tmp_save_dir"
-        tar -czf "$BASE_DIR/$tar_name" ./*
-        cd - > /dev/null
-        rm -rf "$tmp_save_dir"
-        echo " 🌟 [ 成功 ] 麒麟离线 Tar 包已生成: $BASE_DIR/$tar_name"
-    else
-        echo " ❌ [ 失败 ] $tag_name 架构下载失败。"
-        rm -rf "$tmp_save_dir"; RC=1
+    local rc=$?
+    # 容器退出码 + 实际下到的 rpm 数, 两者都过才算成功(防「下 0 个包却打印成功」的静默空包)
+    local rpm_cnt
+    rpm_cnt=$(ls -1 "$tmp_save_dir"/*.rpm 2>/dev/null | wc -l)
+    if [ "$rc" -ne 0 ] || [ "$rpm_cnt" -eq 0 ]; then
+        echo " ❌ [ 失败 ] $tag_name 架构下载异常(容器退出码=$rc, 下到 rpm=$rpm_cnt); 保留 $tmp_save_dir 供排查。"
+        RC=1; return
     fi
+
+    echo " -> 容器内下载完成($rpm_cnt 个 rpm)，开始在宿主机打包..."
+    # 用 -C 进目录打包(含 rpm + repodata), 比 cd + ./* 稳(避免 glob/cwd 出错只打进 repodata)
+    tar -C "$tmp_save_dir" -czf "$BASE_DIR/$tar_name" .
+    # 打包后回读校验: tar 里 rpm 数须与源一致, 否则判失败并保留 tmp
+    local in_tar
+    in_tar=$(tar tzf "$BASE_DIR/$tar_name" 2>/dev/null | grep -c '\.rpm$')
+    if [ "$in_tar" -ne "$rpm_cnt" ]; then
+        echo " ❌ [ 失败 ] 打包后 rpm 数不符(源 $rpm_cnt / tar $in_tar); 保留 $tmp_save_dir 供排查。"
+        rm -f "$BASE_DIR/$tar_name"; RC=1; return
+    fi
+    rm -rf "$tmp_save_dir"
+    echo " 🌟 [ 成功 ] 麒麟离线 Tar 包已生成($in_tar 个 rpm): $BASE_DIR/$tar_name"
 }
 
 # 执行下载(按 ARCH 过滤: 声明单架构就只下那个)
