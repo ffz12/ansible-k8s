@@ -102,7 +102,7 @@ offline_arch: all              # amd64 | arm64 | all —— 下载哪些架构(�
 offline_distros: all           # all 或列表 [ubuntu, kylin, openeuler] —— packages(系统依赖包)层下哪些发行版
 harbor_dns: "{{ harbor_instances[0].dns }}"
 harbor_ip: "{{ harbor_instances[0].ip }}"
-registry: "{{ harbor_dns }}/{{ harbor_project | default('unisound') }}"   # 自建 harbor 前缀(项目名在 env.yaml)
+registry: "{{ harbor_dns }}/{{ harbor_project | default('kubernetes') }}"   # 自建 harbor 前缀(项目名可在 env.yaml 覆盖, 默认 kubernetes)
 
 # ================= k8s 版本配套(A 组自动派生) =================
 k8s_minor: "{{ k8s_version.split('.')[0] ~ '.' ~ k8s_version.split('.')[1] }}"
