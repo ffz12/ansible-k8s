@@ -114,6 +114,8 @@
       - ipset
       - ebtables
       - "nfs*"
+      - rsync          # kube-add-master 的证书分发用 synchronize(底层 rsync), 缺了加 master 会失败
+      - vim
   when: is_offline | bool
 
 - name: 【在线模式】银河麒麟联网批量安装必要基础软件包

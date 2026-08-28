@@ -5,7 +5,7 @@
 #     不会重复(公共依赖去重),LB 包与基础包合成一个 tar; init 只装显式列表(debian_offline_pkgs),
 #     不含 haproxy/keepalived, 故非 LB 节点只存不装; haproxy-ha 在 LB 节点从同一本地源按名安装。
 #     改这里的包名需同步 playbook/roles/init/tasks/debian.yaml 的 debian_offline_pkgs(不含 LB 那两个)。
-OFFLINE_PKGS="socat ebtables ipset iotop sysstat ipvsadm conntrack net-tools nfs-common nfs-kernel-server libseccomp2 netcat-openbsd ca-certificates bash-completion apt-transport-https software-properties-common gcc make bzip2 unzip freeipa-client chrony haproxy keepalived"
+OFFLINE_PKGS="socat ebtables ipset iotop sysstat ipvsadm conntrack net-tools nfs-common nfs-kernel-server libseccomp2 netcat-openbsd ca-certificates bash-completion apt-transport-https software-properties-common gcc make bzip2 unzip freeipa-client chrony rsync vim haproxy keepalived"
 
 # 架构过滤(prefetch 按 env.yaml 的 offline_arch export ARCH; 直接跑不设=all=双架构, 与旧行为一致)
 ARCH="${ARCH:-all}"

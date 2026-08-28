@@ -291,6 +291,8 @@
       - bzip2
       - unzip
       - chrony
+      - rsync          # kube-add-master 的证书分发用 synchronize(底层 rsync), 缺了加 master 会失败
+      - vim
       - libssl3
       - zlib1g
       - "{{ 'libpcre2-8-0' if ansible_distribution_version.split('.')[0] | int >= 24 else 'libpcre3' }}"
@@ -309,6 +311,8 @@
       - bzip2
       - unzip
       - chrony
+      - rsync          # kube-add-master 的证书分发用 synchronize(底层 rsync), 缺了加 master 会失败
+      - vim
       - libssl3
       - zlib1g
       - "{{ 'libpcre2-8-0' if ansible_distribution_version.split('.')[0] | int >= 24 else 'libpcre3' }}"
