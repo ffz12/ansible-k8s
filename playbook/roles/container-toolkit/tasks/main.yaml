@@ -7,20 +7,20 @@
   register: nvidia_installed
   ignore_errors: true
   changed_when: false
-  when: accelerator_type == 'nvidia'
+  when: accelerator_type | default('none') == 'nvidia'
 
 - name: 检查 DCU 环境是否已安装
   shell: "rpm -q dcu-container-toolkit || dpkg -l dcu-container-toolkit"
   register: dcu_installed
   ignore_errors: true
   changed_when: false
-  when: accelerator_type == 'dcu'
+  when: accelerator_type | default('none') == 'dcu'
 
 - name: 检查华为昇腾 NPU 运行时是否已安装
   stat:
     path: /usr/local/Ascend/Ascend-Docker-Runtime/ascend-docker-runtime
   register: npu_installed
-  when: accelerator_type == 'npu'
+  when: accelerator_type | default('none') == 'npu'
 
 # ==========================================
 # 2. NVIDIA GPU 离线安装
@@ -38,7 +38,7 @@
         state: present
         disable_gpg_check: yes
   when: 
-    - accelerator_type == 'nvidia'
+    - accelerator_type | default('none') == 'nvidia'
     - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server']
     - nvidia_installed.rc != 0
 
@@ -51,7 +51,7 @@
     - name: Dpkg 安装 NVIDIA 组件
       shell: "dpkg -i /tmp/nvidia-gpu-deb/*.deb || apt-get --fix-broken install -y"
   when: 
-    - accelerator_type == 'nvidia'
+    - accelerator_type | default('none') == 'nvidia'
     - ansible_distribution in ['Debian', 'Ubuntu']
     - nvidia_installed.rc != 0
 
@@ -72,7 +72,7 @@
         state: present
         disable_gpg_check: yes
   when: 
-    - accelerator_type == 'dcu'
+    - accelerator_type | default('none') == 'dcu'
     - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server']
     - dcu_installed.rc != 0
 
@@ -85,7 +85,7 @@
     - name: Dpkg 安装 DCU 组件
       shell: "dpkg -i /opt/dcu-deb/*.deb || apt-get --fix-broken install -y"
   when: 
-    - accelerator_type == 'dcu'
+    - accelerator_type | default('none') == 'dcu'
     - ansible_distribution in ['Debian', 'Ubuntu']
     - dcu_installed.rc != 0
 
@@ -94,7 +94,7 @@
 # ==========================================
 - name: 📦 安装华为昇腾 NPU 运行时
   when:
-    - accelerator_type == 'npu'     # 修复: 原为 'ascend',与上面检查任务(== 'npu')不一致,会导致永不安装或 npu_installed.stat 未定义而报错
+    - accelerator_type | default('none') == 'npu'     # 修复: 原为 'ascend',与上面检查任务(== 'npu')不一致,会导致永不安装或 npu_installed.stat 未定义而报错
     - not npu_installed.stat.exists     # 📌 只有上面 stat 找不到文件（exists 为 false）时，才会走进这个安装块
   block:
     - name: 🌐 识别当前节点系统架构并设置包名
