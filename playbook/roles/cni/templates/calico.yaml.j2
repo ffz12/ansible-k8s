@@ -4584,6 +4584,23 @@ rules:
       - hostendpoints
       - blockaffinities
       - caliconodestatuses
+      # calico 3.28+ 新增: 分层策略(tiers)与 staged 策略。缺这些权限时 felix 会反复报
+      #   "cannot list resource ... is forbidden" -> CalculationGraph 同步不完 ->
+      #   readiness 503 "felix is not ready"(BGP 已建也没用)。
+      - tiers
+      - stagednetworkpolicies
+      - stagedglobalnetworkpolicies
+      - stagedkubernetesnetworkpolicies
+    verbs:
+      - get
+      - list
+      - watch
+  # 上游 AdminNetworkPolicy API(policy.networking.k8s.io), calico 3.28+ 会 watch。
+  # 与上面同理: 无权限则 felix 一直非就绪。集群未装这些 CRD 也无妨 —— 有权限即可, 列空不报错。
+  - apiGroups: ["policy.networking.k8s.io"]
+    resources:
+      - adminnetworkpolicies
+      - baselineadminnetworkpolicies
     verbs:
       - get
       - list
