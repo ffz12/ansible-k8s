@@ -114,6 +114,35 @@
     group: haproxy
   #notify: restart haproxy
 
+# haproxy.cfg 里 stats socket 在 /run/haproxy/admin.sock; /run 是 tmpfs, 重启即空。
+# 该目录不存在时 haproxy 直接退出: [ALERT] Starting frontend GLOBAL: cannot bind UNIX socket
+# (麒麟等发行版的 rpm 未随包带 tmpfiles 配置)。写 tmpfiles.d 保证每次开机自动重建。
+- name: 确保 /run/haproxy 运行目录存在(tmpfiles.d, 重启后自动重建)
+  copy:
+    dest: /etc/tmpfiles.d/haproxy.conf
+    content: |
+      d /run/haproxy 0755 haproxy haproxy -
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: 本次立即创建 /run/haproxy(不等下次开机)
+  file:
+    path: /run/haproxy
+    state: directory
+    owner: haproxy
+    group: haproxy
+    mode: '0755'
+
+# chroot 目录缺失同样会让 haproxy 起不来(一般随 rpm 建好, 这里兜底保证幂等)
+- name: 确保 chroot 目录 /var/lib/haproxy 存在
+  file:
+    path: /var/lib/haproxy
+    state: directory
+    owner: haproxy
+    group: haproxy
+    mode: '0755'
+
 - name: daemon-reload
   systemd:
     daemon_reload: yes
