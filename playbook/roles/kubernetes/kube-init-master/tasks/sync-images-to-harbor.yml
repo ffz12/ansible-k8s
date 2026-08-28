@@ -61,7 +61,7 @@
     status_code: [201, 409]  # 201=创建成功, 409=已存在
   loop:
     - library
-    - unisound
+    - "{{ harbor_project | default('kubernetes') }}"
   run_once: true
   when: "'aliyuncs.com' not in harbor_dns"
 
