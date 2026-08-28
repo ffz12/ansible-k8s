@@ -32,11 +32,50 @@
     - not etcd_installed.stat.exists
     - _real_arch.stdout not in ["x86_64", "aarch64", "arm64"]
 
+# 离线: 版本以【实际下到的物料】为准, 不依赖手写表。
+# 下载脚本用 `kubeadm config images list` 校准 etcd 版本(k8s 1.34.3 -> 3.6.5), 按 v<版本>/ 建目录;
+# 手维护 k8s_compat 表迟早与 kubeadm 实际给的值不一致(如表里 3.6.4 而实际下的是 3.6.5),
+# 故这里直接扫 offline/artifacts/etcd/ 取实际存在的版本, 一处都不用手写。
+- name: (离线)发现实际下载到的 etcd 版本目录
+  find:
+    paths: "{{ playbook_dir }}/../offline/artifacts/etcd"
+    patterns: "v*"
+    file_type: directory
+  delegate_to: localhost
+  become: no
+  register: _etcd_dirs
+  when:
+    - not etcd_installed.stat.exists
+    - is_offline | default(false) | bool
+
+- name: (离线)按物料目录确定 etcd 版本(多个版本取最新; 与 env.yaml 手写值解耦)
+  set_fact:
+    etcd_version: "{{ (_etcd_dirs.files | map(attribute='path') | map('basename') | map('regex_replace', '^v', '') | list | sort(reverse=true))[0] }}"
+  when:
+    - not etcd_installed.stat.exists
+    - is_offline | default(false) | bool
+    - _etcd_dirs.files | default([]) | length > 0
+
+- name: (离线)物料目录为空则明确报错(而非拼出一个不存在的路径)
+  fail:
+    msg: >-
+      offline/artifacts/etcd/ 下没有任何 v* 版本目录 —— 离线物料未下载。
+      请先在有网机器上跑: bash scripts/offline/download-k8s-offline.sh
+  when:
+    - not etcd_installed.stat.exists
+    - is_offline | default(false) | bool
+    - _etcd_dirs.files | default([]) | length == 0
+
 - name: Set etcd source and file paths
   set_fact:
     etcd_tar: "etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz"
     etcd_dir: "etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}"
     etcd_src_path: "{{ playbook_dir }}/../offline/artifacts/etcd/v{{ etcd_version }}/{{ etcd_arch }}/etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz"
+  when: not etcd_installed.stat.exists
+
+- name: 显示本次使用的 etcd 版本(离线=物料实际版本, 在线=k8s_compat 派生值)
+  debug:
+    msg: "etcd {{ etcd_version }} ({{ '离线物料' if (is_offline | default(false) | bool) else '在线下载' }}, arch={{ etcd_arch }})"
   when: not etcd_installed.stat.exists
 
 - name: Deploy etcd binaries

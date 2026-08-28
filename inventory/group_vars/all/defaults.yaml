@@ -111,16 +111,17 @@ k8s_minor: "{{ k8s_version.split('.')[0] ~ '.' ~ k8s_version.split('.')[1] }}"
 # 仅用于 containerd sandbox 的 pause(k8s 装之前就要用)+ 离线兜底。只列在用版本,新版本自动查,pause 变号再加行。
 k8s_compat:
   "1.28": { coredns: "1.10.1", pause: "3.9",    crictl: "1.28.0", etcd: "3.5.12" }
-  "1.34": { coredns: "1.12.1", pause: "3.10.1", crictl: "1.34.0", etcd: "3.6.4"  }
-  "1.36": { coredns: "1.14.2", pause: "3.10.2", crictl: "1.36.0", etcd: "3.6.4"  }
+  "1.34": { coredns: "1.12.1", pause: "3.10.1", crictl: "1.34.0", etcd: "3.6.5"  }
+  "1.36": { coredns: "1.14.2", pause: "3.10.2", crictl: "1.36.0", etcd: "3.6.5"  }
 coredns_version:     "{{ (k8s_compat[k8s_minor] | default({})).coredns | default('1.12.1') }}"
 pause_image_version: "{{ (k8s_compat[k8s_minor] | default({})).pause   | default('3.10.1') }}"
 crictl_version:      "{{ (k8s_compat[k8s_minor] | default({})).crictl  | default(k8s_version) }}"
-# etcd 与 k8s 版本配套(kubeadm config images list 给的就是这个值, 剥掉 -N 构建后缀)。
-# ⚠ 下载脚本 download-k8s-offline.sh 会用 kubeadm 校准 ETCD 并按 v$ETCD 建目录, 部署侧路径
-#   用的是本变量 —— 两边必须一致, 否则下载落 v3.6.4/ 而部署找 v3.6.8/ 报「Could not find」。
-#   故此处按 k8s 版本自动派生, 不再在 env.yaml 手写 etcd_version(手写会与 kubeadm 校准结果打架)。
-etcd_version:        "{{ (k8s_compat[k8s_minor] | default({})).etcd    | default('3.6.4') }}"
+# etcd 跟随 k8s 版本, 不在 env.yaml 手写。三处取值口径:
+#   下载端: download-k8s-offline.sh 跑 `kubeadm config images list` 校准(权威值), 按 v<版本>/ 建目录;
+#   离线部署: roles/etcd/etcd-install 直接扫 offline/artifacts/etcd/ 用实际下到的版本(不看本表);
+#   在线部署: 用下面这个派生值兜底。
+# ⚠ 本表是兜底, 会随 k8s 补丁版飘(如 1.34.3 实际是 3.6.5 而非 3.6.4) —— 以 kubeadm/物料为准。
+etcd_version:        "{{ (k8s_compat[k8s_minor] | default({})).etcd    | default('3.6.5') }}"
 
 # ===== 在线下载源 / 镜像源(默认值; 可在 env.yaml 覆盖) =====
 # 说明: 这些是【在线模式】拉镜像/下二进制的源。默认值放这里, 保证即便 env.yaml
