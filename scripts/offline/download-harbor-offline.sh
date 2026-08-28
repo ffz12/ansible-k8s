@@ -82,6 +82,39 @@ else
   done
 fi
 
+# ========== 3. harbor 安装程序目录(prepare / install.sh / common.sh / compose 模板) ==========
+# ⚠ 镜像只是「运行时」, 装 harbor 还需官方安装包里的脚本目录 —— x86.yaml 的「拷贝文件」那步
+#   copy src=.../harbor/x86/harbor 取的就是它。缺了它 install.sh 会报
+#   "./install.sh: line 67: ./prepare: No such file or directory" (rc=127)。
+# 取 harbor-offline-installer(含全部脚本), 解出 harbor/ 目录; 里面自带的镜像 tar 不需要
+# (镜像已由上面 skopeo 单独拉好), 解完删掉省空间。
+if [ -x "$D/harbor/install.sh" ] && [ -x "$D/harbor/prepare" ]; then
+  say "跳过(已存在) harbor 安装程序目录"
+else
+  installer="harbor-offline-installer-v$HARBOR.tgz"
+  url="$DAO/github.com/goharbor/harbor/releases/download/v$HARBOR/$installer"
+  for i in 1 2 3 4 5; do
+    say "curl $url"
+    if curl -fSL --retry 3 -o "$D/$installer" "$url"; then
+      say "解出 harbor/ 安装程序目录"
+      rm -rf "$D/harbor"
+      tar xzf "$D/$installer" -C "$D"
+      # 安装包自带的镜像 tar 很大且已单独拉过, 删掉
+      rm -f "$D/harbor"/*.tar.gz "$D/harbor"/*.tar
+      rm -f "$D/$installer"
+      break
+    fi
+    echo "  下载失败, 第 $i 次重试..."; rm -f "$D/$installer"; sleep 5
+    [ "$i" = 5 ] && { echo "  ✗ harbor 安装程序多次失败"; exit 1; }
+  done
+fi
+
+# 校验: 角色依赖的关键文件必须在, 否则现在就报错(而不是部署到节点上才 rc=127)
+for f in harbor/install.sh harbor/prepare harbor/common.sh; do
+  [ -e "$D/$f" ] || { echo "✗ 缺 $D/$f —— harbor 安装程序目录不完整, 部署会失败"; exit 1; }
+done
+say "harbor 安装程序目录校验通过(install.sh / prepare / common.sh 均在)"
+
 echo -e "\n=========================================================="
 echo " Harbor(amd64)离线物料下载完成! 物料在 $D"
 ls -1 "$D"
