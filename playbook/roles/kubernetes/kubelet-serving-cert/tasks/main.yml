@@ -19,6 +19,63 @@
   meta: end_host
   when: not _kubelet_cfg.stat.exists
 
+# -------- 签发有效期: 对齐 kubeadm 控制面证书(默认 100y) --------
+# kubelet 的 client/serving 证书走 CSR, 由 controller-manager 按 --cluster-signing-duration 签,
+# 默认才 8760h(1y) —— 而 kubeadm 直签的控制面证书是 876000h(100y), 两者不一致, 于是
+# kubelet 那两张 1 年就到期。这里给【存量集群】的 controller-manager 静态 Pod 幂等补上该参数
+# (新集群由 kube-init-master 的 kubeadm 模板自带, 见 kubeadm-config.yaml.j2)。
+# 改 /etc/kubernetes/manifests/*.yaml 后 kubelet 会自动重建该静态 Pod, 无需手工重启。
+- name: "[serving-cert] 检查 controller-manager 是否已配 cluster-signing-duration"
+  shell: |
+    grep -c 'cluster-signing-duration' /etc/kubernetes/manifests/kube-controller-manager.yaml 2>/dev/null || true
+  args:
+    executable: /bin/bash
+  register: _csd_present
+  changed_when: false
+  when: inventory_hostname in (groups['k8s_master'] | default([]))
+
+# 锚点必须存在: lineinfile 的 insertafter 匹配不到时会【静默追加到文件末尾】, 那会写坏
+# 静态 Pod manifest 导致 controller-manager 起不来。先确认锚点在, 不在就明确报错。
+- name: "[serving-cert] 确认插入锚点 --cluster-signing-key-file 存在"
+  shell: |
+    grep -c -- '- --cluster-signing-key-file=' /etc/kubernetes/manifests/kube-controller-manager.yaml 2>/dev/null || true
+  args:
+    executable: /bin/bash
+  register: _csd_anchor
+  changed_when: false
+  when:
+    - inventory_hostname in (groups['k8s_master'] | default([]))
+    - (_csd_present.stdout | default('0') | trim | int) == 0
+
+- name: "[serving-cert] 锚点缺失则报错(避免 lineinfile 追加到末尾写坏 manifest)"
+  assert:
+    that: (_csd_anchor.stdout | default('0') | trim | int) > 0
+    fail_msg: >-
+      /etc/kubernetes/manifests/kube-controller-manager.yaml 未找到 '- --cluster-signing-key-file='
+      锚点, 无法安全插入 --cluster-signing-duration。请手工在该文件 command 列表里加一行
+      '    - --cluster-signing-duration={{ kube_signing_duration }}' 后重跑。
+  when:
+    - inventory_hostname in (groups['k8s_master'] | default([]))
+    - (_csd_present.stdout | default('0') | trim | int) == 0
+
+- name: "[serving-cert] 补 --cluster-signing-duration(缺则加; 已有则不动)"
+  lineinfile:
+    path: /etc/kubernetes/manifests/kube-controller-manager.yaml
+    # 插在 command 列表里任一已有参数之后, 保持 YAML 缩进一致
+    insertafter: '^\s*- --cluster-signing-key-file='
+    line: "    - --cluster-signing-duration={{ kube_signing_duration }}"
+    state: present
+    backup: yes
+  when:
+    - inventory_hostname in (groups['k8s_master'] | default([]))
+    - (_csd_present.stdout | default('0') | trim | int) == 0
+  register: _csd_added
+
+- name: "[serving-cert] 等 controller-manager 静态 Pod 重建"
+  pause:
+    seconds: 20
+  when: _csd_added is defined and _csd_added.changed
+
 - name: "[serving-cert] 开启 serverTLSBootstrap(幂等; backup=yes 自动留时间戳备份)"
   lineinfile:
     path: "{{ kubelet_config_dir }}/config.yaml"
@@ -101,3 +158,18 @@
 - name: "[serving-cert] 打印 10250 证书信息(issuer 应为集群 CA, 非自签名)"
   debug:
     var: _kubelet_10250.stdout_lines
+
+# -------- 提示: 存量 1 年期证书不会自动变长 --------
+# cluster-signing-duration 只影响【此后新签发】的证书; 已签好的仍是原有效期, 要等轮换才更新。
+# 想立刻换成 100 年: 删掉现有证书让 kubelet 重新申请, 再重跑本 playbook 审批。
+#   注意 kubelet-serving-cert 与 kubelet-client-current.pem 是两张(serving/client), 按需删。
+- name: "[serving-cert] 存量证书有效期提示"
+  debug:
+    msg: >-
+      当前 10250 证书有效期见上。cluster-signing-duration={{ kube_signing_duration }}
+      只对【新签发】生效 —— 若上面 notAfter 仍是 1 年后, 说明是旧证书。
+      立即换成新有效期: 在该节点执行
+      `rm -f {{ kubelet_pki_dir }}/kubelet-server-current.pem {{ kubelet_pki_dir }}/kubelet-server-*.pem
+      && systemctl restart kubelet`, 待其重新申请后重跑本 playbook 审批新 CSR。
+      (client 证书同理, 删 kubelet-client-current.pem; 但删错会掉线, 逐台做并确认恢复。)
+  run_once: true

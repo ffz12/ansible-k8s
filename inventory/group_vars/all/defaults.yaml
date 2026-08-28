@@ -207,6 +207,13 @@ nodelocaldns_hosts: []
 src_nodelocaldns_images_dir: "{{ offline_artifacts }}/kubernetes/v{{ k8s_version }}/images"   # node-cache tar 与 k8s 组件镜像同目录
 nodelocaldns_images_dir: "/opt/nodelocaldns"
 
+# ================= kubelet 证书有效期(走 CSR 签发) =================
+# kubeadm 直接签的控制面证书由 caCertificateValidityPeriod/certificateValidityPeriod 控制(100y);
+# 但 kubelet 的 client/serving 证书是走 CSR 由 controller-manager 签的, 归 --cluster-signing-duration
+# 管, 默认才 8760h(1y) —— 两者不一致会让 kubelet 证书 1 年就到期。这里对齐 100 年。
+# 876000h = 100y, 与 kubeadm-config 的 certificateValidityPeriod 同值。
+kube_signing_duration: "876000h"
+
 # ================= 组件清单 =================
 k8s_components:
 - kube-apiserver
@@ -224,6 +231,7 @@ multus_cni_components:
 kube_bin_dir: /usr/local/bin
 kube_config_dir: /etc/kubernetes
 kubelet_config_dir: /var/lib/kubelet
+kubelet_pki_dir: /var/lib/kubelet/pki        # kubelet 自持的证书(client/serving current.pem 都在这)
 kubelet_service_dir: /etc/systemd/system/kubelet.service.d
 # kubelet 资源预留已移到 env.yaml(kubelet_kube_reserved_* / kubelet_system_reserved_*)
 # kubelet 上报的 Node InternalIP。默认取 ansible_host(与 etcd/master advertiseAddress 同源),

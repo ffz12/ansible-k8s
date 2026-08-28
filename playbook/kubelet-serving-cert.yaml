@@ -5,6 +5,10 @@
 #  未来新集群 kube-init-master 的 kubeadm 模板已自带 serverTLSBootstrap, 无需本 playbook。
 #
 #  做什么:
+#    · 【存量集群】给 controller-manager 静态 Pod 幂等补 --cluster-signing-duration
+#      (默认 {{ kube_signing_duration }}=100y, 对齐 kubeadm 直签的控制面证书; 新集群由
+#       kube-init-master 的 kubeadm 模板自带)。走 CSR 签发的 kubelet client/serving 证书
+#       归它管, 不补就只有 1 年。
 #    · 全节点(master+worker)/var/lib/kubelet/config.yaml 幂等加 serverTLSBootstrap: true
 #      (backup=yes 留时间戳备份) → 重启 kubelet → 触发 kubernetes.io/kubelet-serving CSR。
 #    · 首 master 上 patch kubelet-config ConfigMap(新节点 join 继承)。
@@ -13,8 +17,11 @@
 #
 #  用法:
 #    ansible-playbook -i inventory/hosts playbook/kubelet-serving-cert.yaml
-#  证书到期(kube-controller-manager --cluster-signing-duration, 默认 1y)重签会再产 CSR,
-#  重跑本 playbook 即可再次审批。
+#
+#  ⚠ cluster-signing-duration 只对【此后新签发】的证书生效, 已签好的仍是原有效期。
+#    存量 1 年期证书想立刻换成 100 年: 逐台删掉 /var/lib/kubelet/pki 下对应的 *-current.pem
+#    并重启 kubelet, 待其重新申请后重跑本 playbook 审批(playbook 末尾会打印具体命令)。
+#  证书到期重签会再产 CSR, 重跑本 playbook 即可再次审批。
 # ============================================================================
 - name: kubelet serving 证书(serverTLSBootstrap + 审批 kubelet-serving CSR)
   hosts: k8s_master:k8s_node

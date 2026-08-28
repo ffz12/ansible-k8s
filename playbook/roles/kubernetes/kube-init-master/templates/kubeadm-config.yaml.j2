@@ -44,6 +44,14 @@ controllerManager:
   extraArgs:
     - name: bind-address
       value: 0.0.0.0                 # 默认 127.0.0.1;改 0.0.0.0 才能远程抓 10257 metrics
+    # 走 CSR 签发的证书(kubelet client / kubelet serving)有效期。默认 8760h(1y) ——
+    # 与上面 caCertificateValidityPeriod/certificateValidityPeriod(876000h=100y)不一致,
+    # 导致 kubelet 那两张证书 1 年就到期。这里对齐 100 年。
+    # ⚠ 副作用: kubelet-csr-approver 硬编码上限 367 天, 设成 100 年后它会拒批所有 serving CSR,
+    #   故不能与该审批器共用; serving CSR 改由 playbook/kubelet-serving-cert.yaml 人工批
+    #   (100 年有效期下基本是一次性的事)。
+    - name: cluster-signing-duration
+      value: "{{ kube_signing_duration }}"
 scheduler:
   extraArgs:
     - name: bind-address
