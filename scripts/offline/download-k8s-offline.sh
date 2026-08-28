@@ -138,6 +138,18 @@ if [ -n "$IMG_LIST" ]; then
   # etcd: kubeadm 给的是镜像 tag(如 3.6.4-0), 剥掉 -N 构建后缀得二进制版本
   ET="$(get_tag '/etcd')";    [ -n "$ET" ] && { ET="${ET%-*}"; ETCD="${ET#v}"; }
   say "kubeadm 校准: coredns=v$COREDNS pause=$PAUSE etcd=v$ETCD (k8s v$K8S)"
+  # 把校准后的 etcd 版本回写 versions.env, 让【部署侧】也用同一个值。
+  # 否则: 下载按 kubeadm 的 v$ETCD 建目录, 而 ansible 用 env/defaults 的 etcd_version 找路径,
+  #       两者不一致就报 "Could not find .../etcd/v<X>/amd64/etcd-v<X>-linux-amd64.tar.gz"。
+  VF="$(dirname "$0")/versions.env"
+  if [ -f "$VF" ]; then
+    if grep -q '^ETCD=' "$VF"; then
+      sed -i "s/^ETCD=.*/ETCD=$ETCD/" "$VF"
+    else
+      echo "ETCD=$ETCD" >> "$VF"
+    fi
+    say "已回写 versions.env: ETCD=$ETCD(部署侧请确保 etcd_version 由 k8s_compat 派生, 勿在 env.yaml 手写)"
+  fi
 else
   say "⚠ kubeadm 未给出镜像清单, 沿用默认 coredns=v$COREDNS pause=$PAUSE etcd=v$ETCD"
 fi
