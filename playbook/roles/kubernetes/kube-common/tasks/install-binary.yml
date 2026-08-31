@@ -67,6 +67,60 @@
         remote_src: yes
   when: not (is_offline | default(false) | bool)
 
+# ---- CNI 标准插件包 (containernetworking/plugins) ----
+# 提供 bandwidth / portmap / tuning / firewall 等。calico-cni 镜像只带自己那几个
+# (calico, calico-ipam, flannel, host-local, install, loopback, portmap, tuning),
+# 【不含 bandwidth】; 而 calico 3.28+ 官方 conflist 默认引用 bandwidth ——
+# 缺了它所有 Pod 都建不了 sandbox:
+#   plugin type="bandwidth" failed (add): failed to find plugin "bandwidth" in path [/opt/cni/bin]
+# 默认 calico_enable_bandwidth=false(conflist 不引用), 故这几步默认跳过, 与现网生产一致;
+# 开了限速才装 —— 目录是节点本地的, 所以放在 kube-common(全节点), 不能只在 master 装。
+- name: 创建 CNI 插件目录
+  file:
+    path: "{{ cni_plugins_bin_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: calico_enable_bandwidth | default(false) | bool
+
+- name: 检查 bandwidth 插件是否已就位(有则跳过, 幂等)
+  stat:
+    path: "{{ cni_plugins_bin_dir }}/bandwidth"
+  register: _cni_bw
+  when: calico_enable_bandwidth | default(false) | bool
+
+- name: 安装 CNI 插件包 (离线)
+  unarchive:
+    src: "{{ cni_plugins_bin_src }}/cni-plugins-linux-{{ kube_arch }}-v{{ cni_plugins_version }}.tgz"
+    dest: "{{ cni_plugins_bin_dir }}"
+    owner: root
+    group: root
+  when:
+    - calico_enable_bandwidth | default(false) | bool
+    - is_offline | default(false) | bool
+    - not (_cni_bw.stat.exists | default(false))
+
+- name: 安装 CNI 插件包 (在线, 多源+重试)
+  block:
+    - name: 下载 cni-plugins tar
+      include_tasks: "{{ playbook_dir }}/tasks/download-with-fallback.yml"
+      vars:
+        dl_urls: "{{ cni_plugins_mirrors | map('regex_replace', '$', '/v' ~ cni_plugins_version ~ '/cni-plugins-linux-' ~ kube_arch ~ '-v' ~ cni_plugins_version ~ '.tgz') | list }}"
+        dl_dest: "/tmp/cni-plugins-linux-{{ kube_arch }}-v{{ cni_plugins_version }}.tgz"
+        dl_mode: "0644"
+    - name: 解压 cni-plugins 到 {{ cni_plugins_bin_dir }}
+      unarchive:
+        src: "/tmp/cni-plugins-linux-{{ kube_arch }}-v{{ cni_plugins_version }}.tgz"
+        dest: "{{ cni_plugins_bin_dir }}"
+        remote_src: yes
+        owner: root
+        group: root
+  when:
+    - calico_enable_bandwidth | default(false) | bool
+    - not (is_offline | default(false) | bool)
+    - not (_cni_bw.stat.exists | default(false))
+
 - name: 配置 crictl 运行时端点 (/etc/crictl.yaml)
   copy:
     dest: /etc/crictl.yaml

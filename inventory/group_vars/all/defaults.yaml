@@ -214,6 +214,26 @@ nodelocaldns_images_dir: "/opt/nodelocaldns"
 # 876000h = 100y, 与 kubeadm-config 的 certificateValidityPeriod 同值。
 kube_signing_duration: "876000h"
 
+# calico 封装: none(纯 BGP) / crosssubnet / ipip / vxlan —— 见 env.yaml.example
+# CNI conflist 是否启用 bandwidth 插件(Pod 限速: kubernetes.io/{ingress,egress}-bandwidth 注解)。
+# ⚠ 默认 false —— 与现网生产集群(calico 3.27, conflist 本就无此段)行为一致。
+#   calico-cni 镜像【不含】bandwidth 二进制(镜像里只有 calico/calico-ipam/flannel/host-local/
+#   install/loopback/portmap/tuning), 它属于上游 containernetworking/plugins 包。而 calico 3.28+
+#   官方 manifest 默认写了这段却不提供该二进制 —— 升级到 3.31 后就会:
+#     plugin type="bandwidth" failed (add): failed to find plugin "bandwidth" in path [/opt/cni/bin]
+#   → 全节点所有 Pod 都建不了 sandbox(coredns/calico-kube-controllers 卡 ContainerCreating)。
+#   确需限速再置 true: kube-common 会自动给每个节点装 cni-plugins 包(见下方 cni_plugins_*)。
+calico_enable_bandwidth: false
+
+# ---- CNI 标准插件包(containernetworking/plugins) ----
+# 提供 bandwidth/portmap/tuning/firewall 等; calico 只装自己那几个, 这个包要另外装。
+cni_plugins_version: "1.6.2"
+cni_plugins_bin_dir: /opt/cni/bin
+cni_plugins_bin_src: "{{ offline_artifacts }}/cni/plugins/v{{ cni_plugins_version }}"
+cni_plugins_mirrors:
+  - "https://files.m.daocloud.io/github.com/containernetworking/plugins/releases/download"
+  - "https://ghfast.top/https://github.com/containernetworking/plugins/releases/download"
+
 # ================= 组件清单 =================
 k8s_components:
 - kube-apiserver

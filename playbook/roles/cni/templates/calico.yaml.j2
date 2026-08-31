@@ -82,11 +82,12 @@ data:
           "type": "portmap",
           "snat": true,
           "capabilities": {"portMappings": true}
-        },
+        }{% if calico_enable_bandwidth | default(false) | bool %},
         {
           "type": "bandwidth",
           "capabilities": {"bandwidth": true}
-        }
+        }{% endif %}
+
       ]
     }
 ---

@@ -35,6 +35,7 @@ esac
 : "${FLANNEL_CNI:=1.6.2-flannel1}"
 : "${CILIUM:=1.16.5}"
 : "${HELM:=3.16.4}"
+: "${CNI_PLUGINS:=1.6.2}"        # containernetworking/plugins(bandwidth/portmap/tuning...); calico 不带 bandwidth
 : "${NODELOCALDNS:=1.26.4}"        # NodeLocal DNSCache (k8s-dns-node-cache); registry.k8s.io/dns 正规上游 tag
 
 CNIS="calico flannel cilium"   # 只打包用得到的可删减, 如 CNIS="calico"
@@ -50,6 +51,7 @@ DAO="https://files.m.daocloud.io"
 K8S_BIN="$DAO/dl.k8s.io/release"
 CRICTL_BIN="$DAO/github.com/kubernetes-sigs/cri-tools/releases/download"
 ETCD_BIN="$DAO/github.com/etcd-io/etcd/releases/download"
+CNI_PLUGINS_BIN="$DAO/github.com/containernetworking/plugins/releases/download"
 HELM_BIN="$DAO/get.helm.sh"
 CILIUM_HELM_REPO="https://helm.cilium.io"
 
@@ -167,6 +169,11 @@ save_img "$NODELOCALDNS_SRC/k8s-dns-node-cache:$NODELOCALDNS" "registry.k8s.io/d
 # ========== 3. etcd (containerd/runc 已挪到 download-docker-offline.sh 的底座层) ==========
 for a in $ARCHES; do
   dl "$ETCD_BIN/v$ETCD/etcd-v$ETCD-linux-$a.tar.gz" "$B/etcd/v$ETCD/$a/etcd-v$ETCD-linux-$a.tar.gz"
+done
+
+# ========== 3.5 CNI 标准插件包(bandwidth/portmap/... ; calico 镜像不含 bandwidth) ==========
+for a in $ARCHES; do
+  dl "$CNI_PLUGINS_BIN/v$CNI_PLUGINS/cni-plugins-linux-$a-v$CNI_PLUGINS.tgz"      "$B/cni/plugins/v$CNI_PLUGINS/cni-plugins-linux-$a-v$CNI_PLUGINS.tgz"
 done
 
 # ========== 4. CNI 镜像(按 CNIS 选) ==========
