@@ -37,7 +37,10 @@ esac
 : "${RUNC:=1.1.12}"          # runc(containerd 依赖; 官方 containerd 包不含 runc, 单独下)
 
 # -------- 源 --------
-DOCKER_STATIC="https://download.docker.com/linux/static/stable"
+# docker 静态包多源: 国内镜像优先, 官方兜底。
+# ⚠ download.docker.com 在国内常被限速/重置(实测 17KB/s 甚至 connection reset),
+#   82M 的包能拖一小时以上; 阿里云/清华/中科大镜像通常几十 MB/s。
+DOCKER_STATIC_MIRRORS="https://mirrors.aliyun.com/docker-ce/linux/static/stable https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/static/stable https://mirrors.ustc.edu.cn/docker-ce/linux/static/stable https://download.docker.com/linux/static/stable"
 DAO="https://files.m.daocloud.io"
 GH="$DAO/github.com"
 CONTAINERD_BIN="$GH/containerd/containerd/releases/download"
@@ -72,6 +75,25 @@ dl(){
   echo "✗ 下载/校验失败: $url"; exit 1
 }
 
+# 多源下载: 依次试各镜像, 第一个成功即返回。$1=相对路径 $2=目标文件 $3...=源列表
+dl_multi(){
+  local rel="$1" dest="$2"; shift 2
+  local base r l
+  if [ -s "$dest" ]; then say "跳过(已存在) $(basename "$dest")"; return; fi
+  for base in "$@"; do
+    say "curl $base/$rel"
+    if curl -fSL --retry 2 --connect-timeout 15 --speed-time 30 --speed-limit 10240          -o "$dest" "$base/$rel"; then
+      r=$(rsize "$base/$rel"); l=$(stat -c%s "$dest" 2>/dev/null || wc -c <"$dest")
+      if [ -z "$r" ] || [ "$r" = "$l" ]; then return; fi
+      echo "  大小不符($l/$r), 换下一个源"
+    else
+      echo "  该源失败/过慢(<10KB/s 持续 30s), 换下一个源"
+    fi
+    rm -f "$dest"
+  done
+  echo "✗ 所有源均失败: $rel"; exit 1
+}
+
 for GOARCH in $ARCHES; do
   case $GOARCH in
     amd64) DK="x86_64";  PFX="amd"; COMP="x86_64" ;;
@@ -79,7 +101,7 @@ for GOARCH in $ARCHES; do
   esac
   echo "========== 架构 $GOARCH =========="
   # 1) docker 静态包(-> amd/arm-docker-$DOCKER.tgz, 对齐 docker_arch_map[].pkg)
-  dl "$DOCKER_STATIC/$DK/docker-$DOCKER.tgz"                                  "$D/$PFX-docker-$DOCKER.tgz"
+  dl_multi "$DK/docker-$DOCKER.tgz" "$D/$PFX-docker-$DOCKER.tgz" $DOCKER_STATIC_MIRRORS
   # 2) buildx 插件(-> buildx-v$BUILDX.linux-$GOARCH, 对齐 docker_arch_map[].buildx)
   dl "$GH/docker/buildx/releases/download/v$BUILDX/buildx-v$BUILDX.linux-$GOARCH"   "$D/buildx-v$BUILDX.linux-$GOARCH"
   # 3) compose 插件(-> docker-compose-linux-$COMP, 对齐 docker_arch_map[].compose)
