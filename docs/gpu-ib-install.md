@@ -583,6 +583,12 @@ NVL5+ 把 NVLink 域当 IB 子网管理，fabricmanager 需要 `ib_umad` 与 NVL
 Kernel module "ib_umad" has not been loaded, fabric manager cannot start
 ```
 
+> **RoCE 组网也一样要**——这一步与外部计算网是 IB 还是 RoCE **无关**。
+> `ib_umad`（InfiniBand User MAD，用户态管理数据报接口）在这里是给 **NVLink 域内部**
+> 用的：NVL5+ 的 NVSwitch 拓扑被当作一个 IB 子网，由 nvlsm 配路由，走的不是你机房那张
+> 计算网。RoCE 本身就是"IB 传输层跑以太网"，mlx5 + rdma-core 同样会带
+> `ib_core`/`ib_uverbs`/`ib_umad` 这套内核栈，所以 RoCE 节点上照配不误。
+
 ```bash
 modprobe ib_umad
 # ⚠ 必须固化，否则重启后复发（内核升级最容易丢这一项）
