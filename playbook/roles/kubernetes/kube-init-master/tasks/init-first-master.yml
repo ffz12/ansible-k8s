@@ -53,3 +53,13 @@
     - name: 部署 CNI 网络插件
       include_role:
         name: cni
+
+    # === NodeLocal DNSCache(可选, enable_nodelocaldns=true 时随装机一起部署)===
+    # 必须在 CNI 之后: 它是 DaemonSet, 没网络起不来。
+    # kubelet 的 clusterDNS 已在 kubeadm-config 里指向 nodelocaldns_ip —— 这样是安全的:
+    # nodelocaldns 与 coredns 都是 hostNetwork + dnsPolicy: Default, 走宿主机 DNS 启动,
+    # 不依赖集群内解析; 需要集群 DNS 的业务 Pod 起来时它早已就绪。(kk 也是这个做法)
+    - name: 部署 NodeLocal DNSCache
+      include_role:
+        name: nodelocaldns
+      when: enable_nodelocaldns | default(false) | bool

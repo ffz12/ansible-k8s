@@ -88,9 +88,12 @@ kind: KubeletConfiguration
 cgroupDriver: systemd
 containerRuntimeEndpoint: "{{ kube_criSocket }}"
 {% if enable_nodelocaldns | default(false) | bool %}
-# 启用 NodeLocal DNSCache 时, Pod 的 DNS 必须指到本机 link-local 缓存(而非 coredns ClusterIP),
-# 否则装了 nodelocaldns 也不生效 —— 查询链: Pod -> {{ nodelocaldns_ip }}(本地) -> CoreDNS。
-# 与 playbook/nodelocaldns.yaml 配套; 改这里需重启 kubelet 才生效。
+# NodeLocal DNSCache: Pod 的 DNS 指向本机 link-local 缓存, 而非 coredns ClusterIP。
+# 查询链: Pod -> {{ nodelocaldns_ip }}(本机 nodelocaldns) -> CoreDNS。
+# ⚠ 这里在 kubeadm init 阶段就写死是安全的(kk 也这么做): nodelocaldns 与 coredns 都是
+#   hostNetwork + dnsPolicy: Default, 用宿主机 DNS 起来, 不依赖集群内解析; 真正需要
+#   集群 DNS 的业务 Pod 跑起来时 nodelocaldns 早就就绪了。
+#   配套: init-first-master 会在 CNI 之后自动部署 nodelocaldns DaemonSet。
 clusterDNS:
   - {{ nodelocaldns_ip }}
 {% endif %}

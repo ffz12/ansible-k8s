@@ -212,10 +212,11 @@ cilium_chart_src: "{{ offline_artifacts }}/cni/cilium/v{{ cilium_version }}/cili
 nodelocaldns_ip: "169.254.25.10"                 # link-local; 必须与各节点 kubelet clusterDNS 一致(现网即此值)
 # 是否启用 NodeLocal DNSCache。置 true 会让 kubeadm 模板把 kubelet 的 clusterDNS 指向
 # nodelocaldns_ip(否则 Pod 仍直连 coredns ClusterIP, 装了 nodelocaldns 也不走它)。
-# ⚠ 两件事要一起做: ① 这里置 true 并(重)装集群或重下发 kubelet 配置;
-#                  ② 跑 ansible-playbook playbook/nodelocaldns.yaml 部署 DaemonSet。
-# 只做 ① 会让 Pod 的 DNS 指向一个还不存在的地址 -> 集群内解析全挂, 顺序务必先 ② 后 ①,
-# 或在同一次装机流程里先部署 nodelocaldns 再重启 kubelet。
+# 置 true 后, k8s-init-master 会在 CNI 之后自动部署 nodelocaldns DaemonSet(与 kk 同款做法),
+# 无需再单独跑 playbook/nodelocaldns.yaml(该 playbook 保留, 供事后单独部署/重配)。
+# clusterDNS 在 kubeadm init 时即写死是安全的: nodelocaldns/coredns 都是 hostNetwork +
+# dnsPolicy Default, 走宿主机 DNS 启动, 不依赖集群内解析。worker 由 kubeadm join 拉取
+# 集群的 kubelet-config ConfigMap, 自动继承该值, 无需单独配置。
 # 本模板是单绑(link-local)形态, iptables / ipvs 两种 kube-proxy 模式都适用。
 enable_nodelocaldns: false
 nodelocaldns_version: "1.26.4"                    # k8s-dns-node-cache 版本(现网 1.26.4), 可 env.yaml 覆盖
