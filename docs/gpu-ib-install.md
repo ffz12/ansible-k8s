@@ -534,9 +534,11 @@ echo "请重启系统以使用新内核: sudo reboot"
 
 # NVIDIA fabricmanager / peermem（HGX/NVLink 节点必配）
 
-> 适用于 HGX（如 H100/A100 8 卡 NVSwitch）节点。装完 GPU 驱动后需再装
+> 适用于 HGX（如 H100/A100 8 卡 NVSwitch）与 NVL5+（B300/GB300）节点。装完 GPU 驱动后需再装
 > **fabricmanager**（NVSwitch 拓扑管理）并加载 **nvidia-peermem**（GPUDirect RDMA），否则
 > `nvidia-smi topo -m` 看不到 NVLink、或 GPU 无法互联。
+>
+> **B300 / GB300 等 NVL5+ 节点还要多做两步**（ib_umad + nvlsm），见下方专章。
 
 ## 安装 fabricmanager
 
@@ -566,6 +568,82 @@ systemctl enable nvidia-fabricmanager.service --now
 systemctl status nvidia-fabricmanager.service
 ```
 
+## NVL5+ 节点（B300 / GB300 等）额外两步：ib_umad + nvlsm
+
+> 只有 **NVL5 及以上**（B300、GB300 这类新一代 NVLink 域）才需要。日志里出现
+> `Detected NVL5+ system` 就适用；H100/A100 那代（NVL4-）不涉及。
+>
+> 这两个坑是**连环出现**的——修好第一个才会暴露第二个，别以为改完一处就完事。
+
+### ① ib_umad 内核模块
+
+NVL5+ 把 NVLink 域当 IB 子网管理，fabricmanager 需要 `ib_umad` 与 NVLink Switch 通信。缺了会报：
+
+```
+Kernel module "ib_umad" has not been loaded, fabric manager cannot start
+```
+
+```bash
+modprobe ib_umad
+# ⚠ 必须固化，否则重启后复发（内核升级最容易丢这一项）
+echo ib_umad > /etc/modules-load.d/ib_umad.conf
+cat /etc/modules-load.d/ib_umad.conf     # ← 当场验证文件真的写成了
+```
+
+> **踩过的坑**：曾经只跑了 `modprobe` 就看服务 active 收工，`/etc/modules-load.d/ib_umad.conf`
+> 其实没建成，机器再重启一次 FM 又挂。**改完固化文件要当场 `cat` 确认，别只看服务状态。**
+>
+> 若 `lsmod` 能看到模块，说明 `.ko` 在，不是 OFED/内核不匹配的问题，就是没自动加载。
+
+### ② nvlsm 独立包
+
+fabricmanager 会拉起 `nvlsm`（OpenSM 变体）作为子进程管理 NVLink 子网。
+**nvlsm 是独立的包，不在 fabricmanager 包里**，缺了会报：
+
+```
+"/opt/nvidia/nvlsm/sbin/nvlsm" does not exist
+```
+
+```bash
+apt-get install -y nvlsm          # 在线
+# 离线：有网机器上 apt-get download nvlsm，拷到目标机 dpkg -i
+systemctl restart nvidia-fabricmanager
+```
+
+> ⚠ **nvlsm 用日期版本号**（如 `2025.10.14-1`），**不跟驱动版本对齐**——这点与 fabricmanager
+> 相反，别去找"和驱动同版本的 nvlsm"。直接装候选版即可；它与 `libnvhws1` / `flexio-sdk`
+> 的 `25.10.14` 是同批发布。
+>
+> 来源仓库：`developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64`
+>
+> 若 `dpkg -l` 里有包处于 `iU`（unpacked 未配置）状态，说明之前 apt 事务中断过，
+> 先 `dpkg --configure -a` 再装。
+
+### 成功标志
+
+FM 日志依次出现这三行才算真正起来：
+
+```
+OpenSM ... Entering MASTER state
+NodeId 0 partition id XXX is activated
+Successfully configured all the available GPUs and NVSwitches to route NVLink traffic
+```
+
+```bash
+journalctl -u nvidia-fabricmanager -n 50 --no-pager
+```
+
+### 易混淆点
+
+- FM 启动时会 `Polling for at least one Infiniband device`，挑一块卡的 GUID 传给 nvlsm
+  （`-g 0xac3ae...`）。它只要求**设备被驱动枚举到**，不要求端口 link up ——
+  **计算网没接线 FM 照样能起**。但若动过 IB 卡固件（mlxconfig / 刷 FW / 改 GUID），
+  FM 重启后可能挑到不同设备，需复验。
+- 内核升级**不会**删 `/opt/nvidia/nvlsm/`（用户态目录）。报 ② 的根因是 apt 事务，不是内核。
+- 同批次节点若都升过内核，大概率重演这两个报错，建议一并检查。
+- ⚠ 这类机器上**不要随手跑 `apt upgrade`**，以免连带升级驱动/OFED 引发更大面积问题。
+
+
 ## 验证 GPU 拓扑
 
 ```bash
@@ -591,4 +669,12 @@ ansible gpu -m shell -a "lsmod | grep nvidia_peermem"
 # nvidia-container-toolkit 是否安装（deb / rpm）
 ansible gpu -m shell -a "dpkg -l | grep nvidia-container-toolkit"
 ansible gpu -m shell -a "rpm -qa | grep nvidia-container-toolkit"
+
+# —— NVL5+(B300/GB300) 专项 ——
+# ib_umad 是否已加载 + 是否已固化(两者都要有, 只加载不固化重启即失效)
+ansible gpu -m shell -a "lsmod | grep ib_umad; cat /etc/modules-load.d/ib_umad.conf 2>/dev/null || echo '未固化!'"
+# nvlsm 是否安装
+ansible gpu -m shell -a "dpkg -l nvlsm 2>/dev/null | tail -1; ls /opt/nvidia/nvlsm/sbin/nvlsm 2>/dev/null || echo '缺 nvlsm!'"
+# FM 是否真的把 NVLink 路由配好(不能只看 systemctl active)
+ansible gpu -m shell -a "journalctl -u nvidia-fabricmanager -n 30 --no-pager | grep -E 'MASTER state|is activated|Successfully configured'"
 ```
