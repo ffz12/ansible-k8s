@@ -105,6 +105,25 @@ harbor_ip: "{{ harbor_instances[0].ip }}"
 registry: "{{ harbor_dns }}/{{ harbor_project | default('kubernetes') }}"   # 自建 harbor 前缀(项目名可在 env.yaml 覆盖, 默认 kubernetes)
 
 # ================= k8s 版本配套(A 组自动派生) =================
+# ================= 版本兜底(env.yaml 未定义时生效) =================
+# ⚠ 这些是【变参】, 正常由 env.yaml 提供(见 tmp/env.yaml.example)。这里给兜底是因为
+#   scripts/offline/versions.env.j2 会引用它们 —— 精简版/老版 env.yaml 少写任一项,
+#   gen-offline-versions.yaml 就会 undefined 渲染失败, 连带 prefetch 拿不到版本。
+#   env.yaml 后加载, 写了就覆盖这里, 不影响现有站点。
+k8s_version: "1.34.3"
+containerd_version: "1.7.32"
+runc_version: "1.1.12"
+docker_version: "29.4.2"
+buildx_version: "0.32.1"
+compose_version: "2.32.4"
+cri_dockerd_version: "0.3.16"
+calico_version: "3.31.3"
+flannel_version: "0.26.7"
+flannel_cni_version: "1.6.2-flannel1"
+cilium_version: "1.16.5"
+helm_version: "3.18.5"                   # 不带 v; 模板会拼 helm-v{{helm_version}}
+multus_cni_version: "4.2.4"
+
 k8s_minor: "{{ k8s_version.split('.')[0] ~ '.' ~ k8s_version.split('.')[1] }}"
 # k8s 小版本 -> 配套组件(兜底默认). 权威值在装 k8s 时由 `kubeadm config images list` 自动查询覆盖
 # (见 roles/kubernetes/kube-init-master/tasks/sync-images-to-harbor.yml),一般不用手维护此表。
