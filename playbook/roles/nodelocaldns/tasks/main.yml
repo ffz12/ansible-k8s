@@ -1,15 +1,31 @@
 # roles/nodelocaldns/tasks/main.yml
 # NodeLocal DNSCache 部署(在第一个 master 上, 调用方 k8s-cni 风格保证 run_once 语义)。
 # 忠实复刻现网 kk 版: 单绑 nodelocaldns_ip, 转发到现网 CoreDNS svc({{ nodelocaldns_coredns_svc }})。
-# 前提: kube-proxy 为 iptables 模式(NOTRACK 规则依赖之); 现网 {{ kube_proxy_mode }}。
+#
+# ── 关于 kube-proxy 模式(iptables / ipvs)──
+# 官方 nodelocaldns 有两种形态, 只有【双绑】版跟 kube-proxy 模式强相关:
+#   · 双绑版: 同时绑 link-local 与 kube-dns ClusterIP, 用来拦截原本发往 ClusterIP 的
+#     DNS 流量 -> 与 service 转发规则冲突, 需 iptables NOTRACK 绕开 conntrack;
+#     ipvs 模式下 ClusterIP 被绑在 kube-ipvs0 上, 双绑会抢地址 -> 确实不兼容。
+#   · 本模板是【单绑】版: 只绑 {{ nodelocaldns_ip }}(link-local), 不碰 ClusterIP。
+#     Pod 靠 kubelet 的 clusterDNS 直接指到这个地址, 流量不经过 kube-proxy 的 service
+#     转发, 因此不依赖 NOTRACK; 上游 forward 到 coredns ClusterIP 那一跳走正常 service
+#     路径, ipvs 能正常处理。故 iptables / ipvs 两种模式都适用。
+# 前提改为: 各节点 kubelet 的 clusterDNS 必须 == nodelocaldns_ip, 否则装了也不生效。
 
-- name: "[NodeLocalDNS] 校验 kube-proxy 为 iptables 模式(NOTRACK 依赖)"
+- name: "[NodeLocalDNS] 校验 kube-proxy 模式取值合法"
   assert:
     that:
-      - kube_proxy_mode | default('iptables') == 'iptables'
+      - kube_proxy_mode | default('iptables') in ['iptables', 'ipvs']
     fail_msg: >-
-      NodeLocal DNSCache 依赖 kube-proxy iptables 的 NOTRACK 规则,
-      当前 kube_proxy_mode={{ kube_proxy_mode | default('iptables') }}。ipvs 模式请另议。
+      kube_proxy_mode 必须是 iptables 或 ipvs, 当前={{ kube_proxy_mode | default('iptables') }}
+
+- name: "[NodeLocalDNS] 本次部署模式"
+  debug:
+    msg: >-
+      kube-proxy={{ kube_proxy_mode | default('iptables') }};
+      本模板为单绑({{ nodelocaldns_ip }})形态, 不拦截 ClusterIP, 两种模式均适用。
+      ⚠ 需确保各节点 kubelet 的 clusterDNS = {{ nodelocaldns_ip }}(否则 Pod 不会走本地缓存)。
 
 - name: "[NodeLocalDNS] 离线同步 node-cache 镜像到 Harbor"
   include_tasks: sync-nodelocaldns-image.yaml
