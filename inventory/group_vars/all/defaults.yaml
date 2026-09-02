@@ -275,6 +275,21 @@ calico_components:
 multus_cni_components:
 - multus-cni
 
+# ================= apiserver 入口(lbvip 空值统一处理) =================
+# ⚠ lbvip 是可选的(单 master 不需要)。历史上四处写法不一致, 空串 lbvip: "" 时:
+#     · `lbvip is defined` 判定为【真】(空串也算已定义) -> kubeadm 渲出 ":8443"、cilium 取 8443
+#     · `default(x)` 不带 true 时空串【不】回退 -> cilium k8sServiceHost 渲成 ""
+#   两者叠加会让单 master 站点在"写了空 lbvip"这种很自然的写法下静默坏掉。
+#   故统一走下面两个派生变量, 各处不再各自判断。
+# has_lbvip: 只有【已定义且非空】才算有 VIP
+has_lbvip: "{{ (lbvip is defined) and ((lbvip | default('') | trim | length) > 0) }}"
+# apiserver 入口地址/端口: 有 VIP 走 VIP:lb_port, 否则首 master:apiserver_port
+apiserver_entry_host: "{{ lbvip | default(hostvars[groups['k8s_master'][0]].ansible_host, true) if (has_lbvip | bool) else hostvars[groups['k8s_master'][0]].ansible_host }}"
+apiserver_entry_port: "{{ apiserver_lb_port if (has_lbvip | bool) else apiserver_port }}"
+# 端口兜底(与 13 个版本变量同理: versions/模板都要用, 精简 env.yaml 不该 undefined)
+apiserver_port: 6443
+apiserver_lb_port: 8443
+
 # ================= k8s 路径 =================
 kube_bin_dir: /usr/local/bin
 kube_config_dir: /etc/kubernetes

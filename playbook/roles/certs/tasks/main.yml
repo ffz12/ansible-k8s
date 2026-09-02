@@ -109,7 +109,7 @@
     target_node_ip: "{{ hostvars[item].ansible_host | default(item) }}"
     # 把 VIP 也签进 SAN: keepalived VIP 与 etcd 共机时, peer 出站源 IP 可能是 VIP,
     # 不加会导致 raft peer TLS 拒绝(x509: VIP does not match SAN)
-    extra_sans: "{{ [lbvip] if lbvip is defined else [] }}"
+    extra_sans: "{{ [lbvip] if (has_lbvip | bool) else [] }}"
   loop: "{{ nodes_needing_certs }}"
   when: nodes_needing_certs | length > 0
 

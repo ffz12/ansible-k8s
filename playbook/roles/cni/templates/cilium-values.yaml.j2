@@ -1,7 +1,9 @@
 # Cilium helm values (最小可用集; 更多特性按需调)
-# apiserver 入口: 有 lbvip 走 VIP:8443, 否则首 master:6443
-k8sServiceHost: "{{ lbvip | default(hostvars[groups['k8s_master'][0]].ansible_host) }}"
-k8sServicePort: {{ 8443 if lbvip is defined else 6443 }}
+# apiserver 入口: 有 lbvip 走 VIP:apiserver_lb_port, 否则首 master:apiserver_port。
+# 走 defaults.yaml 的派生变量, 不再各自判断 —— lbvip 写成空串时 `is defined` 会判真、
+# 而 default() 不带 true 又不回退, 两者叠加会渲出 k8sServiceHost:"" + 8443 静默坏掉。
+k8sServiceHost: "{{ apiserver_entry_host }}"
+k8sServicePort: {{ apiserver_entry_port }}
 
 # 保留 kube-proxy(稳妥默认); 若要 eBPF 替换 kube-proxy 改 true 并确认内核>=5.10
 kubeProxyReplacement: {{ cilium_kube_proxy_replacement | default(false) | bool | lower }}

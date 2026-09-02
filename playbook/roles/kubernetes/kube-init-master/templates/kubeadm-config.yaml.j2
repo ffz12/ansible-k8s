@@ -29,7 +29,7 @@ timeouts:
 ---
 # === ClusterConfiguration ===
 apiVersion: kubeadm.k8s.io/v1beta4
-{% if lbvip is defined %}
+{% if has_lbvip | bool %}
 controlPlaneEndpoint: "{{ lbvip }}:{{ apiserver_lb_port }}"
 {% endif %}
 caCertificateValidityPeriod: 876000h
