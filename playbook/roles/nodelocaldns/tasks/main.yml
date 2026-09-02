@@ -31,25 +31,41 @@
   include_tasks: sync-nodelocaldns-image.yaml
   when: is_offline | default(false) | bool
 
-- name: "[NodeLocalDNS] 查询上游 CoreDNS Service({{ nodelocaldns_coredns_svc }}) ClusterIP"
-  shell: kubectl -n kube-system get svc {{ nodelocaldns_coredns_svc }} -o jsonpath='{.spec.clusterIP}'
+# 上游 CoreDNS 的 Service 名两种都可能:
+#   kubeadm 原生 = kube-dns(即便后端跑的是 CoreDNS, Service 仍沿用旧名)
+#   KubeKey     = coredns
+# 本仓库用 kubeadm 建集群 -> 实际是 kube-dns; 但 nodelocaldns_coredns_svc 默认值是 coredns
+# (为对齐现网 kk 集群)。写死任一个都会在另一种集群上失败, 故按【实际存在的】自动探测,
+# 顺序: 先试配置值, 再试另一个。env.yaml 显式指定时以指定值为准(它排在第一位)。
+- name: "[NodeLocalDNS] 探测上游 CoreDNS Service 名(kube-dns / coredns)"
+  shell: |
+    for n in {{ nodelocaldns_coredns_svc }} kube-dns coredns; do
+      ip=$(kubectl -n kube-system get svc "$n" -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+      if [ -n "$ip" ]; then echo "$n $ip"; exit 0; fi
+    done
+    exit 0
   args:
     executable: /bin/bash
   register: _coredns_svc
   changed_when: false
 
-- name: "[NodeLocalDNS] 校验查到了 CoreDNS ClusterIP"
+- name: "[NodeLocalDNS] 校验查到了 CoreDNS Service"
   assert:
     that:
-      - _coredns_svc.stdout | trim | length > 0
+      - (_coredns_svc.stdout | trim | length) > 0
     fail_msg: >-
-      未查到 kube-system/{{ nodelocaldns_coredns_svc }} Service。
-      现网 CoreDNS svc 名是否为 '{{ nodelocaldns_coredns_svc }}'?(kubeadm 原生叫 kube-dns,
-      改 env.yaml 的 nodelocaldns_coredns_svc)
+      kube-system 下既没有 '{{ nodelocaldns_coredns_svc }}' 也没有 kube-dns / coredns Service ——
+      CoreDNS 可能还没部署好。先确认: kubectl -n kube-system get svc | grep -E 'dns|coredns'
+      查到别的名字就在 env.yaml 设 nodelocaldns_coredns_svc。
 
-- name: "[NodeLocalDNS] 记录 CoreDNS ClusterIP(Corefile forward 目标)"
+- name: "[NodeLocalDNS] 记录 CoreDNS svc 名与 ClusterIP(Corefile forward 目标)"
   set_fact:
-    coredns_svc_ip: "{{ _coredns_svc.stdout | trim }}"
+    coredns_svc_name: "{{ (_coredns_svc.stdout | trim).split()[0] }}"
+    coredns_svc_ip: "{{ (_coredns_svc.stdout | trim).split()[1] }}"
+
+- name: "[NodeLocalDNS] 上游 CoreDNS"
+  debug:
+    msg: "上游 CoreDNS Service = kube-system/{{ coredns_svc_name }} ({{ coredns_svc_ip }})"
 
 - name: "[NodeLocalDNS] 渲染 nodelocaldns manifest"
   template:

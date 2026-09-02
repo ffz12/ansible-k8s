@@ -15,6 +15,9 @@
 
 - name: Sync etcd configuration to all current cluster members
   template:
+    # ⚠ 故意跨 role 引用 etcd-install 的模板(绝对路径), 保证【全仓只有一份】etcd.conf.yml.j2。
+    #   本 role 下曾有一份同名副本, 但没人引用且已与这份漂移(少了 etcd_initial_cluster_state
+    #   的 default('new')) —— 改那份不生效, 属静默陷阱, 已删除。改 etcd 配置只改下面这一份。
     src: "{{ playbook_dir }}/roles/etcd/etcd-install/templates/etcd.conf.yml.j2"
     dest: "{{ etcd_conf_dir }}/etcd.conf.yml"
     owner: "{{ etcd_user | default('etcd') }}"
