@@ -1,0 +1,53 @@
+# roles/kubernetes/kubelet-serving-cert/tasks/cluster.yml
+# 集群侧动作: patch kubelet-config CM + 审批 kubelet-serving CSR。
+# 由 playbook 的第二个 play 调用, 该 play 的 hosts 已经就是首 master 单机, 故本文件内
+# 不再写 run_once / delegate_to(原先在全集群 play 里才需要那两个; 留着反而在 --limit
+# 场景下会把动作甩到不在 limit 内的主机)。【始终在首 master 上跑一次】——
+# 不能和节点侧放一起: 节点侧对"已配好"的老节点会 end_host 早停, 若审批也在那个 play 里,
+# 加节点时就会全员早停 -> 新节点的 CSR 没人批。
+# -------- 持久化到 kubelet-config ConfigMap(新节点 join 拉 CM 时继承) --------
+- name: "[serving-cert] patch kubelet-config CM 加 serverTLSBootstrap(缺则加, 幂等)"
+  shell: |
+    set -e
+    kubectl -n kube-system get cm kubelet-config -o json > /tmp/kubelet-config-cm.json 2>/dev/null || exit 0
+    python3 - <<'PY'
+    import json
+    p="/tmp/kubelet-config-cm.json"
+    cm=json.load(open(p))
+    k=cm.get("data",{}).get("kubelet","")
+    if not k or "serverTLSBootstrap" in k:
+        open("/tmp/kubelet-config-need-patch","w").write("no"); raise SystemExit
+    cm["data"]["kubelet"]=k.rstrip()+"\nserverTLSBootstrap: true\n"
+    json.dump({"data":cm["data"]}, open("/tmp/kubelet-config-patch.json","w"))
+    open("/tmp/kubelet-config-need-patch","w").write("yes")
+    PY
+    if [ "$(cat /tmp/kubelet-config-need-patch 2>/dev/null)" = "yes" ]; then
+      kubectl -n kube-system patch cm kubelet-config --type merge -p "$(cat /tmp/kubelet-config-patch.json)"
+      echo "PATCHED"
+    else
+      echo "ALREADY"
+    fi
+  args:
+    executable: /bin/bash
+  register: _cm_patch
+  changed_when: "'PATCHED' in _cm_patch.stdout"
+  failed_when: false
+
+# -------- 审批 kubelet-serving CSR(只批已知节点, 幂等) --------
+- name: "[serving-cert] 列出 Pending 的 kubelet-serving CSR(名字 + 请求者)"
+  shell: >
+    kubectl get csr -o
+    go-template='{% raw %}{{range .items}}{{if not .status.conditions}}{{if eq .spec.signerName "kubernetes.io/kubelet-serving"}}{{.metadata.name}} {{.spec.username}}{{"\n"}}{{end}}{{end}}{{end}}{% endraw %}'
+  register: _pending_csr
+  changed_when: false
+
+- name: "[serving-cert] 审批(仅 signer=kubelet-serving 且请求者是已知 inventory 节点)"
+  shell: "kubectl certificate approve {{ item.split()[0] }}"
+  loop: "{{ _pending_csr.stdout_lines }}"
+  when:
+    - (item.split() | length) == 2
+    - item.split()[1].startswith('system:node:')
+    - (item.split()[1].split(':') | length) == 3
+    - item.split()[1].split(':')[2] in ((groups['k8s_master'] | default([])) + (groups['k8s_node'] | default([])) | unique)
+  register: _csr_approve
+  changed_when: "'approved' in (_csr_approve.stdout | default(''))"

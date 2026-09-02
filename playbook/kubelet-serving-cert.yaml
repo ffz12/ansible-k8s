@@ -17,13 +17,35 @@
 #
 #  用法:
 #    ansible-playbook -i inventory/hosts playbook/kubelet-serving-cert.yaml
+#  加新节点后跑本 playbook: 老节点(已开 serverTLSBootstrap)会自动跳过, 只处理新节点 +
+#  在首 master 上批新 CSR。想强制对已配好的节点重跑: -e force_serving_cert=true。
 #
 #  ⚠ cluster-signing-duration 只对【此后新签发】的证书生效, 已签好的仍是原有效期。
 #    存量 1 年期证书想立刻换成 100 年: 逐台删掉 /var/lib/kubelet/pki 下对应的 *-current.pem
 #    并重启 kubelet, 待其重新申请后重跑本 playbook 审批(playbook 末尾会打印具体命令)。
 #  证书到期重签会再产 CSR, 重跑本 playbook 即可再次审批。
 # ============================================================================
-- name: kubelet serving 证书(serverTLSBootstrap + 审批 kubelet-serving CSR)
+# ── 为什么拆三个 play ──
+# 加一个新节点时不该动老节点。节点侧(play 1)对"已开好 serverTLSBootstrap"的老节点
+# end_host 早停; 但 CSR 审批必须照跑, 否则新节点的 CSR 没人批 —— 故审批单独成 play 2
+# (始终在首 master 跑一次, 不受早停影响), 节点侧验证再单独成 play 3(要在审批之后)。
+- name: "[1/3] 节点侧: 开 serverTLSBootstrap + 补 cluster-signing-duration(已配好的节点自动跳过)"
   hosts: k8s_master:k8s_node
-  roles:
-    - kubernetes/kubelet-serving-cert
+  tasks:
+    - include_tasks: roles/kubernetes/kubelet-serving-cert/tasks/main.yml
+  handlers:
+    - name: restart kubelet
+      systemd:
+        name: kubelet
+        state: restarted
+        daemon_reload: yes
+
+- name: "[2/3] 集群侧: patch kubelet-config CM + 审批 kubelet-serving CSR"
+  hosts: "{{ groups['k8s_master'][0] }}"
+  tasks:
+    - include_tasks: roles/kubernetes/kubelet-serving-cert/tasks/cluster.yml
+
+- name: "[3/3] 节点侧验证: 10250 证书 issuer 应为集群 CA"
+  hosts: k8s_master:k8s_node
+  tasks:
+    - include_tasks: roles/kubernetes/kubelet-serving-cert/tasks/verify.yml

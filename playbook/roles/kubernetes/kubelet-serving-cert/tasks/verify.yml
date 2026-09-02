@@ -1,0 +1,29 @@
+# roles/kubernetes/kubelet-serving-cert/tasks/verify.yml
+# 节点侧验证: 各节点自己读 10250 上的 serving 证书, 确认 issuer 是集群 CA(非自签名)。
+# 单独一个文件是因为它必须在【审批之后】跑 —— 而审批是集群侧动作(cluster.yml)。
+# -------- 验证:各节点 10250 serving 证书 issuer/SAN --------
+- name: "[serving-cert] 读取本机 10250 serving 证书"
+  shell: |
+    echo | openssl s_client -connect 127.0.0.1:10250 2>/dev/null | \
+      openssl x509 -noout -issuer -subject -dates -ext subjectAltName 2>/dev/null || true
+  register: _kubelet_10250
+  changed_when: false
+
+- name: "[serving-cert] 打印 10250 证书信息(issuer 应为集群 CA, 非自签名)"
+  debug:
+    var: _kubelet_10250.stdout_lines
+
+# -------- 提示: 存量 1 年期证书不会自动变长 --------
+# cluster-signing-duration 只影响【此后新签发】的证书; 已签好的仍是原有效期, 要等轮换才更新。
+# 想立刻换成 100 年: 删掉现有证书让 kubelet 重新申请, 再重跑本 playbook 审批。
+#   注意 kubelet-serving-cert 与 kubelet-client-current.pem 是两张(serving/client), 按需删。
+- name: "[serving-cert] 存量证书有效期提示"
+  debug:
+    msg: >-
+      当前 10250 证书有效期见上。cluster-signing-duration={{ kube_signing_duration }}
+      只对【新签发】生效 —— 若上面 notAfter 仍是 1 年后, 说明是旧证书。
+      立即换成新有效期: 在该节点执行
+      `rm -f {{ kubelet_pki_dir }}/kubelet-server-current.pem {{ kubelet_pki_dir }}/kubelet-server-*.pem
+      && systemctl restart kubelet`, 待其重新申请后重跑本 playbook 审批新 CSR。
+      (client 证书同理, 删 kubelet-client-current.pem; 但删错会掉线, 逐台做并确认恢复。)
+  run_once: true
