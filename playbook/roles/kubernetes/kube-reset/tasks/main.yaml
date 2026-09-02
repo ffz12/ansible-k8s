@@ -64,7 +64,10 @@
 
 - name: "[Reset] 清理 CNI 虚拟网卡(best-effort)"
   shell: |
-    for i in cni0 flannel.1 vxlan.calico tunl0 kube-ipvs0 cilium_host cilium_net cilium_vxlan; do
+    # nodelocaldns 也在列: 它建一块 dummy 网卡(名字即 nodelocaldns)绑 link-local
+    # {{ nodelocaldns_ip | default('169.254.25.10') }}。DaemonSet 删了这块网卡不会自动消失,
+    # 重装后新 Pod 起来时地址已被占用 -> bind 失败, 本地 DNS 静默不可用。
+    for i in cni0 flannel.1 vxlan.calico tunl0 kube-ipvs0 cilium_host cilium_net cilium_vxlan nodelocaldns; do
       ip link delete "$i" 2>/dev/null || true
     done
   args:
