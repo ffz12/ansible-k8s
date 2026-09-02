@@ -1,5 +1,14 @@
-- name: 初始化控制平面
-  hosts: k8s_master
+# 初始化控制平面 —— 只操作【第一台 master】(kubeadm init 本身只能在一台上做)。
+# 其余 master 由 playbook/k8s-add-master.yaml 加入(它会先跑 kube-common 装二进制/配 kubelet)。
+#
+# ⚠ 原来这里 hosts: k8s_master(全部 master), 导致:
+#   · 名字叫"init master"却对 3 台都跑 kube-common(装二进制、下发 kubelet 配置);
+#   · 对【已在网】的集群重跑时, kube-common 的 handler 会把所有 master 的 kubelet 逐台重启
+#     —— 控制面无谓抖动。k8s-add-node.yaml 早就有"已加入则整台跳过"的保护, 这里没有。
+#   现改为只跑首台; 全新装机想一把梭请用 playbook/k8s-install.yaml(它对全部 master 跑
+#   kube-common 再 init 首台 + join 其余, 一趟到位)。
+- name: 初始化控制平面(仅第一台 master)
+  hosts: "{{ groups['k8s_master'][0] }}"
   roles:
     - kubernetes/kube-common
     - kubernetes/kube-init-master

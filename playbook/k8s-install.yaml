@@ -5,6 +5,43 @@
 # 加 master: 直接把新节点加进 [k8s_master], 用 --limit 新master 跑本 playbook
 - name: 安装 Kubernetes 控制平面
   hosts: k8s_master
+  # 已加入的 master 整台早停 —— 与 k8s-add-master / k8s-add-node 保持一致。
+  # 全新装机时集群还不存在: kubectl 查不通(rc!=0)→ 回退看本机 kubelet.conf → 不存在 →
+  # 判定未加入 → 正常往下跑, 不影响首次安装。
+  # 在【已跑起来】的集群上重跑本 playbook 时才生效: 跳过在网 master, 避免 kube-common
+  # 重下发配置触发 handler 把控制面 kubelet 逐台重启。
+  # 需对已加入节点重下发配置: -e force_common=true。
+  pre_tasks:
+    - name: "[Install] 预检: 本机是否有 kubelet.conf"
+      stat:
+        path: "{{ kube_config_dir }}/kubelet.conf"
+      register: _pre_i_kubelet_conf
+      tags: always
+
+    - name: "[Install] 预检: 到 first master 查集群里是否已有该 Node"
+      command: >
+        kubectl --kubeconfig {{ kube_config_dir }}/admin.conf
+        get node {{ inventory_hostname }} --ignore-not-found -o name
+      delegate_to: "{{ groups['k8s_master'][0] }}"
+      become: yes
+      register: _pre_i_in_cluster
+      changed_when: false
+      failed_when: false
+      tags: always
+
+    - name: "[Install] 判定是否已加入(kubectl 优先, 不可用则回退 kubelet.conf)"
+      set_fact:
+        _i_already_joined: >-
+          {{ (_pre_i_in_cluster.rc == 0 and (_pre_i_in_cluster.stdout | trim | length > 0))
+             or (_pre_i_in_cluster.rc != 0 and _pre_i_kubelet_conf.stat.exists) }}
+      tags: always
+
+    - name: "[Install] 已加入则整台跳过(-e force_common=true 可强制重跑 kube-common)"
+      meta: end_host
+      when:
+        - _i_already_joined | bool
+        - not (force_common | default(false) | bool)
+      tags: always
   roles:
     - kubernetes/kube-common
     - kubernetes/kube-init-master

@@ -1,6 +1,44 @@
-# 加 master: 新节点加进 [k8s_master], 用 --limit 新master 跑(已加入的会自动早停)
+# 加 master: 新节点加进 [k8s_master], 直接跑本 playbook(已加入的整台早停, 无需 --limit)
+#
+# ⚠ 早停必须放在 pre_tasks(kube-common 之【前】): kube-add-master 内部虽有 kubelet.conf
+#   判断能拦住 join, 但那是在 kube-common 跑完之后 —— 已在网的 master 会白跑一遍
+#   kube-common(重装二进制、重下发 kubelet 配置), 其 handler 还会把在网 master 的 kubelet
+#   逐台重启, 控制面无谓抖动。与 k8s-add-node.yaml 的做法对齐。
+#   需要对已加入的 master 重下发配置时: -e force_common=true(此时 kube-add-master 内部的
+#   kubelet.conf 判断仍拦住 join, 即"只重配置、不重加入")。
 - name: 加入 master
   hosts: k8s_master
+  pre_tasks:
+    - name: "[Add Master] 预检: 本机是否有 kubelet.conf"
+      stat:
+        path: "{{ kube_config_dir }}/kubelet.conf"
+      register: _pre_m_kubelet_conf
+      tags: always
+
+    - name: "[Add Master] 预检: 到 first master 查集群里是否已有该 Node"
+      command: >
+        kubectl --kubeconfig {{ kube_config_dir }}/admin.conf
+        get node {{ inventory_hostname }} --ignore-not-found -o name
+      delegate_to: "{{ groups['k8s_master'][0] }}"
+      become: yes   # admin.conf 是 root:root 0600, 非 root 连接身份读不到 -> rc!=0 回退本地判断
+      register: _pre_m_in_cluster
+      changed_when: false
+      failed_when: false
+      tags: always
+
+    - name: "[Add Master] 判定是否已加入(kubectl 优先, 不可用则回退 kubelet.conf)"
+      set_fact:
+        _m_already_joined: >-
+          {{ (_pre_m_in_cluster.rc == 0 and (_pre_m_in_cluster.stdout | trim | length > 0))
+             or (_pre_m_in_cluster.rc != 0 and _pre_m_kubelet_conf.stat.exists) }}
+      tags: always
+
+    - name: "[Add Master] 已加入则整台跳过(-e force_common=true 可强制重跑 kube-common)"
+      meta: end_host
+      when:
+        - _m_already_joined | bool
+        - not (force_common | default(false) | bool)
+      tags: always
   roles:
     - kubernetes/kube-common
     - kubernetes/kube-add-master
