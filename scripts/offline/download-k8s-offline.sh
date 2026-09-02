@@ -35,6 +35,7 @@ esac
 : "${FLANNEL_CNI:=1.6.2-flannel1}"
 : "${CILIUM:=1.16.5}"
 : "${HELM:=3.16.4}"
+: "${MULTUS:=4.2.4}"             # multus-cni(可选多网卡元 CNI; enable_multus=true 才用)
 : "${CNI_PLUGINS:=1.6.2}"        # containernetworking/plugins(bandwidth/portmap/tuning...); calico 不带 bandwidth
 : "${NODELOCALDNS:=1.26.4}"        # NodeLocal DNSCache (k8s-dns-node-cache); registry.k8s.io/dns 正规上游 tag
 
@@ -45,6 +46,7 @@ IMG_MIRROR="registry.aliyuncs.com/google_containers"    # k8s 组件/pause/cored
 CALICO_SRC="docker.m.daocloud.io/calico"                # = docker.io/calico(daocloud 加速)
 FLANNEL_SRC="docker.m.daocloud.io/flannel"              # = docker.io/flannel
 CILIUM_SRC="quay.m.daocloud.io/cilium"                  # = quay.io/cilium(daocloud 加速)
+MULTUS_SRC="ghcr.m.daocloud.io/k8snetworkplumbingwg"   # = ghcr.io/k8snetworkplumbingwg(daocloud 加速)
 NODELOCALDNS_SRC="k8s.m.daocloud.io/dns"               # = registry.k8s.io/dns(daocloud 加速); 1.26.4 是上游正规 tag(现网即拉自此)
 # -------- 二进制源: daocloud 通用文件代理(国内快, 一个源代理 dl.k8s.io/github/get.helm.sh) --------
 DAO="https://files.m.daocloud.io"
@@ -197,5 +199,10 @@ for cni in $CNIS; do case $cni in
     # cilium chart: 直接下 tgz(无需本机 helm), 对齐 cilium_chart_src
     dl "$CILIUM_HELM_REPO/cilium-$CILIUM.tgz" "$B/cni/cilium/v$CILIUM/cilium-$CILIUM.tgz" ;;
 esac; done
+
+# ========== 4.5 multus-cni 镜像(可选叠加, enable_multus=true 时部署会用到) ==========
+# 与 CNIS 三选一无关: multus 是"元 CNI", 叠在主 CNI 之上。部署端路径见 defaults.yaml
+# 的 src_multus_cni_images_dir; load 名带 -arch 后缀, 与 sync 时的 tag 规则对齐。
+save_img "$MULTUS_SRC/multus-cni:v$MULTUS" "ghcr.io/k8snetworkplumbingwg/multus-cni:v$MULTUS-__ARCH__" "$B/cni/multus/v$MULTUS/images" "multus-cni"
 
 say "全部完成! 物料在 $B ; 拷回内网后 -e is_offline=true 部署。"

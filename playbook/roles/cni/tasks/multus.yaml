@@ -1,6 +1,13 @@
 # 可选: 部署 multus 多网卡元 CNI(叠加在主 CNI 之上)
 # 注: multus 镜像目前按离线 Harbor 布局(multus-daemonset.yml.j2 内引用 registry),
 #     在线场景如需 multus 请自行确认镜像可达。
+
+# 离线: 先把 multus 镜像推进 Harbor —— 模板引用 {{ registry }}/multus-cni,
+# 而 sync-cni-images 只管三选一的主 CNI, 不含 multus。缺这步 DaemonSet 会 ImagePullBackOff。
+- name: "[Multus] 离线同步 multus 镜像到 Harbor"
+  include_tasks: sync-multus-image.yaml
+  when: is_offline | default(false) | bool
+
 - name: 渲染 multus DaemonSet
   template:
     src: multus-daemonset.yml.j2

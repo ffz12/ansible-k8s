@@ -1,7 +1,9 @@
-# 离线: 按所选 CNI 把镜像 load 并推到自建 Harbor(仅 is_offline 时由 main.yaml 调用)
-# 目标仓库固定为自建 Harbor({{ registry }}), 与 calico_images 离线分支一致。
-
-# ---------- Calico ----------
+# roles/cni/tasks/sync-cni-images.yaml
+# 离线: 把所选 CNI 的镜像 load 并推到自建 Harbor({{ registry }})。
+#
+# 架构处理: 不硬编码 amd64+arm64 —— 按【控制机上实际存在的物料】决定同步哪些架构。
+# 下载脚本按 offline_arch 只拉声明的架构(单架构站点 offline_arch=amd64 就只有 amd64),
+# 硬编码双架构会在 docker load arm64 那步直接失败。
 - name: "[Sync CNI] 登录 Harbor"
   shell: |
     echo "{{ harbor_admin_password }}" | docker login "{{ harbor_dns }}" -u "{{ harbor_admin_username }}" --password-stdin
@@ -10,37 +12,64 @@
   register: cni_login
   failed_when: "'Login Succeeded' not in cni_login.stdout"
 
+- name: "[Sync CNI] 探测控制机上有哪些架构的 {{ kube_network_plugin }} 物料"
+  stat:
+    path: "{{ _cni_src_dir }}/{{ item }}"
+  delegate_to: localhost
+  become: no
+  register: _cni_arch_stat
+  loop: [amd64, arm64]
+  vars:
+    _cni_src_dir: >-
+      {{ src_calico_images_dir if kube_network_plugin == 'calico'
+         else (src_flannel_images_dir if kube_network_plugin == 'flannel'
+         else src_cilium_images_dir) }}
+
+- name: "[Sync CNI] 记录可用架构"
+  set_fact:
+    _cni_archs: "{{ _cni_arch_stat.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+
+- name: "[Sync CNI] 物料缺失则明确报错"
+  assert:
+    that: _cni_archs | length > 0
+    fail_msg: >-
+      {{ kube_network_plugin }} 离线镜像目录下没有 amd64/arm64 任何一个架构 ——
+      物料未下载。请在有网机器上跑: bash scripts/offline/download-k8s-offline.sh
+
+- name: "[Sync CNI] 本次同步的架构"
+  debug:
+    msg: "{{ kube_network_plugin }}: 将同步 {{ _cni_archs | join(', ') }}"
+
+# ---------- Calico ----------
 - name: "[Sync CNI] 复制 calico 镜像到本地"
   copy:
     src: "{{ src_calico_images_dir }}"
     dest: "{{ calico_images_dir }}"
   when: kube_network_plugin == 'calico'
 
-- name: "[Sync CNI] 同步 calico 镜像并建 multi-arch manifest"
+- name: "[Sync CNI] 同步 calico 镜像并建 manifest"
   shell: |
     set -e
     COMP="{{ item }}"
     VERSION="v{{ calico_version }}"
     REGISTRY="{{ registry }}"
-    if docker manifest inspect --insecure "${REGISTRY}/calico-${COMP}:${VERSION}" >/dev/null 2>&1; then echo "skip calico-${COMP}:${VERSION} (已在 harbor)"; exit 0; fi
-    docker load -i "{{ calico_images_dir }}/images/amd64/${COMP}.tar.gz"
-    docker load -i "{{ calico_images_dir }}/images/arm64/${COMP}.tar.gz"
-    docker tag "calico/${COMP}:${VERSION}-amd64" "${REGISTRY}/calico-${COMP}:${VERSION}-amd64"
-    docker tag "calico/${COMP}:${VERSION}-arm64" "${REGISTRY}/calico-${COMP}:${VERSION}-arm64"
-    docker push "${REGISTRY}/calico-${COMP}:${VERSION}-amd64"
-    docker push "${REGISTRY}/calico-${COMP}:${VERSION}-arm64"
-    if docker manifest inspect --insecure "${REGISTRY}/calico-${COMP}:${VERSION}" >/dev/null 2>&1; then
-      docker manifest rm "${REGISTRY}/calico-${COMP}:${VERSION}" >/dev/null 2>&1 || true
-    fi
-    docker manifest create --insecure "${REGISTRY}/calico-${COMP}:${VERSION}" \
-      "${REGISTRY}/calico-${COMP}:${VERSION}-amd64" \
-      "${REGISTRY}/calico-${COMP}:${VERSION}-arm64"
-    docker manifest annotate "${REGISTRY}/calico-${COMP}:${VERSION}" \
-      "${REGISTRY}/calico-${COMP}:${VERSION}-amd64" --os linux --arch amd64
-    docker manifest annotate "${REGISTRY}/calico-${COMP}:${VERSION}" \
-      "${REGISTRY}/calico-${COMP}:${VERSION}-arm64" --os linux --arch arm64
-    docker manifest push --insecure "${REGISTRY}/calico-${COMP}:${VERSION}"
-    docker rmi "${REGISTRY}/calico-${COMP}:${VERSION}-amd64" "${REGISTRY}/calico-${COMP}:${VERSION}-arm64" || true
+    ARCHS="{{ _cni_archs | join(' ') }}"
+    DST="${REGISTRY}/calico-${COMP}:${VERSION}"
+    if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip calico-${COMP}:${VERSION} (已在 harbor)"; exit 0; fi
+    MANIFEST_ARGS=""
+    for a in $ARCHS; do
+      docker load -i "{{ calico_images_dir }}/images/${a}/${COMP}.tar.gz"
+      docker tag "calico/${COMP}:${VERSION}-${a}" "${DST}-${a}"
+      docker push "${DST}-${a}"
+      MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
+    done
+    docker manifest rm "${DST}" >/dev/null 2>&1 || true
+    docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
+    for a in $ARCHS; do
+      docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
+    done
+    docker manifest push --insecure "${DST}"
+    for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
   loop: "{{ calico_components }}"
   args:
     executable: /bin/bash
@@ -53,29 +82,31 @@
     dest: "{{ flannel_images_dir }}"
   when: kube_network_plugin == 'flannel'
 
-- name: "[Sync CNI] 同步 flannel 镜像并建 multi-arch manifest"
+- name: "[Sync CNI] 同步 flannel 镜像并建 manifest"
   shell: |
     set -e
     REGISTRY="{{ registry }}"
+    ARCHS="{{ _cni_archs | join(' ') }}"
+    # $1=本地镜像名(不含 -arch) $2=目标(含 tag, 不含 -arch) $3=tar 文件名(不含 .tar.gz)
     sync_one() {
-      local SRC="$1" DST="$2"    # SRC 不含 -arch 后缀, DST 目标(不含 tag)
+      local SRC="$1" DST="$2" TAR="$3" a MANIFEST_ARGS=""
       if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${DST} (已在 harbor)"; return 0; fi
-      docker tag "${SRC}-amd64" "${DST}-amd64"
-      docker tag "${SRC}-arm64" "${DST}-arm64"
-      docker push "${DST}-amd64"; docker push "${DST}-arm64"
+      for a in $ARCHS; do
+        docker load -i "{{ flannel_images_dir }}/images/${a}/${TAR}.tar.gz"
+        docker tag "${SRC}-${a}" "${DST}-${a}"
+        docker push "${DST}-${a}"
+        MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
+      done
       docker manifest rm "${DST}" >/dev/null 2>&1 || true
-      docker manifest create --insecure "${DST}" "${DST}-amd64" "${DST}-arm64"
-      docker manifest annotate "${DST}" "${DST}-amd64" --os linux --arch amd64
-      docker manifest annotate "${DST}" "${DST}-arm64" --os linux --arch arm64
+      docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
+      for a in $ARCHS; do docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"; done
       docker manifest push --insecure "${DST}"
-      docker rmi "${DST}-amd64" "${DST}-arm64" || true
+      for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
     }
-    docker load -i "{{ flannel_images_dir }}/images/amd64/flannel.tar.gz"
-    docker load -i "{{ flannel_images_dir }}/images/arm64/flannel.tar.gz"
-    docker load -i "{{ flannel_images_dir }}/images/amd64/flannel-cni-plugin.tar.gz"
-    docker load -i "{{ flannel_images_dir }}/images/arm64/flannel-cni-plugin.tar.gz"
-    sync_one "flannel/flannel:v{{ flannel_version }}"            "${REGISTRY}/flannel:v{{ flannel_version }}"
-    sync_one "flannel/flannel-cni-plugin:v1.6.2-flannel1"        "${REGISTRY}/flannel-cni-plugin:v1.6.2-flannel1"
+    sync_one "flannel/flannel:v{{ flannel_version }}" \
+             "${REGISTRY}/flannel:v{{ flannel_version }}" "flannel"
+    sync_one "flannel/flannel-cni-plugin:v{{ flannel_cni_version }}" \
+             "${REGISTRY}/flannel-cni-plugin:v{{ flannel_cni_version }}" "flannel-cni-plugin"
   args:
     executable: /bin/bash
   when: kube_network_plugin == 'flannel'
@@ -87,30 +118,30 @@
     dest: "{{ cilium_images_dir }}"
   when: kube_network_plugin == 'cilium'
 
-- name: "[Sync CNI] 同步 cilium 镜像并建 multi-arch manifest"
+- name: "[Sync CNI] 同步 cilium 镜像并建 manifest"
   shell: |
     set -e
     REGISTRY="{{ registry }}"
+    ARCHS="{{ _cni_archs | join(' ') }}"
     sync_one() {
-      local SRC="$1" DST="$2"
+      local SRC="$1" DST="$2" TAR="$3" a MANIFEST_ARGS=""
       if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${DST} (已在 harbor)"; return 0; fi
-      docker tag "${SRC}-amd64" "${DST}-amd64"
-      docker tag "${SRC}-arm64" "${DST}-arm64"
-      docker push "${DST}-amd64"; docker push "${DST}-arm64"
+      for a in $ARCHS; do
+        docker load -i "{{ cilium_images_dir }}/images/${a}/${TAR}.tar.gz"
+        docker tag "${SRC}-${a}" "${DST}-${a}"
+        docker push "${DST}-${a}"
+        MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
+      done
       docker manifest rm "${DST}" >/dev/null 2>&1 || true
-      docker manifest create --insecure "${DST}" "${DST}-amd64" "${DST}-arm64"
-      docker manifest annotate "${DST}" "${DST}-amd64" --os linux --arch amd64
-      docker manifest annotate "${DST}" "${DST}-arm64" --os linux --arch arm64
+      docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
+      for a in $ARCHS; do docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"; done
       docker manifest push --insecure "${DST}"
-      docker rmi "${DST}-amd64" "${DST}-arm64" || true
+      for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
     }
-    docker load -i "{{ cilium_images_dir }}/images/amd64/cilium.tar.gz"
-    docker load -i "{{ cilium_images_dir }}/images/arm64/cilium.tar.gz"
-    docker load -i "{{ cilium_images_dir }}/images/amd64/operator-generic.tar.gz"
-    docker load -i "{{ cilium_images_dir }}/images/arm64/operator-generic.tar.gz"
-    sync_one "quay.io/cilium/cilium:v{{ cilium_version }}"           "${REGISTRY}/cilium:v{{ cilium_version }}"
-    sync_one "quay.io/cilium/operator-generic:v{{ cilium_version }}" "${REGISTRY}/operator-generic:v{{ cilium_version }}"
+    sync_one "quay.io/cilium/cilium:v{{ cilium_version }}" \
+             "${REGISTRY}/cilium:v{{ cilium_version }}" "cilium"
+    sync_one "quay.io/cilium/operator-generic:v{{ cilium_version }}" \
+             "${REGISTRY}/operator-generic:v{{ cilium_version }}" "operator-generic"
   args:
     executable: /bin/bash
   when: kube_network_plugin == 'cilium'
-

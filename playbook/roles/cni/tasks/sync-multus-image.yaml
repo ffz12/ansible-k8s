@@ -1,0 +1,84 @@
+# roles/cni/tasks/sync-multus-image.yaml
+# 离线: 把 multus-cni 镜像 load 并推到自建 Harbor({{ registry }})。
+# 仅 is_offline 且 enable_multus 时由 multus.yaml 调用。
+#
+# 为什么单独一个文件: sync-cni-images.yaml 只处理三选一的主 CNI(calico/flannel/cilium),
+# multus 是叠加的"元 CNI", 不在那套 when: kube_network_plugin == ... 分支里。
+# 缺这步的话 multus-daemonset 引用的 {{ registry }}/multus-cni 在 Harbor 里不存在,
+# DaemonSet 直接 ImagePullBackOff。
+#
+# 架构按控制机实际物料探测, 不硬编码 amd64+arm64(单架构站点只下一个架构)。
+
+- name: "[Multus] 登录 Harbor"
+  shell: |
+    echo "{{ harbor_admin_password }}" | docker login "{{ harbor_dns }}" -u "{{ harbor_admin_username }}" --password-stdin
+  args:
+    executable: /bin/bash
+  register: multus_login
+  failed_when: "'Login Succeeded' not in multus_login.stdout"
+
+- name: "[Multus] 探测控制机上有哪些架构的 multus 物料"
+  stat:
+    path: "{{ src_multus_cni_images_dir }}/{{ item }}/multus-cni.tar.gz"
+  delegate_to: localhost
+  become: no
+  register: _multus_src
+  loop: [amd64, arm64]
+
+- name: "[Multus] 记录可用架构"
+  set_fact:
+    _multus_archs: "{{ _multus_src.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+
+- name: "[Multus] 物料缺失则明确报错"
+  assert:
+    that: _multus_archs | length > 0
+    fail_msg: >-
+      {{ src_multus_cni_images_dir }}/{amd64,arm64}/multus-cni.tar.gz 都不存在 ——
+      multus 离线镜像未下载。请在有网机器上跑 bash scripts/offline/download-k8s-offline.sh
+      (已含 multus 层), 或置 enable_multus=false 不装 multus。
+
+- name: "[Multus] 本次同步的架构"
+  debug:
+    msg: "multus: 将同步 {{ _multus_archs | join(', ') }}"
+
+# copy 拷单个文件不会自动建父目录, 先建好
+- name: "[Multus] 创建镜像存放目录"
+  file:
+    path: "{{ multus_cni_images_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ _multus_archs }}"
+
+- name: "[Multus] 复制 multus 镜像到本地"
+  copy:
+    src: "{{ src_multus_cni_images_dir }}/{{ item }}/multus-cni.tar.gz"
+    dest: "{{ multus_cni_images_dir }}/{{ item }}/multus-cni.tar.gz"
+    mode: "0644"
+  loop: "{{ _multus_archs }}"
+
+- name: "[Multus] 同步镜像到 Harbor 并建 manifest"
+  shell: |
+    set -e
+    REGISTRY="{{ registry }}"
+    VER="v{{ multus_cni_version }}"
+    DST="${REGISTRY}/multus-cni:${VER}"
+    ARCHS="{{ _multus_archs | join(' ') }}"
+    if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${DST} (已在 harbor)"; exit 0; fi
+    MANIFEST_ARGS=""
+    for a in $ARCHS; do
+      docker load -i "{{ multus_cni_images_dir }}/${a}/multus-cni.tar.gz"
+      docker tag "ghcr.io/k8snetworkplumbingwg/multus-cni:${VER}-${a}" "${DST}-${a}"
+      docker push "${DST}-${a}"
+      MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
+    done
+    docker manifest rm "${DST}" >/dev/null 2>&1 || true
+    docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
+    for a in $ARCHS; do
+      docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
+    done
+    docker manifest push --insecure "${DST}"
+    for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
+  args:
+    executable: /bin/bash
