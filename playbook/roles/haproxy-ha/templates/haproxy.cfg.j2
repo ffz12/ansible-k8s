@@ -36,6 +36,12 @@ backend k8s-api-backend
     # inter 3s     - 每3秒检查一次，默认2s
     # fall 3       - 连续3次失败标记为不可用，默认3
     # rise 2       - 连续2次成功恢复为可用，默认2
-{% for ip in groups['k8slb'] %}
+{# 后端必须是【apiserver 所在的 master】, 不是 LB 机器自己。
+   原来遍历 groups['k8slb'] —— 当 LB 与 master 同机(在 master 上跑 haproxy)时碰巧能用,
+   但 LB 独立部署时会把后端指向 LB 自己的 apiserver_port, 那里没有 apiserver -> 全连不通。
+   与 nginx-ha 的 lb_upstream_servers 口径对齐: k8s_master + master_to_add - master_to_delete。 #}
+{% set _api_backends = ((groups.k8s_master | default([])) + (groups.master_to_add | default([])))
+                       | difference(groups.master_to_delete | default([])) | unique %}
+{% for ip in _api_backends %}
     server  {{ hostvars[ip]['inventory_hostname'] }}  {{ hostvars[ip].ansible_host | default(ip) }}:{{ apiserver_port }}     check inter 5s rise 2 fall 3
 {% endfor %}
