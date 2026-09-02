@@ -47,23 +47,32 @@
     - kubeadm_etcd_version is defined
 
 - name: "[Sync Images] 确保 Harbor 项目存在"
-  uri:
-    url: "https://{{ harbor_dns }}/api/v2.0/projects"
-    method: POST
-    user: "{{ harbor_admin_username }}"
-    password: "{{ harbor_admin_password }}"
-    force_basic_auth: yes
-    validate_certs: no  # 相当于 curl -k
-    body_format: json
-    body:
-      project_name: "{{ item }}"
-      public: true
-    status_code: [201, 409]  # 201=创建成功, 409=已存在
-  loop:
-    - library
-    - "{{ harbor_project | default('kubernetes') }}"
-  run_once: true
-  when: "'aliyuncs.com' not in harbor_dns"
+  include_tasks: "{{ playbook_dir }}/tasks/ensure-harbor-project.yml"
+
+# 架构按控制机实际物料探测, 不硬编码 amd64+arm64(单架构站点只下一个架构,
+# 硬编码会在 docker load 缺失架构那步失败)
+- name: "[Sync Images] 探测控制机上有哪些架构的 k8s 镜像物料"
+  stat:
+    path: "{{ src_k8s_images_dir }}/{{ item }}"
+  delegate_to: localhost
+  become: no
+  register: _k8s_arch_stat
+  loop: [amd64, arm64]
+
+- name: "[Sync Images] 记录可用架构"
+  set_fact:
+    _k8s_archs: "{{ _k8s_arch_stat.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+
+- name: "[Sync Images] 物料缺失则明确报错"
+  assert:
+    that: _k8s_archs | length > 0
+    fail_msg: >-
+      {{ src_k8s_images_dir }} 下没有 amd64/arm64 任何一个架构目录 —— k8s 镜像物料未下载。
+      请先跑: bash scripts/offline/download-k8s-offline.sh
+
+- name: "[Sync Images] 本次同步的架构"
+  debug:
+    msg: "k8s 镜像: 将同步 {{ _k8s_archs | join(', ') }}"
 
 - name: "[Sync Images] 登录 Harbor"
   shell: |
@@ -82,39 +91,24 @@
     set -e
     IMAGE_NAME="{{ item }}"
     TAG="{{ pause_image_version }}"
-    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
-
-    # 加载 amd64 和 arm64 镜像
-    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar.gz"
-    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar.gz"
-
-    # 打标签（注意：源镜像名需匹配实际加载后的名称）
-    docker tag "registry.k8s.io/${IMAGE_NAME}-amd64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
-    docker tag "registry.k8s.io/${IMAGE_NAME}-arm64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
-
-    # 推送单架构镜像
-    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
-    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
-
-    # 创建 multi-arch manifest
-    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then
-      docker manifest rm "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1 || true
-    fi
-
-    docker manifest create --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
-
-    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" --os linux --arch amd64
-
-    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" --os linux --arch arm64
-
-    docker manifest push --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}"
-
-    # 清理本地临时镜像
-    docker rmi "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" || true
+    DST="{{ registry }}/${IMAGE_NAME}:${TAG}"
+    ARCHS="{{ _k8s_archs | join(' ') }}"
+    if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
+    MANIFEST_ARGS=""
+    for a in $ARCHS; do
+      docker load -i "{{ k8s_images_dir }}/images/${a}/${IMAGE_NAME}.tar.gz"
+      # 源镜像名带 -arch 后缀(save_img 存 tar 时按 __ARCH__ 模板打的标签)
+      docker tag "registry.k8s.io/${IMAGE_NAME}-${a}:${TAG}" "${DST}-${a}"
+      docker push "${DST}-${a}"
+      MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
+    done
+    docker manifest rm "${DST}" >/dev/null 2>&1 || true
+    docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
+    for a in $ARCHS; do
+      docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
+    done
+    docker manifest push --insecure "${DST}"
+    for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
   loop: 
   - pause
   args:
@@ -125,39 +119,24 @@
     set -e
     IMAGE_NAME="{{ item }}"
     TAG="v{{ coredns_version }}"
-    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
-
-    # 加载 amd64 和 arm64 镜像
-    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar.gz"
-    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar.gz"
-
-    # 打标签（注意：源镜像名需匹配实际加载后的名称）
-    docker tag "registry.k8s.io/${IMAGE_NAME}-amd64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
-    docker tag "registry.k8s.io/${IMAGE_NAME}-arm64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
-
-    # 推送单架构镜像
-    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
-    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
-
-    # 创建 multi-arch manifest
-    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then
-      docker manifest rm "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1 || true
-    fi
-
-    docker manifest create --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
-
-    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" --os linux --arch amd64
-
-    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" --os linux --arch arm64
-
-    docker manifest push --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}"
-
-    # 清理本地临时镜像
-    docker rmi "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" || true
+    DST="{{ registry }}/${IMAGE_NAME}:${TAG}"
+    ARCHS="{{ _k8s_archs | join(' ') }}"
+    if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
+    MANIFEST_ARGS=""
+    for a in $ARCHS; do
+      docker load -i "{{ k8s_images_dir }}/images/${a}/${IMAGE_NAME}.tar.gz"
+      # 源镜像名带 -arch 后缀(save_img 存 tar 时按 __ARCH__ 模板打的标签)
+      docker tag "registry.k8s.io/${IMAGE_NAME}-${a}:${TAG}" "${DST}-${a}"
+      docker push "${DST}-${a}"
+      MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
+    done
+    docker manifest rm "${DST}" >/dev/null 2>&1 || true
+    docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
+    for a in $ARCHS; do
+      docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
+    done
+    docker manifest push --insecure "${DST}"
+    for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
   loop:
   - coredns
   args:
@@ -169,39 +148,24 @@
     set -e
     IMAGE_NAME="{{ item }}"
     TAG="v{{ k8s_version }}"
-    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
-
-    # 加载 amd64 和 arm64 镜像
-    docker load -i "{{ k8s_images_dir }}/images/amd64/${IMAGE_NAME}.tar.gz"
-    docker load -i "{{ k8s_images_dir }}/images/arm64/${IMAGE_NAME}.tar.gz"
-
-    # 打标签（注意：源镜像名需匹配实际加载后的名称）
-    docker tag "registry.k8s.io/${IMAGE_NAME}-amd64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
-    docker tag "registry.k8s.io/${IMAGE_NAME}-arm64:${TAG}" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
-
-    # 推送单架构镜像
-    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64"
-    docker push "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
-
-    # 创建 multi-arch manifest
-    if docker manifest inspect --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1; then
-      docker manifest rm "{{ registry }}/${IMAGE_NAME}:${TAG}" >/dev/null 2>&1 || true
-    fi
-
-    docker manifest create --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64"
-
-    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" --os linux --arch amd64
-
-    docker manifest annotate  "{{ registry }}/${IMAGE_NAME}:${TAG}" \
-      "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" --os linux --arch arm64
-
-    docker manifest push --insecure "{{ registry }}/${IMAGE_NAME}:${TAG}"
-
-    # 清理本地临时镜像
-    docker rmi "{{ registry }}/${IMAGE_NAME}:${TAG}-amd64" "{{ registry }}/${IMAGE_NAME}:${TAG}-arm64" || true
+    DST="{{ registry }}/${IMAGE_NAME}:${TAG}"
+    ARCHS="{{ _k8s_archs | join(' ') }}"
+    if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${IMAGE_NAME}:${TAG} (已在 harbor)"; exit 0; fi
+    MANIFEST_ARGS=""
+    for a in $ARCHS; do
+      docker load -i "{{ k8s_images_dir }}/images/${a}/${IMAGE_NAME}.tar.gz"
+      # 源镜像名带 -arch 后缀(save_img 存 tar 时按 __ARCH__ 模板打的标签)
+      docker tag "registry.k8s.io/${IMAGE_NAME}-${a}:${TAG}" "${DST}-${a}"
+      docker push "${DST}-${a}"
+      MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
+    done
+    docker manifest rm "${DST}" >/dev/null 2>&1 || true
+    docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
+    for a in $ARCHS; do
+      docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
+    done
+    docker manifest push --insecure "${DST}"
+    for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
   loop: "{{ k8s_components }}"
   args:
     executable: /bin/bash

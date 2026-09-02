@@ -4,6 +4,9 @@
 # 架构处理: 不硬编码 amd64+arm64 —— 按【控制机上实际存在的物料】决定同步哪些架构。
 # 下载脚本按 offline_arch 只拉声明的架构(单架构站点 offline_arch=amd64 就只有 amd64),
 # 硬编码双架构会在 docker load arm64 那步直接失败。
+- name: "[Sync CNI] 确保 Harbor 项目存在(独立跑本 playbook 时项目可能还没建)"
+  include_tasks: "{{ playbook_dir }}/tasks/ensure-harbor-project.yml"
+
 - name: "[Sync CNI] 登录 Harbor"
   shell: |
     echo "{{ harbor_admin_password }}" | docker login "{{ harbor_dns }}" -u "{{ harbor_admin_username }}" --password-stdin

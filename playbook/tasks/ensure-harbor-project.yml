@@ -1,0 +1,33 @@
+# playbook/tasks/ensure-harbor-project.yml
+# 幂等确保 Harbor 里存在推镜像用的项目(library + harbor_project)。
+#
+# 为什么抽成共享任务: 有【三处】会往 Harbor push 镜像 ——
+#   ① kube-init-master/sync-images-to-harbor.yml(装机主路径, 原本只有它建项目)
+#   ② cni/sync-cni-images.yaml + cni/sync-multus-image.yaml
+#   ③ nodelocaldns/sync-nodelocaldns-image.yaml
+# 装机时 ① 先跑, 项目已存在, ②③ 才没暴露问题。但独立跑 playbook/k8s-cni.yaml 或
+# playbook/nodelocaldns.yaml 时不经过 ①, 若项目不存在(例如改过 harbor_project),
+# docker push 会直接 401 Unauthorized —— Harbor 对不存在的项目返回 401 而非 404,
+# 极易误判成认证问题。故每个 push 路径前都调用本任务。
+#
+# 用法: - include_tasks: "{{ playbook_dir }}/tasks/ensure-harbor-project.yml"
+
+- name: "[Harbor] 确保项目存在(library + {{ harbor_project | default('kubernetes') }})"
+  uri:
+    url: "https://{{ harbor_dns }}/api/v2.0/projects"
+    method: POST
+    user: "{{ harbor_admin_username }}"
+    password: "{{ harbor_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: no          # 自签证书, 相当于 curl -k
+    body_format: json
+    body:
+      project_name: "{{ item }}"
+      public: true
+    status_code: [201, 409]     # 201=创建成功, 409=已存在(幂等)
+  loop:
+    - library
+    - "{{ harbor_project | default('kubernetes') }}"
+  run_once: true
+  # 用公有云镜像仓(如 aliyuncs)时没有 Harbor API, 跳过
+  when: "'aliyuncs.com' not in harbor_dns"

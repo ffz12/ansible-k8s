@@ -9,6 +9,9 @@
 #
 # 架构按控制机实际物料探测, 不硬编码 amd64+arm64(单架构站点只下一个架构)。
 
+- name: "[Multus] 确保 Harbor 项目存在(独立跑本 playbook 时项目可能还没建)"
+  include_tasks: "{{ playbook_dir }}/tasks/ensure-harbor-project.yml"
+
 - name: "[Multus] 登录 Harbor"
   shell: |
     echo "{{ harbor_admin_password }}" | docker login "{{ harbor_dns }}" -u "{{ harbor_admin_username }}" --password-stdin

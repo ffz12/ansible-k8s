@@ -6,6 +6,9 @@
 # (下载脚本按 offline_arch 只拉声明的架构, 单架构站点不该因为缺 arm64 就失败)。
 # 至少要有一个架构的 tar, 否则明确报错而不是拼出不存在的路径。
 
+- name: "[NodeLocalDNS] 确保 Harbor 项目存在(独立跑本 playbook 时项目可能还没建)"
+  include_tasks: "{{ playbook_dir }}/tasks/ensure-harbor-project.yml"
+
 - name: "[NodeLocalDNS] 登录 Harbor"
   shell: |
     echo "{{ harbor_admin_password }}" | docker login "{{ harbor_dns }}" -u "{{ harbor_admin_username }}" --password-stdin
