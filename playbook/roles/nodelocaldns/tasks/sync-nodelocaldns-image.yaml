@@ -1,6 +1,11 @@
 # roles/nodelocaldns/tasks/sync-nodelocaldns-image.yaml
 # 离线: 把 k8s-dns-node-cache 镜像 load 并推到自建 Harbor({{ registry }})。
-# 仅 is_offline 时由 main.yaml 调用; 范式照抄 cni/sync-cni-images.yaml 的 sync_one。
+# 仅 is_offline 时由 main.yml 调用。
+#
+# 架构处理: 不硬编码 amd64+arm64 —— 按【控制机上实际存在的物料】决定同步哪些架构
+# (下载脚本按 offline_arch 只拉声明的架构, 单架构站点不该因为缺 arm64 就失败)。
+# 至少要有一个架构的 tar, 否则明确报错而不是拼出不存在的路径。
+
 - name: "[NodeLocalDNS] 登录 Harbor"
   shell: |
     echo "{{ harbor_admin_password }}" | docker login "{{ harbor_dns }}" -u "{{ harbor_admin_username }}" --password-stdin
@@ -9,27 +14,56 @@
   register: nld_login
   failed_when: "'Login Succeeded' not in nld_login.stdout"
 
+- name: "[NodeLocalDNS] 探测控制机上有哪些架构的 node-cache 物料"
+  stat:
+    path: "{{ src_nodelocaldns_images_dir }}/{{ item }}/k8s-dns-node-cache.tar.gz"
+  delegate_to: localhost
+  become: no
+  register: _nld_src
+  loop: [amd64, arm64]
+
+- name: "[NodeLocalDNS] 记录可用架构"
+  set_fact:
+    _nld_archs: "{{ _nld_src.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+
+- name: "[NodeLocalDNS] 物料缺失则明确报错"
+  assert:
+    that: _nld_archs | length > 0
+    fail_msg: >-
+      {{ src_nodelocaldns_images_dir }}/{amd64,arm64}/k8s-dns-node-cache.tar.gz 都不存在 ——
+      离线镜像未下载。请在有网机器上跑: bash scripts/offline/download-k8s-offline.sh
+      (它会按 offline_arch 拉 k8s-dns-node-cache 存 tar)
+
+- name: "[NodeLocalDNS] 本次同步的架构"
+  debug:
+    msg: "将同步 {{ _nld_archs | join(', ') }} ({{ _nld_archs | length }} 个架构)"
+
+# ⚠ copy 拷【单个文件】时不会自动创建父目录, 缺目录会直接报
+#   "Destination directory /opt/nodelocaldns/amd64 does not exist"。必须先建。
+- name: "[NodeLocalDNS] 创建镜像存放目录"
+  file:
+    path: "{{ nodelocaldns_images_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ _nld_archs }}"
+
 - name: "[NodeLocalDNS] 复制 node-cache 镜像到本地"
   copy:
-    src: "{{ src_nodelocaldns_images_dir }}/amd64/k8s-dns-node-cache.tar.gz"
-    dest: "{{ nodelocaldns_images_dir }}/amd64/k8s-dns-node-cache.tar.gz"
+    src: "{{ src_nodelocaldns_images_dir }}/{{ item }}/k8s-dns-node-cache.tar.gz"
+    dest: "{{ nodelocaldns_images_dir }}/{{ item }}/k8s-dns-node-cache.tar.gz"
+    mode: "0644"
+  loop: "{{ _nld_archs }}"
 
-- name: "[NodeLocalDNS] 复制 node-cache 镜像到本地(arm64, 有则拷)"
-  copy:
-    src: "{{ src_nodelocaldns_images_dir }}/arm64/k8s-dns-node-cache.tar.gz"
-    dest: "{{ nodelocaldns_images_dir }}/arm64/k8s-dns-node-cache.tar.gz"
-  register: nld_arm64_copy
-  failed_when: false
-
-- name: "[NodeLocalDNS] 同步镜像并建 multi-arch manifest"
+- name: "[NodeLocalDNS] 同步镜像到 Harbor(单架构直接推; 多架构建 multi-arch manifest)"
   shell: |
     set -e
     REGISTRY="{{ registry }}"
     VER="{{ nodelocaldns_version }}"
     DST="${REGISTRY}/k8s-dns-node-cache:${VER}"
+    ARCHS="{{ _nld_archs | join(' ') }}"
     if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${DST} (已在 harbor)"; exit 0; fi
-    ARCHS="amd64"
-    [ -s "{{ nodelocaldns_images_dir }}/arm64/k8s-dns-node-cache.tar.gz" ] && ARCHS="amd64 arm64"
     MANIFEST_ARGS=""
     for a in $ARCHS; do
       docker load -i "{{ nodelocaldns_images_dir }}/${a}/k8s-dns-node-cache.tar.gz"
@@ -37,6 +71,7 @@
       docker push "${DST}-${a}"
       MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
     done
+    # 即便只有一个架构也建 manifest list: 保持 tag 形态一致(模板始终引用不带 -arch 的 tag)
     docker manifest rm "${DST}" >/dev/null 2>&1 || true
     docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
     for a in $ARCHS; do
