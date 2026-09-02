@@ -28,6 +28,15 @@
     - /var/log/containers
     - /var/log/kubernetes
     - "{{ ansible_env.HOME }}/.kube"
+    # 离线部署时各 role 往节点上放的【镜像暂存 tar】(每个几百 MB)。
+    # 原来只删 /opt/cni, 这些一个都没清 -> 反复重装会把盘堆满。
+    # 不影响功能(sync 有 manifest 检查会跳过已推的), 纯粹是占盘, 但重装几次就很可观。
+    - "{{ k8s_images_dir }}"            # /opt/kubernetes
+    - "{{ calico_images_dir }}"         # /opt/calico
+    - "{{ flannel_images_dir }}"        # /opt/flannel
+    - "{{ cilium_images_dir }}"         # /opt/cilium
+    - "{{ multus_cni_images_dir }}"     # /opt/multus_cni
+    - "{{ nodelocaldns_images_dir }}"   # /opt/nodelocaldns
     - /etc/crictl.yaml
     # systemd 单元(kube-common 部署的)
     - /etc/systemd/system/kubelet.service
