@@ -2,7 +2,7 @@
 # 用法: ansible-playbook playbook/k8s-cni.yaml -e kube_network_plugin=calico
 #      (calico/flannel/cilium; 离线加 -e is_offline=true)
 - name: 部署/切换 CNI 网络插件
-  hosts: "{{ groups['k8s_master'][0] }}"
+  hosts: "{{ (groups['k8s_master'] | default([]))[:1] }}"   # 仅首台 master; 切片写法在 inventory 为空时不会硬崩
   gather_facts: yes
   roles:
     - cni

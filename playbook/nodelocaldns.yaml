@@ -15,7 +15,7 @@
 #           部署时本 playbook 自动 load + 推 Harbor。
 # ============================================================================
 - name: 部署 NodeLocal DNSCache
-  hosts: "{{ groups['k8s_master'][0] }}"
+  hosts: "{{ (groups['k8s_master'] | default([]))[:1] }}"   # 仅首台 master; 切片写法在 inventory 为空时不会硬崩
   gather_facts: yes
   roles:
     - nodelocaldns

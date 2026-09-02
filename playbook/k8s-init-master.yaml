@@ -8,7 +8,7 @@
 #   现改为只跑首台; 全新装机想一把梭请用 playbook/k8s-install.yaml(它对全部 master 跑
 #   kube-common 再 init 首台 + join 其余, 一趟到位)。
 - name: 初始化控制平面(仅第一台 master)
-  hosts: "{{ groups['k8s_master'][0] }}"
+  hosts: "{{ (groups['k8s_master'] | default([]))[:1] }}"   # 仅首台 master; 切片写法在 inventory 为空时不会硬崩
   roles:
     - kubernetes/kube-common
     - kubernetes/kube-init-master

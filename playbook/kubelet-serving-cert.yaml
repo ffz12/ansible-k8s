@@ -41,7 +41,7 @@
         daemon_reload: yes
 
 - name: "[2/3] 集群侧: patch kubelet-config CM + 审批 kubelet-serving CSR"
-  hosts: "{{ groups['k8s_master'][0] }}"
+  hosts: "{{ (groups['k8s_master'] | default([]))[:1] }}"   # 仅首台 master; 切片写法在 inventory 为空时不会硬崩
   tasks:
     - include_tasks: roles/kubernetes/kubelet-serving-cert/tasks/cluster.yml
 

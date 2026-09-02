@@ -20,7 +20,7 @@
 
 # 1. 在首 master 删除现有 CNI 的所有资源(best-effort,不知装的哪个就都试)
 - name: 删除旧 CNI 资源
-  hosts: "{{ groups['k8s_master'][0] }}"
+  hosts: "{{ (groups['k8s_master'] | default([]))[:1] }}"   # 仅首台 master; 切片写法在 inventory 为空时不会硬崩
   gather_facts: no
   become: yes
   tasks:
@@ -74,7 +74,7 @@
 
 # 3. 装新 CNI(首 master, 复用 cni role: 含离线镜像同步 + apply)
 - name: 部署新 CNI
-  hosts: "{{ groups['k8s_master'][0] }}"
+  hosts: "{{ (groups['k8s_master'] | default([]))[:1] }}"   # 仅首台 master; 切片写法在 inventory 为空时不会硬崩
   gather_facts: yes
   become: yes
   roles:
@@ -82,7 +82,7 @@
 
 # 4. 重建 coredns(拿新 CNI 的 IP); 业务 Pod 请自行 rollout restart
 - name: 重建 coredns
-  hosts: "{{ groups['k8s_master'][0] }}"
+  hosts: "{{ (groups['k8s_master'] | default([]))[:1] }}"   # 仅首台 master; 切片写法在 inventory 为空时不会硬崩
   gather_facts: no
   become: yes
   tasks:
