@@ -131,7 +131,7 @@ k8s_minor: "{{ k8s_version.split('.')[0] ~ '.' ~ k8s_version.split('.')[1] }}"
 k8s_compat:
   "1.28": { coredns: "1.10.1", pause: "3.9",    crictl: "1.28.0", etcd: "3.5.12" }
   "1.34": { coredns: "1.12.1", pause: "3.10.1", crictl: "1.34.0", etcd: "3.6.5"  }
-  "1.36": { coredns: "1.14.2", pause: "3.10.2", crictl: "1.36.0", etcd: "3.6.5"  }
+  "1.36": { coredns: "1.14.2", pause: "3.10.2", crictl: "1.36.0", etcd: "3.6.8"  }
 coredns_version:     "{{ (k8s_compat[k8s_minor] | default({})).coredns | default('1.12.1') }}"
 pause_image_version: "{{ (k8s_compat[k8s_minor] | default({})).pause   | default('3.10.1') }}"
 crictl_version:      "{{ (k8s_compat[k8s_minor] | default({})).crictl  | default(k8s_version) }}"
