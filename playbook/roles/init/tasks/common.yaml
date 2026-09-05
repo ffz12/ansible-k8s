@@ -85,9 +85,34 @@
 - name: 内核参数调优
   copy: src=sysctl.conf dest=/etc/sysctl.conf owner=root group=root mode=0644
   tags: [sysctl]
-- name: 执行sysctl
+
+# 基流集群《交付标准》1.6 —— 独立 drop-in, 不动主配置(便于回滚与按站点启用)
+# 99- 前缀确保后加载、优先级高于 /etc/sysctl.conf(systemd 视其为 99-sysctl.conf)
+- name: (交付标准)下发 1.6 内核参数到 /etc/sysctl.d/99-jiliu-delivery.conf
+  template:
+    src: 99-jiliu-delivery.conf.j2
+    dest: /etc/sysctl.d/99-jiliu-delivery.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+  when: jiliu_delivery_sysctl | default(false) | bool
+  tags: [sysctl]
+
+- name: (交付标准)未启用时移除该 drop-in(关掉开关即回滚)
+  file:
+    path: /etc/sysctl.d/99-jiliu-delivery.conf
+    state: absent
+  when: not (jiliu_delivery_sysctl | default(false) | bool)
+  tags: [sysctl]
+# ⚠ 必须用 --system 而非 -p:
+#   sysctl -p        只读 /etc/sysctl.conf, 【不读】 /etc/sysctl.d/ 下的 drop-in
+#   sysctl --system  按 99- 等前缀顺序加载全部 drop-in + 主配置(与开机时行为一致)
+#   本仓库已有 99-swap.conf、新增 99-jiliu-delivery.conf 都在 sysctl.d 下 —— 用 -p 的话
+#   它们在本次运行里【不生效】, 只有重启后才生效, 容易误判"参数没写进去"。
+- name: 执行sysctl(--system 以便同时加载 /etc/sysctl.d/ 下的 drop-in)
   shell: |
-      sysctl -p
+      sysctl --system
   tags: [sysctl]
 - name: 调整文件描述符限制
   blockinfile:

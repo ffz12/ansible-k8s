@@ -147,7 +147,15 @@ systemReserved:
   cpu: "{{ kubelet_system_reserved_cpu }}"
   memory: "{{ kubelet_system_reserved_mem }}"
 maxPods: {{ kubelet_max_pods }}
+{% if jiliu_kubelet_tuning | default(false) | bool %}
+# 基流交付标准 2.8: podPidsLimit: -1(不限单 Pod 进程数) + serializeImagePulls: false(并行拉镜像)
+# ⚠ -1 等于放弃单 Pod pid 上限, fork 炸弹可打满整机 pid(整机上限见 sysctl kernel.pid_max /
+#   kernel.threads-max)。标准明确要求 -1, 故开关打开时以标准为准。
+podPidsLimit: -1
+serializeImagePulls: false
+{% else %}
 podPidsLimit: {{ kubelet_pod_pids_limit }}
+{% endif %}
 containerLogMaxSize: {{ kubelet_container_log_max_size }}
 containerLogMaxFiles: {{ kubelet_container_log_max_files }}
 rotateCertificates: true

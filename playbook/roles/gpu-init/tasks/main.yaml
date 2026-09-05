@@ -1,6 +1,64 @@
 - name: 拷贝 blacklist配置
   copy: src=blacklist.conf dest=/etc/modprobe.d/ backup=yes
 
+# ===== 基流集群《交付标准》1.2 NVIDIA 驱动参数 =====
+# 两个文件分开写(与标准文档一致, 便于逐项核对):
+#   nvidia.conf           EnableStreamMemOPs=1 + PeerMappingOverride=1
+#   nvidia-privilege.conf RestrictProfilingToAdminUsers=0(允许非 root 跑 nsys/ncu 等 profiling)
+# ⚠ modprobe 参数只在【模块重新加载】后生效 —— 实践中就是 reboot。本 role 只下发文件,
+#   不自动重启(GPU 节点重启影响大, 交由人工安排窗口), 末尾会提示需 reboot 并给校验命令。
+- name: (交付标准)下发 NVIDIA 驱动参数 nvidia.conf
+  copy:
+    dest: /etc/modprobe.d/nvidia.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+    content: |
+      # 由 ansible 下发(基流交付标准 1.2), 请勿手改
+      # EnableStreamMemOPs: 允许 CUDA stream memory operations(GPUDirect / NCCL 需要)
+      # PeerMappingOverride: 允许跨 GPU peer mapping(多卡 P2P)
+      options nvidia NVreg_EnableStreamMemOPs=1 NVreg_RegistryDwords=PeerMappingOverride=1
+  register: _nv_conf
+  when: jiliu_nvidia_modprobe | default(false) | bool
+
+- name: (交付标准)下发 NVIDIA profiling 权限 nvidia-privilege.conf
+  copy:
+    dest: /etc/modprobe.d/nvidia-privilege.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+    content: |
+      # 由 ansible 下发(基流交付标准 1.2), 请勿手改
+      # RestrictProfilingToAdminUsers=0: 非 root 用户也可做 GPU profiling
+      options nvidia NVreg_RestrictProfilingToAdminUsers=0
+  register: _nv_priv
+  when: jiliu_nvidia_modprobe | default(false) | bool
+
+# initrd 里可能已嵌入旧的 modprobe 参数, 不重建则 reboot 后仍是旧值
+- name: (交付标准)参数变更后重建 initramfs(Debian/Ubuntu)
+  shell: update-initramfs -u
+  when:
+    - jiliu_nvidia_modprobe | default(false) | bool
+    - ansible_distribution in ['Debian','Ubuntu']
+    - (_nv_conf is defined and _nv_conf.changed) or (_nv_priv is defined and _nv_priv.changed)
+
+- name: (交付标准)参数变更后重建 initramfs(RHEL/openEuler/Kylin)
+  shell: dracut -f /boot/initramfs-$(uname -r).img $(uname -r)
+  when:
+    - jiliu_nvidia_modprobe | default(false) | bool
+    - ansible_distribution not in ['Debian','Ubuntu']
+    - (_nv_conf is defined and _nv_conf.changed) or (_nv_priv is defined and _nv_priv.changed)
+
+- name: (交付标准)提示 reboot 与校验方式
+  debug:
+    msg:
+      - "NVIDIA 驱动参数已下发, 需 reboot 才生效(本 role 不自动重启)。"
+      - "reboot 后校验: cat /proc/driver/nvidia/params | grep -E 'EnableStreamMemOPs|RegistryDwords|RmProfilingAdminOnly'"
+      - "预期: EnableStreamMemOPs: 1 / RmProfilingAdminOnly: 0 / RegistryDwords: \"PeerMappingOverride=1\""
+  when: jiliu_nvidia_modprobe | default(false) | bool
+
 - name: ubuntu系列
   block: 
   - name: 更新initramfs

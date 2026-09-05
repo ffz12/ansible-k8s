@@ -1,0 +1,49 @@
+# /etc/sysctl.d/99-jiliu-delivery.conf —— 由 ansible 下发, 请勿手改
+# 基流集群《交付标准》1.6 节要求的内核参数。
+#
+# 为什么单独放 sysctl.d 而不改 /etc/sysctl.conf:
+#   1) 交付标准是【站点级要求】, 只在跑该标准的站点启用(jiliu_delivery_sysctl=true),
+#      不影响其它站点与现网 111 节点集群;
+#   2) 数字越大的文件后加载、优先级越高, 99- 确保覆盖 /etc/sysctl.conf 里的同名项
+#      (systemd 把 /etc/sysctl.conf 当作 99-sysctl.conf 处理, 故本文件名需排在其后);
+#   3) 出问题时删掉本文件即回滚, 不用还原主配置。
+#
+# ⚠ 三项网络缓冲的取值分歧(标准值比本仓库既有调优【更低】):
+#     net.core.netdev_max_backlog  仓库 65535    / 标准 16384
+#     net.core.rmem_max            仓库 33554432 / 标准 16777216
+#     net.core.wmem_max            仓库 33554432 / 标准 16777216
+#   默认按【标准原值】下发, 以通过客户按文档逐项核对的验收。
+#   若实测网络吞吐不足需保留仓库的更高值, 在 env.yaml 置
+#   jiliu_keep_higher_net_buffers: true —— 那三项就不写进本文件, 沿用 sysctl.conf 的大值。
+#   (其余 10 项标准值都 >= 仓库值或仓库没有, 不存在降级问题)
+
+# ---- 连接与队列 ----
+net.core.somaxconn = {{ jiliu_somaxconn | default(32768) }}
+{% if not (jiliu_keep_higher_net_buffers | default(false) | bool) %}
+net.core.netdev_max_backlog = {{ jiliu_netdev_max_backlog | default(16384) }}
+net.core.rmem_max = {{ jiliu_rmem_max | default(16777216) }}
+net.core.wmem_max = {{ jiliu_wmem_max | default(16777216) }}
+{% endif %}
+
+# ---- 文件句柄 ----
+fs.file-max = {{ jiliu_file_max | default(12000500) }}
+
+# ---- 用户命名空间(容器 rootless / 部分 GPU 场景需要) ----
+user.max_user_namespaces = {{ jiliu_max_user_namespaces | default(63359) }}
+
+# ---- 临时端口范围 ----
+# 起点 32768 恰在 NodePort 段(30000-32767)之上, 与本仓库
+# net.ipv4.ip_local_reserved_ports = 30000-32767 的意图一致, 不冲突。
+net.ipv4.ip_local_port_range = {{ jiliu_ip_local_port_range | default('32768 60999') }}
+
+# ---- keyring(容器镜像解密 / 内核密钥环) ----
+kernel.keys.maxkeys = {{ jiliu_keys_maxkeys | default(2000) }}
+kernel.keys.maxbytes = {{ jiliu_keys_maxbytes | default(2000000) }}
+
+# ---- inotify(kubelet/containerd 监听大量文件) ----
+fs.inotify.max_queued_events = {{ jiliu_inotify_max_queued_events | default(1048576) }}
+fs.inotify.max_user_instances = {{ jiliu_inotify_max_user_instances | default(1048576) }}
+fs.inotify.max_user_watches = {{ jiliu_inotify_max_user_watches | default(1048576) }}
+
+# ---- 内存映射(部分 AI 框架 / ES 需要) ----
+vm.max_map_count = {{ jiliu_max_map_count | default(262144) }}
