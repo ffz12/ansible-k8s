@@ -34,6 +34,54 @@
     backup: yes
     marker: "# Ansible inventory  {mark}"
   tags: [sysctl]
+# ipvs 模式(kube_proxy_mode=ipvs)需要这些内核模块。仓库原先只装了 ipvsadm【工具包】,
+# 从没加载 ip_vs 内核模块 —— 缺模块时 kube-proxy 会【静默回退到 iptables】, 看着像在跑
+# ipvs 其实不是(kubectl -n kube-system logs kube-proxy-xxx 里会有 "can't use ipvs proxier"),
+# 且 nodelocaldns / conntrack 相关调优的前提也不成立。
+# nf_conntrack: 新内核叫 nf_conntrack, 4.18 之前叫 nf_conntrack_ipv4, 两个都试一下。
+# 本机是 iptables 模式时加载这些也无害(只是多几个模块常驻)。
+- name: modprobe ipvs 相关内核模块(ip_vs* / nf_conntrack)
+  shell: |
+    for m in ip_vs ip_vs_rr ip_vs_wrr ip_vs_sh nf_conntrack nf_conntrack_ipv4; do
+      modprobe "$m" 2>/dev/null || true
+    done
+    # 至少 ip_vs 必须在, 否则 ipvs 模式起不来
+    lsmod | grep -q '^ip_vs' && echo IPVS_OK || echo IPVS_MISSING
+  args:
+    executable: /bin/bash
+  register: _ipvs_mod
+  changed_when: false
+  tags: [sysctl]
+
+- name: 校验 ip_vs 已加载(ipvs 模式的硬前提)
+  assert:
+    that: "'IPVS_OK' in _ipvs_mod.stdout"
+    fail_msg: >-
+      本机加载不到 ip_vs 内核模块, 而 kube_proxy_mode={{ kube_proxy_mode | default('iptables') }}。
+      内核可能未编译 ip_vs(检查 ls /lib/modules/$(uname -r)/kernel/net/netfilter/ipvs/)。
+      要么换内核, 要么在 env.yaml 改 kube_proxy_mode: iptables —— 否则 kube-proxy 会静默
+      回退 iptables, 与配置不符且难排查。
+  when: kube_proxy_mode | default('iptables') == 'ipvs'
+  tags: [sysctl]
+
+- name: 永久加载 ipvs 相关模块
+  blockinfile:
+    path: /etc/modules-load.d/ipvs.conf
+    create: yes
+    owner: root
+    group: root
+    mode: '0644'
+    block: |-
+       ip_vs
+       ip_vs_rr
+       ip_vs_wrr
+       ip_vs_sh
+       nf_conntrack
+    state: present
+    backup: yes
+    marker: "# Ansible ipvs {mark}"
+  tags: [sysctl]
+
 - name: 内核参数调优
   copy: src=sysctl.conf dest=/etc/sysctl.conf owner=root group=root mode=0644
   tags: [sysctl]
