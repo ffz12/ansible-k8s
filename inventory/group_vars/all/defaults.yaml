@@ -241,6 +241,12 @@ nodelocaldns_images_dir: "/opt/nodelocaldns"
 # 管, 默认才 8760h(1y) —— 两者不一致会让 kubelet 证书 1 年就到期。这里对齐 100 年。
 # 876000h = 100y, 与 kubeadm-config 的 certificateValidityPeriod 同值。
 kube_signing_duration: "876000h"
+# 是否在 KubeletConfiguration 的 featureGates 里【显式】写 RotateKubeletServerCertificate: true。
+# 该 gate 自 k8s 1.12 起默认即为 true, 显式写出不改变行为, 只是让"serving 证书会自动轮换"
+# 在配置里可见, 并与现网 kk 集群的写法一致。
+# ⚠ 它已 GA-locked: 未来某个版本移除该 gate 后, kubelet 见到它会【启动失败】。
+#   届时把本项置 false 即可(行为不变, 只是不再显式声明), 无需改模板。
+kubelet_rotate_server_cert_gate: true
 
 # calico 封装: none(纯 BGP) / crosssubnet / ipip / vxlan —— 见 env.yaml.example
 # CNI conflist 是否启用 bandwidth 插件(Pod 限速: kubernetes.io/{ingress,egress}-bandwidth 注解)。

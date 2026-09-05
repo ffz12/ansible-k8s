@@ -101,8 +101,23 @@ cpuManagerPolicy: {{ kubelet_cpu_manager_policy }}
 {% if kubelet_cpu_manager_policy == 'static' and (kubelet_cpu_align_by_socket | default(false) | bool) %}
 cpuManagerPolicyOptions:
   align-by-socket: "true"          # 要求 sockets<=NUMA 节点数,否则 kubelet 起不来
+{% endif %}
+{# featureGates: 原先整块嵌在 cpuManagerPolicy==static 的条件里, 非 static 时压根渲染不出来。
+   现拆开各自判断, 至少有一项开启才输出 featureGates 头(空的 featureGates: 是非法值)。 #}
+{% set _fg_cpu = (kubelet_cpu_manager_policy == 'static' and (kubelet_cpu_align_by_socket | default(false) | bool)) %}
+{% set _fg_rotate = (kubelet_rotate_server_cert_gate | default(true) | bool) %}
+{% if _fg_cpu or _fg_rotate %}
 featureGates:
+{% if _fg_cpu %}
   CPUManagerPolicyAlphaOptions: true
+{% endif %}
+{% if _fg_rotate %}
+  # kubelet serving 证书自动轮换。自 k8s 1.12 起该 gate 默认即为 true, 显式写出是为了
+  # 与现网 kk 集群配置一致、并让"证书会自动轮换"这件事在配置里可见。
+  # ⚠ 该 gate 已 GA-locked: 未来某个版本移除后, kubelet 见到它会启动失败。
+  #   届时把 env.yaml 的 kubelet_rotate_server_cert_gate 置 false 即可(行为不变, 只是不再显式声明)。
+  RotateKubeletServerCertificate: true
+{% endif %}
 {% endif %}
 
 #驱逐策略(内存阈值可在 env.yaml 调; 磁盘/pid 不随内存伸缩故固定)
