@@ -284,9 +284,6 @@ node_tuning_sysctl: false
 #   若实测吞吐不足要保留仓库大值, 置 true 则这三项不写, 沿用 /etc/sysctl.conf 里的更高值。
 node_tuning_keep_higher_net_buffers: false
 #
-# NVIDIA 驱动 modprobe 参数(GPU 节点; 需 reboot 生效, 故不自动重启, 只下发+提示)
-gpu_nvidia_modprobe_tuning: false
-#
 # kubelet: podPidsLimit: -1(不限) + serializeImagePulls: false(并行拉镜像)
 # ⚠ -1 等于【放弃单 Pod 进程数上限】, fork 炸弹可打满整机 pid。
 #   本仓库默认 kubelet_pod_pids_limit=50000(既够用又留保护); 仅在明确需要不限时打开。
