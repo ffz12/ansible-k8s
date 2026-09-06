@@ -210,7 +210,8 @@ flannel_images:
 #
 # 节点归池判定: 按 inventory 里已有的 accelerator_type(nvidia/dcu/npu -> gpu 池,
 # none/未写 -> cpu 池), 见 kube-add-node / kube-add-master / kube-init-master 里的打标签任务。
-# 也可在某台机器的 inventory 行显式写 calico_pool_label=hardware=cpu 覆盖自动判定。
+# 也可在某台机器的 inventory 行显式写 calico_pool=cpu(或 calico_pool=gpu)覆盖自动判定
+# (不用自己拼 "hardware=xxx" 这种键值对里套键值对的格式)。
 calico_dual_ippool_enabled: false
 calico_gpu_pool_blockSize: 28    # 每块 16 个地址, 单 GPU 节点 Pod 数一般不多
 calico_cpu_pool_blockSize: 26    # 每块 64 个地址, 匹配 kubelet_max_pods 默认 110 的量级

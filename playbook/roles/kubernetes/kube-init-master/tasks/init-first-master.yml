@@ -53,11 +53,12 @@
     # 首 master 之前完全没有打过 hardware 标签(add-node/add-master 才有), 这里补上, 否则
     # 双池模式下首 master 自己的 Pod 会因为没有 hardware 标签而分不到任何池的地址。
     # 判定: inventory 的 accelerator_type(nvidia/dcu/npu -> gpu, 未写/none -> cpu);
-    # 某台想覆盖自动判定时, 在该主机的 inventory 行加 calico_pool_label=hardware=xxx。
+    # 某台想覆盖自动判定时, 在该主机的 inventory 行加 calico_pool=gpu 或 calico_pool=cpu 即可
+    # (不用自己拼 "hardware=xxx" 这种键值对里套键值对的格式)。
     - name: 打 hardware 标签(供 Calico 双 IPPool 选池, 仅双池模式)
       command: >
         kubectl label node {{ inventory_hostname }}
-        {{ calico_pool_label | default('hardware=' ~ ('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu'] else 'cpu')) }}
+        hardware={{ calico_pool | default('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu'] else 'cpu') }}
         --overwrite
       changed_when: false
       when: calico_dual_ippool_enabled | default(false) | bool

@@ -113,12 +113,13 @@
 
 # Calico 双 IPPool(calico_dual_ippool_enabled=true 时)靠这个标签选池, 仅在双池模式下打。
 # 判定: inventory 的 accelerator_type(nvidia/dcu/npu -> gpu, 未写/none -> cpu);
-# 某台想覆盖自动判定时, 在该主机的 inventory 行加 calico_pool_label=hardware=xxx。
+# 某台想覆盖自动判定时, 在该主机的 inventory 行加 calico_pool=gpu 或 calico_pool=cpu 即可
+# (不用自己拼 "hardware=xxx" 这种键值对里套键值对的格式)。
 - name: "[Add Master] 打 hardware 标签(供 Calico 双 IPPool 选池, 仅双池模式)"
   command: >
     kubectl --kubeconfig /etc/kubernetes/admin.conf
     label node {{ inventory_hostname }}
-    {{ calico_pool_label | default('hardware=' ~ ('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu'] else 'cpu')) }}
+    hardware={{ calico_pool | default('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu'] else 'cpu') }}
     --overwrite
   delegate_to: "{{ groups['k8s_master'][0] }}"
   become: yes
