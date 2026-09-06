@@ -49,6 +49,19 @@
         executable: /bin/bash
       changed_when: false
 
+    # Calico 双 IPPool(calico_dual_ippool_enabled=true 时)靠这个标签选池, 仅在双池模式下打。
+    # 首 master 之前完全没有打过 hardware 标签(add-node/add-master 才有), 这里补上, 否则
+    # 双池模式下首 master 自己的 Pod 会因为没有 hardware 标签而分不到任何池的地址。
+    # 判定: inventory 的 accelerator_type(nvidia/dcu/npu -> gpu, 未写/none -> cpu);
+    # 某台想覆盖自动判定时, 在该主机的 inventory 行加 calico_pool_label=hardware=xxx。
+    - name: 打 hardware 标签(供 Calico 双 IPPool 选池, 仅双池模式)
+      command: >
+        kubectl label node {{ inventory_hostname }}
+        {{ calico_pool_label | default('hardware=' ~ ('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu'] else 'cpu')) }}
+        --overwrite
+      changed_when: false
+      when: calico_dual_ippool_enabled | default(false) | bool
+
     # === CNI: 可插拔(calico/flannel/cilium),见 roles/cni ===
     - name: 部署 CNI 网络插件
       include_role:

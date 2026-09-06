@@ -7,8 +7,13 @@
 #        calico-cni 镜像里没有。开了但没装插件 -> 全节点 Pod 建不了 sandbox:
 #          plugin type="bandwidth" failed (add): failed to find plugin "bandwidth"
 #        需要限速时先让 kube-common 装 cni-plugins 包(见 cni_plugins_* 变量)再置 true。
+#    · calico_dual_ippool_enabled(默认 false)-> 按硬件类型(GPU/CPU)分两个 IPPool。
+#      关闭时行为不变: calico 用 CALICO_IPV4POOL_CIDR/podSubnet 自建单个默认池。
+#      开启时: 该 env 变量置空跳过, 改由文件末尾显式声明的两个 IPPool 资源接管分池,
+#      节点按 hardware=gpu/cpu 标签(见 kube-add-node/kube-add-master/kube-init-master
+#      里的打标签任务, 判定依据是 inventory 的 accelerator_type)落入对应池。
 #
-#  ⚠ 升级 calico 版本时: 重新下载对应版本官方 manifest 并【重新施加上述 3 项参数化】,
+#  ⚠ 升级 calico 版本时: 重新下载对应版本官方 manifest 并【重新施加上述参数化】,
 #    不要只改镜像 tag —— 3.27 ->3.31 就因只改 tag 而缺了 9 个 CRD、2 个 ClusterRole 规则,
 #    导致 felix 反复 "cannot list resource ... forbidden" 而 readiness 503。
 # =============================================================================
@@ -7237,6 +7242,12 @@ spec:
             # no effect. This should fall within `--cluster-cidr`.
             # - name: CALICO_IPV4POOL_CIDR
             #   value: "192.168.0.0/16"
+{% if calico_dual_ippool_enabled | default(false) | bool %}
+            # 双 IPPool 模式: 分池由文件末尾显式声明的两个 IPPool 资源接管, 阻止 calico-node
+            # 在启动时按 podSubnet 再自建一个默认池(否则会和手动建的两个池冲突/抢占)。
+            - name: NO_DEFAULT_POOLS
+              value: "true"
+{% endif %}
             # Disable file logging so `kubectl logs` works.
             - name: CALICO_DISABLE_FILE_LOGGING
               value: "true"
@@ -7422,3 +7433,37 @@ spec:
             periodSeconds: 10
           securityContext:
             runAsNonRoot: true
+{% if calico_dual_ippool_enabled | default(false) | bool %}
+---
+# ============================================================================
+# GPU/CPU 双 IPPool(仅 calico_dual_ippool_enabled=true 时渲染)
+# nodeSelector 是 Calico selector 表达式(非 k8s label 语法), 按 hardware=gpu/cpu
+# 标签匹配 —— 该标签由 kube-add-node / kube-add-master / kube-init-master 里的打标签
+# 任务下发, 判定依据是 inventory 的 accelerator_type(nvidia/dcu/npu -> gpu, 否则 -> cpu)。
+# CIDR 由使用者在 env.yaml 的 calico_gpu_pool_cidr / calico_cpu_pool_cidr 自行规划,
+# 本模板不做地址段合法性校验。
+# ============================================================================
+apiVersion: crd.projectcalico.org/v1
+kind: IPPool
+metadata:
+  name: gpu-pool
+spec:
+  cidr: "{{ calico_gpu_pool_cidr }}"
+  blockSize: {{ calico_gpu_pool_blockSize | default(28) }}
+  ipipMode: "{{ 'Always' if calico_encapsulation | default('none') == 'ipip' else ('CrossSubnet' if calico_encapsulation | default('none') == 'crosssubnet' else 'Never') }}"
+  vxlanMode: "{{ 'Always' if calico_encapsulation | default('none') == 'vxlan' else 'Never' }}"
+  natOutgoing: true
+  nodeSelector: 'hardware == "gpu"'
+---
+apiVersion: crd.projectcalico.org/v1
+kind: IPPool
+metadata:
+  name: cpu-pool
+spec:
+  cidr: "{{ calico_cpu_pool_cidr }}"
+  blockSize: {{ calico_cpu_pool_blockSize | default(26) }}
+  ipipMode: "{{ 'Always' if calico_encapsulation | default('none') == 'ipip' else ('CrossSubnet' if calico_encapsulation | default('none') == 'crosssubnet' else 'Never') }}"
+  vxlanMode: "{{ 'Always' if calico_encapsulation | default('none') == 'vxlan' else 'Never' }}"
+  natOutgoing: true
+  nodeSelector: 'hardware == "cpu"'
+{% endif %}

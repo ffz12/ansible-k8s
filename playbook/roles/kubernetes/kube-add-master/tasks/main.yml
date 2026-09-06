@@ -111,6 +111,22 @@
     force: yes
   become: yes
 
+# Calico 双 IPPool(calico_dual_ippool_enabled=true 时)靠这个标签选池, 仅在双池模式下打。
+# 判定: inventory 的 accelerator_type(nvidia/dcu/npu -> gpu, 未写/none -> cpu);
+# 某台想覆盖自动判定时, 在该主机的 inventory 行加 calico_pool_label=hardware=xxx。
+- name: "[Add Master] 打 hardware 标签(供 Calico 双 IPPool 选池, 仅双池模式)"
+  command: >
+    kubectl --kubeconfig /etc/kubernetes/admin.conf
+    label node {{ inventory_hostname }}
+    {{ calico_pool_label | default('hardware=' ~ ('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu'] else 'cpu')) }}
+    --overwrite
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  become: yes
+  changed_when: false
+  when:
+    - not kubelet_conf.stat.exists
+    - calico_dual_ippool_enabled | default(false) | bool
+
 - name: "移除污点(允许 master 调度; 幂等,污点不存在也不报错)"
   shell: |
     for t in node-role.kubernetes.io/control-plane node-role.kubernetes.io/master node.kubernetes.io/unschedulable node.kubernetes.io/not-ready; do

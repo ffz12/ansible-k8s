@@ -196,6 +196,26 @@ calico_images:
 flannel_images:
   flannel:        "{{ (registry ~ '/flannel')        if (is_offline | default(false) | bool) else (flannel_registry_online ~ '/flannel') }}:v{{ flannel_version }}"
   flannel_cni:    "{{ (registry ~ '/flannel-cni-plugin') if (is_offline | default(false) | bool) else (flannel_registry_online ~ '/flannel-cni-plugin') }}:v{{ flannel_cni_version }}"
+
+# ================= Calico 双 IPPool(GPU/CPU 分池, 可选) =================
+# 默认关闭 —— 走原来的单池逻辑(calico 用 CALICO_IPV4POOL_CIDR/podSubnet 自建一个池),
+# 现有站点/生产 111 节点集群不受影响。仅当需要按硬件类型隔离 Pod 网段时才开。
+#
+# 开启方式(env.yaml):
+#   calico_dual_ippool_enabled: true
+#   calico_gpu_pool_cidr: <GPU 段, 自己规划, 不与 service_subnet/LB/ApiServer 冲突>
+#   calico_cpu_pool_cidr: <CPU 段, 同上>
+#   pod_subnet 改填能同时覆盖上面两段的超网(仅用于 kubeadm --cluster-cidr 语义占位;
+#     实际分池由下面两个 IPPool 决定, calico 不会再用 podSubnet 自建默认池)
+#
+# 节点归池判定: 按 inventory 里已有的 accelerator_type(nvidia/dcu/npu -> gpu 池,
+# none/未写 -> cpu 池), 见 kube-add-node / kube-add-master / kube-init-master 里的打标签任务。
+# 也可在某台机器的 inventory 行显式写 calico_pool_label=hardware=cpu 覆盖自动判定。
+calico_dual_ippool_enabled: false
+calico_gpu_pool_blockSize: 28    # 每块 16 个地址, 单 GPU 节点 Pod 数一般不多
+calico_cpu_pool_blockSize: 26    # 每块 64 个地址, 匹配 kubelet_max_pods 默认 110 的量级
+calico_gpu_pool_cidr: ""         # 必填(calico_dual_ippool_enabled=true 时), 由使用者自己规划
+calico_cpu_pool_cidr: ""         # 同上
 cilium_image_repo: "{{ registry if (is_offline | default(false) | bool) else cilium_registry_online }}"
 
 # ================= 离线包路径(多版本 v{{k8s_version}}) =================
