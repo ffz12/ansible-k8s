@@ -1,26 +1,23 @@
 ---
 # 4 块 NVMe -> LVM 条带 -> XFS -> /var/lib/container
 #
-# 对应现场命令：
-#   wipefs -a /dev/nvme{0..3}n1
-#   pvcreate /dev/nvme{0..3}n1 -y -f
-#   vgcreate vg /dev/nvme{0..3}n1
+# 对应现场命令（设备列表由 Playbook 自动识别，不依赖编号连续）：
+#   wipefs -a <自动识别出的4块NVMe>
+#   pvcreate <自动识别出的4块NVMe> -y -f
+#   vgcreate vg <自动识别出的4块NVMe>
 #   lvcreate -n containerfs -L 1.5T -i 4 -I 256 vg -y
 #   mkfs.xfs -f /dev/mapper/vg-containerfs
 #
 # 按现场交付流程首次执行会清除 4 块盘上的签名；确认目标盘可清空后再执行。
-# 已存在 vg 时会在清盘前中止，重跑已完成节点不会误清盘。
+# 已存在 vg 时会跳过磁盘识别、清盘和 PV/VG 创建，只补齐后续 LV、文件系统与挂载。
 #
-# 注意：Linux NVMe namespace 设备通常是 /dev/nvme0n1，而不是 /dev/nvme0。
+# 注意：自动识别 Linux NVMe namespace 设备（通常形如 /dev/nvme0n1），不依赖编号连续。
 - name: Build four-NVMe striped LVM for containerd and kubelet
   hosts: cluster
   become: yes
   vars:
-    nvme_devices:
-      - /dev/nvme0n1
-      - /dev/nvme1n1
-      - /dev/nvme2n1
-      - /dev/nvme3n1
+    expected_disk_count: 4
+    nvme_devices: []
     nvme_wipe_signatures: true
     vg_name: vg
     lv_name: containerfs
@@ -39,22 +36,62 @@
         name: lvm2
         state: present
 
-    - name: 检查 NVMe 设备是否存在
-      stat:
-        path: "{{ item }}"
-      loop: "{{ nvme_devices }}"
-      register: nvme_device_stats
+    # 先检查 VG。已有 VG 时绝不重新识别或清盘，只补齐 LV、文件系统和挂载。
+    - name: 检查卷组是否已存在
+      command: "vgs --noheadings --options vg_name {{ vg_name }}"
+      register: vg_check
+      changed_when: false
+      failed_when: false
 
-    - name: 中断 - NVMe 设备不完整
+    - name: 判断卷组状态
+      set_fact:
+        vg_exists: "{{ vg_check.rc == 0 and (vg_check.stdout | trim) != '' }}"
+
+    # 自动识别 NVMe 整盘，不要求设备编号连续。
+    # 只排除有子设备/挂载、holders、已有 PV 的盘；有残留签名的裸盘保留，
+    # 首次流程会按 nvme_wipe_signatures 决定是否执行 wipefs。
+    - name: 自动识别可用的 NVMe 整盘
+      shell: |
+        set -o pipefail
+        for d in $(lsblk -dpno NAME,TYPE | awk '$2 == "disk" && $1 ~ /\/dev\/nvme[0-9]+n[0-9]+$/ {print $1}'); do
+          base=$(basename "$d")
+          [ "$(lsblk -nrpo NAME "$d" | tail -n +2 | wc -l)" -eq 0 ] || continue
+          [ -z "$(lsblk -dnpo MOUNTPOINT "$d" | xargs)" ] || continue
+          [ -d "/sys/block/${base}/holders" ] && [ -n "$(find "/sys/block/${base}/holders" -mindepth 1 -maxdepth 1 -print -quit)" ] && continue
+          pvs --noheadings --options pv_name 2>/dev/null | tr -d ' ' | grep -qx "$d" && continue
+          size=$(lsblk -bdno SIZE "$d")
+          echo "$d $size"
+        done
+      args:
+        executable: /bin/bash
+      register: detected_nvme
+      changed_when: false
+      when: not vg_exists
+
+    - name: 整理自动识别的 NVMe 列表
+      set_fact:
+        nvme_lines: "{{ detected_nvme.stdout_lines | default([]) }}"
+        nvme_devices: "{{ detected_nvme.stdout_lines | default([]) | map('regex_replace', '\\s+.*$', '') | list }}"
+        nvme_sizes: "{{ detected_nvme.stdout_lines | default([]) | map('regex_replace', '^\\S+\\s+', '') | list | unique | list }}"
+      when: not vg_exists
+
+    - name: 显示自动识别结果
+      debug:
+        msg: "自动识别到 {{ nvme_devices | length }} 块 NVMe：{{ nvme_lines }}"
+      when: not vg_exists
+
+    - name: 校验自动识别结果为 4 块同容量 NVMe
       assert:
         that:
-          - item.stat.exists
-          - item.stat.isblk | default(false)
-        fail_msg: "找不到块设备 {{ item.item }}，请确认设备名称和硬件。"
-      loop: "{{ nvme_device_stats.results }}"
+          - nvme_devices | length == expected_disk_count
+          - nvme_sizes | length == 1
+        fail_msg: >-
+          自动识别失败：识别到 {{ nvme_devices | length }} 块，容量种类 {{ nvme_sizes | length }} 种；
+          要求正好 {{ expected_disk_count }} 块同容量 NVMe。明细：{{ nvme_lines }}
+      when: not vg_exists
 
     # 防止把带分区、正在挂载、被 dm/raid/crypt 占用的盘直接 wipefs。
-    - name: 检查 NVMe 是否存在分区或子设备
+    - name: 检查自动识别 NVMe 是否存在分区或子设备
       shell: |
         set -o pipefail
         lsblk -nrpo NAME,TYPE,MOUNTPOINT "{{ item }}" | awk 'NR > 1 {print}'
@@ -63,6 +100,7 @@
       loop: "{{ nvme_devices }}"
       register: nvme_children
       changed_when: false
+      when: not vg_exists
 
     - name: 检查 NVMe holders
       shell: |
@@ -74,6 +112,7 @@
       register: nvme_holders
       changed_when: false
       failed_when: false
+      when: not vg_exists
 
     - name: 拦截有分区、挂载或底层占用的 NVMe
       assert:
@@ -85,24 +124,8 @@
           子设备/挂载信息={{ item.0.stdout | trim | default('无') }}，
           holders={{ item.1.stdout | trim | default('无') }}。
           为防止误清盘已中止。
-      loop: "{{ nvme_children.results | zip(nvme_holders.results) | list }}"
-
-    # 先检查 VG，再决定是否允许清盘，避免重跑时 wipefs 误伤已部署数据。
-    - name: 检查卷组是否已存在
-      command: "vgs --noheadings --options vg_name {{ vg_name }}"
-      register: vg_check
-      changed_when: false
-      failed_when: false
-
-    - name: 判断卷组状态
-      set_fact:
-        vg_exists: "{{ vg_check.rc == 0 and (vg_check.stdout | trim) != '' }}"
-
-    - name: 禁止对已有卷组再次执行清盘
-      assert:
-        that:
-          - not (nvme_wipe_signatures | bool and vg_exists)
-        fail_msg: "卷组 {{ vg_name }} 已存在，禁止使用 nvme_wipe_signatures=true 重复清盘。"
+      loop: "{{ (nvme_children.results | default([])) | zip(nvme_holders.results | default([])) | list }}"
+      when: not vg_exists
 
     - name: 显示 NVMe 当前签名
       command: "wipefs --noheadings {{ item }}"
@@ -110,11 +133,13 @@
       register: nvme_signatures
       changed_when: false
       failed_when: false
+      when: not vg_exists
 
     - name: 清除 NVMe 文件系统/LVM/分区表签名（需显式开启）
       command: "wipefs -a {{ item.item }}"
-      loop: "{{ nvme_signatures.results }}"
+      loop: "{{ nvme_signatures.results | default([]) }}"
       when:
+        - not vg_exists
         - nvme_wipe_signatures | bool
         - item.stdout | trim != ''
       register: wipefs_result
