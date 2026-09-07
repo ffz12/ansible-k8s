@@ -1,18 +1,16 @@
 ---
-- name: Mount data disk; containerd & kubelet via bind
+- name: Mount data disk; containerd via config-root, kubelet via bind
   hosts: cluster
   become: yes
   vars:
     # ===== 换盘只改这里 =====
     device_path: "/dev/nvme2n1"          # 数据盘设备(LVM卷或裸盘); 换盘改这一处
     fstype: "xfs"
-    # container_base 来自 group_vars/all.yaml(与 containerd_setup 共用)。
-    # containerd 与 kubelet 都走 bind 挂载到标准路径(与 mount-nvme-lvm.yaml 保持一致):
-    #   containerd_root 已改为标准路径 /var/lib/containerd(见 defaults.yaml), 不再直接指盘上路径,
-    #   否则数据会建在系统盘而不是数据盘上。
-    container_binds:
-      - { src: "containerd", dest: "/var/lib/containerd" }
-      - { src: "kubelet",    dest: "/var/lib/kubelet" }
+    # container_base / containerd_root 来自 group_vars/all.yaml(与 containerd_setup 共用)
+    #   - containerd: 数据目录直接建在盘上({{ containerd_root }}),由 config.toml 的 root 指向,不 bind
+    #   - kubelet:    走 bind 挂载到标准路径(kubelet 改数据目录需动 kubeadm,bind 更省事)
+    kubelet_bind:
+      - { src: "kubelet", dest: "/var/lib/kubelet" }
 
   tasks:
     # 1. 物理设备检查
@@ -88,30 +86,32 @@
         opts: defaults
         state: mounted
 
-    # 6-7. containerd + kubelet: 统一 bind mount(与 mount-nvme-lvm.yaml 保持一致)
-    - name: 创建盘上目录 ({{ container_base }}/containerd, {{ container_base }}/kubelet)
+    # 6. containerd 数据目录: 直接建在数据盘上(不 bind,由 config.toml 的 root 指向)
+    - name: Create containerd data dir on the data disk (used via config root)
       file:
-        path: "{{ container_base }}/{{ item.src }}"
+        path: "{{ containerd_root }}"
         state: directory
         mode: "0711"
-      loop: "{{ container_binds }}"
 
-    - name: 创建标准挂载点 (/var/lib/containerd, /var/lib/kubelet)
+    # 7. kubelet: 在数据盘上建子目录 + bind 目标目录
+    - name: Create kubelet dir on disk and bind target
       file:
-        path: "{{ item.dest }}"
+        path: "{{ item }}"
         state: directory
         mode: "0711"
-      loop: "{{ container_binds }}"
+      loop:
+        - "{{ container_base }}/{{ kubelet_bind[0].src }}"
+        - "{{ kubelet_bind[0].dest }}"
 
-    # 8. bind 挂载 (带 x-systemd.requires-mounts-for 保证开机时主挂载先就绪)
-    - name: Bind mount containerd/kubelet dir to standard path
+    # 8. kubelet bind 挂载 (带 x-systemd.requires-mounts-for 保证开机时主挂载先就绪)
+    - name: Bind mount kubelet dir to standard path
       mount:
         path: "{{ item.dest }}"
         src: "{{ container_base }}/{{ item.src }}"
         fstype: none
         opts: "bind,x-systemd.requires-mounts-for={{ container_base }}"
         state: mounted
-      loop: "{{ container_binds }}"
+      loop: "{{ kubelet_bind }}"
 
     # 9. 最终确认
     - name: Final confirmation of mounts
@@ -119,8 +119,14 @@
       register: final_check
       changed_when: false
       failed_when: false
-      loop: "{{ [container_base] + (container_binds | map(attribute='dest') | list) }}"
+      loop:
+        - "{{ container_base }}"
+        - "{{ kubelet_bind[0].dest }}"
 
     - name: 📢 [终端显示] 最终挂载确认
       debug:
         msg: "{{ final_check.results | map(attribute='stdout') | list }}"
+
+    - name: 📢 [终端显示] containerd 数据目录提示
+      debug:
+        msg: "containerd 数据目录 = {{ containerd_root }} (已在数据盘上创建;确保 containerd_setup 的 config.toml root 指向它)"

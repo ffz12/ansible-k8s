@@ -42,10 +42,8 @@ sandbox_image: "{{ (registry ~ '/pause:' ~ pause_image_version) if (is_offline |
 pause: "{{ sandbox_image }}"
 #config 格式版本自动推导: 1.x -> 2, 2.x+ -> 3 (勿手改)
 containerd_config_version: "{{ 3 if (containerd_version.split('.')[0] | int) >= 2 else 2 }}"
-#containerd 数据目录(等同 docker data-root)。标准路径, 与 kubelet_config_dir 同模式:
-#磁盘上的实际数据在 {{ container_base }}/containerd, 由 mount-nvme-lvm.yaml / mount-nvme.yaml
-#bind mount 到这里 —— config.toml 的 root 只认标准路径, 不直接指盘上路径。
-containerd_root: "/var/lib/containerd"
+#containerd 数据目录(等同 docker data-root),随 container_base
+containerd_root: "{{ container_base }}/containerd"
 
 # ================= Harbor 镜像清单 =================
 harbor_offline_images:
