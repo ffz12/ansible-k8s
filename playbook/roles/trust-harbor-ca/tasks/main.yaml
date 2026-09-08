@@ -1,34 +1,117 @@
 ---
-# 1. 从 Harbor 节点读取 CA 内容 (只执行一次)
+# ============================================================================
+#  trust-harbor-ca —— 把 Harbor 自签 CA 装进各节点系统信任链 + Docker 证书目录
+#
+#  ⚠ 三个坑, 是这个角色历史上"有的节点成功有的失败"的根因, 改动前先看:
+#   1) update-ca 不能挂在 handler 的 notify 上。copy 幂等: anchor 文件已存在且内容
+#      一致时 copy 是 ok 不是 changed, notify 不触发, CA bundle 就永远不重建。
+#      一旦某台曾经"文件落盘了但 bundle 没建成", 重跑也修不好(copy 依然无变化)。
+#      → 这里改成无条件执行 update-ca(changed_when: false), 幂等且便宜。
+#   2) 系统判定不命中任何分支时不能静默 skip。老写法两个 copy 一个判 RedHat 一个判
+#      Debian, 都不中就什么都没装, 却继续往下验证, 最后只看到一句 FAILED。
+#      → 这里先算出 harbor_ca_dest, 算不出来直接 fail。
+#   3) 验证不能 `... 2>&1 | grep 'Verify return code: 0'`。DNS 不通 / 连不上 /
+#      CA 不被信任 三种情况 rc 都是 1、stdout 都是空, 完全无法区分。
+#      → 这里保留 openssl 完整关键行(含 issuer、verify error、connect 错误)再判定。
+# ============================================================================
+
+# -------------------------------------------------- 0. 确保域名能解析
+# 必须在验证之前: 本 playbook 的 hosts 是 cluster(超集), 而 harbor 的 /etc/hosts
+# 解析原先只由 containerd-setup / docker-daemon / docker-gpu 三个角色写 —— 没装
+# 容器运行时的节点压根没有这条解析, TLS 验证必然失败, 且失败原因与 CA 无关。
+- name: Ensure harbor DNS resolves via /etc/hosts
+  include_tasks: "{{ playbook_dir }}/tasks/ensure-harbor-hosts.yml"
+
+# ---------------------------------------------------------------- 1. 取 CA
 - name: Get CA content from harbor node
   slurp:
     src: "{{ harbor_copy_path }}/harbor/ssl/ca.crt"
-  delegate_to: "{{ groups['harbor'][0] }}" # 指向存放证书的那个 Harbor 节点
+  delegate_to: "{{ groups['harbor'][0] }}"   # 指向存放证书的那个 Harbor 节点
   register: harbor_ca_raw
   run_once: true
 
-# 2. 在目标机器上安装证书 (RHEL/CentOS/Rocky/openEuler/Kylin，均为 RHEL 系 CA 路径)
-- name: Install Harbor CA into system trust (RedHat)
+# Harbor 端 CA 的指纹, 作为基准值下发到每台做比对 —— 节点上装的是不是"这一代"CA,
+# 光看文件在不在看不出来: Harbor 重新签发过证书, 旧 anchor 也还在原地。
+- name: Get CA fingerprint on harbor node
+  command: >
+    openssl x509 -noout -fingerprint -sha256
+    -in {{ harbor_copy_path }}/harbor/ssl/ca.crt
+  delegate_to: "{{ groups['harbor'][0] }}"
+  register: harbor_ca_fp_raw
+  run_once: true
+  changed_when: false
+
+- name: Set expected CA fingerprint
+  set_fact:
+    harbor_ca_fingerprint: "{{ harbor_ca_fp_raw.stdout.split('=')[1] | trim }}"
+  run_once: true
+
+# ------------------------------------------------- 2. 判定本机 CA 安装路径
+# 按机器上【实际存在的目录】判, 不按发行版名字判。原因: 老写法靠
+# `ansible_os_family == "RedHat"` 加一串手写的 openEuler/Kylin 名字来匹配, 名字
+# 对不上就两个 copy 全 skip、CA 压根没装, 却继续往下验证 —— 这正是"有的节点成功
+# 有的失败"里最难查的一种。目录是不是在, 比名字可靠, 也不用每来一个新发行版就改代码。
+- name: Check for RedHat-family CA anchor dir
+  stat:
+    path: /etc/pki/ca-trust/source/anchors
+  register: harbor_ca_dir_rhel
+
+- name: Check for Debian-family CA anchor dir
+  stat:
+    path: /usr/local/share/ca-certificates
+  register: harbor_ca_dir_deb
+
+# 两个目录都在时(少见)用 os_family 拍板, 避免装错地方。
+- name: Detect CA trust layout
+  set_fact:
+    _harbor_ca_rhel: >-
+      {{ (harbor_ca_dir_rhel.stat.isdir | default(false))
+         and not ((harbor_ca_dir_deb.stat.isdir | default(false))
+                  and ansible_os_family == 'Debian') }}
+    _harbor_ca_deb: >-
+      {{ (harbor_ca_dir_deb.stat.isdir | default(false))
+         and not ((harbor_ca_dir_rhel.stat.isdir | default(false))
+                  and ansible_os_family != 'Debian') }}
+
+- name: Resolve CA destination path
+  set_fact:
+    harbor_ca_dest: >-
+      {{ ('/etc/pki/ca-trust/source/anchors/' ~ harbor_dns ~ '-ca.crt')
+         if (_harbor_ca_rhel | bool)
+         else (('/usr/local/share/ca-certificates/' ~ harbor_dns ~ '-ca.crt')
+               if (_harbor_ca_deb | bool) else '') }}
+
+# 两个目录都没有 = ca-certificates 包没装。就地报错, 不要装不上还往下走 ——
+# 否则最后只看到一句 "TLS -> FAILED", 查半天才发现 CA 压根没落盘。
+- name: Fail fast when no CA trust layout found
+  fail:
+    msg: >-
+      {{ inventory_hostname }} 上找不到系统 CA 信任目录
+      (/etc/pki/ca-trust/source/anchors 和 /usr/local/share/ca-certificates 都不存在):
+      os_family={{ ansible_os_family }},
+      distribution={{ ansible_distribution }} {{ ansible_distribution_version }}。
+      通常是 ca-certificates 包没装, 先装上再跑本角色。
+  when: harbor_ca_dest | length == 0
+
+# -------------------------------------------------------- 3. 装进系统信任链
+- name: Install Harbor CA into system trust
   copy:
     content: "{{ harbor_ca_raw['content'] | b64decode }}"
-    dest: "/etc/pki/ca-trust/source/anchors/{{ harbor_dns }}-ca.crt"
+    dest: "{{ harbor_ca_dest }}"
     mode: '0644'
-  # 显式带上 openEuler/Kylin: 老 ansible(2.8.8) 对它们的 os_family 识别不准,不能只判 RedHat
-  when: >
-    ansible_os_family == "RedHat"
-    or ansible_distribution in ['openEuler', 'Kylin Linux Advanced Server', 'Kylin']
-  notify: update-ca-redhat
 
-# 3. 在目标机器上安装证书 (Debian/Ubuntu)
-- name: Install Harbor CA into system trust (Debian)
-  copy:
-    content: "{{ harbor_ca_raw['content'] | b64decode }}"
-    dest: "/usr/local/share/ca-certificates/{{ harbor_dns }}-ca.crt"
-    mode: '0644'
-  when: ansible_os_family == "Debian"
-  notify: update-ca-debian
+# 无条件重建 CA bundle: 见文件头坑 1, 不能依赖上一步的 changed 状态。
+- name: Rebuild system CA bundle (RedHat family)
+  command: update-ca-trust extract
+  when: _harbor_ca_rhel | bool
+  changed_when: false
 
-# 4. (可选) 直接配置 Docker 证书目录，防止 Docker 不读系统证书
+- name: Rebuild system CA bundle (Debian family)
+  command: update-ca-certificates
+  when: _harbor_ca_deb | bool
+  changed_when: false
+
+# --------------------------------------- 4. Docker 证书目录(不读系统信任链)
 - name: Ensure Docker certs directory exists
   file:
     path: "/etc/docker/certs.d/{{ harbor_dns }}"
@@ -41,16 +124,44 @@
     dest: "/etc/docker/certs.d/{{ harbor_dns }}/ca.crt"
     mode: '0644'
 
-# 5. 验证 (由于是新安装，建议在执行完 update-ca 后再验证)
-- name: Flush handlers to apply CA changes
-  meta: flush_handlers
-
-- name: Verify CA trust
-  shell: "openssl s_client -connect {{ harbor_dns }}:443 -servername {{ harbor_dns }} </dev/null 2>&1 | grep 'Verify return code: 0'"
-  register: verify_result
-  ignore_errors: yes
+# ------------------------------------------------------------------ 5. 验证
+# 输出做成 KEY=VALUE, 失败时一眼看出是哪一类:
+#   RESOLVE 为空 / CONNECT_ERR 有值  → 解析或网络问题(不是 CA 问题)
+#   RESOLVE 的 IP 与预期 harbor_ip 不同 → 连到了别的 harbor, 对方是上一代 CA 签的
+#   FINGERPRINT 与 EXPECT 不同        → 本机装的 CA 不是当前这一代
+#   VERIFY_ERR=num=20                 → CA 在但 bundle 没生效
+- name: Probe TLS trust for harbor
+  shell: |
+    out=$(timeout 10 openssl s_client -connect {{ harbor_dns }}:443 \
+          -servername {{ harbor_dns }} </dev/null 2>&1)
+    echo "RESOLVE=$(getent hosts {{ harbor_dns }} | awk '{print $1}' | paste -sd, -)"
+    echo "EXPECT_IP={{ harbor_ip | default('n/a') }}"
+    echo "EXPECT_FP={{ harbor_ca_fingerprint }}"
+    echo "FINGERPRINT=$(openssl x509 -noout -fingerprint -sha256 -in {{ harbor_ca_dest }} 2>/dev/null | cut -d= -f2)"
+    echo "$out" | grep -m1 -E '^(connect:|socket:)' | sed 's/^/CONNECT_ERR=/'
+    echo "$out" | grep -m1 '^verify error' | sed 's/^/VERIFY_ERR=/'
+    echo "$out" | grep -m1 '^issuer=' | sed 's/^/ISSUER=/'
+    echo "$out" | grep -m1 'Verify return code:' | sed 's/^/VERIFY=/'
+    echo "$out" | grep -q 'Verify return code: 0' && echo "RESULT=SUCCESS" || echo "RESULT=FAILED"
+    exit 0
+  args:
+    executable: /bin/bash
+  register: harbor_tls_probe
   changed_when: false
 
-- name: Debug result
+- name: Report TLS trust result
   debug:
-    msg: "TLS verification for {{ harbor_dns }} -> {{ 'SUCCESS' if verify_result.rc == 0 else 'FAILED' }}"
+    msg: >-
+      TLS verification for {{ harbor_dns }} on {{ inventory_hostname }}:
+      {{ harbor_tls_probe.stdout_lines }}
+
+# 默认不中断整场(和原来的 ignore_errors 行为一致), 需要"验不过就红"时:
+#   -e harbor_trust_strict=true
+- name: Fail when TLS trust is not established
+  fail:
+    msg: >-
+      {{ harbor_dns }} 的 TLS 信任未建立, 详情见上一条 Report:
+      {{ harbor_tls_probe.stdout_lines }}
+  when:
+    - harbor_trust_strict | default(false) | bool
+    - "'RESULT=SUCCESS' not in harbor_tls_probe.stdout_lines"
