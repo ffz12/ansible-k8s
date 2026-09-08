@@ -337,6 +337,13 @@ apiserver_entry_port: "{{ apiserver_lb_port if (has_lbvip | bool) else apiserver
 # 端口兜底(与 13 个版本变量同理: versions/模板都要用, 精简 env.yaml 不该 undefined)
 apiserver_port: 6443
 apiserver_lb_port: 8443
+# 集群内 DNS 域名兜底(同上理由)。两处【裸引用、无 default()】:
+#   kube-init-master/templates/kubeadm-config.yaml.j2  -> networking.dnsDomain
+#   nodelocaldns/templates/nodelocaldns.yaml.j2        -> Corefile 的 <dns_domain>:53 区块
+# 精简版 env.yaml 少写这一项, 上面两个模板会直接 undefined 渲染失败(与 --check 无关, 实跑也一样)。
+# cluster.local 同时是 kubeadm 的默认值, 给兜底等于把现状显式化; env.yaml 写了就覆盖这里。
+# ⚠ 它会进 apiserver 证书 SAN 与 kubelet clusterDomain —— 建集群后不要再改, 改了得重签证书。
+dns_domain: cluster.local
 
 # ================= k8s 路径 =================
 kube_bin_dir: /usr/local/bin
