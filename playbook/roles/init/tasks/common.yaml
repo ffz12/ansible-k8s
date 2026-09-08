@@ -216,3 +216,93 @@
     enabled: yes
   ignore_errors: yes
   tags: [chrony]
+
+# ============================================================================
+#  以下三步是【验证】, 2026-09-09 补。
+#
+#  为什么必须验证: 上面写配置 + 重启服务两步都带 ignore_errors, 而且做完就结束 ——
+#  从来不检查 chrony 到底有没有【锁上时间源】。于是一台机器可以带着
+#  "chrony 进程正在运行、但一个源都没选中" 的状态走完整个 init, 而 init 全程报成功。
+#
+#  这不是假设: 2026-09-09 在 gn-10-14-64-1 / cn-10-14-73-{1,2,3,20} 上实测,
+#  五台全是 Reference ID 00000000 / Stratum 0 / Ref time 1970(= 一次都没同步过),
+#  其中一台的钟快了 8 小时 05 分, 而交付标准要求集群内最大时间差 <15 秒。
+#  时钟错 8 小时会连带坑 etcd lease、证书有效期(TLS 报 certificate is not yet valid)、
+#  kubelet、日志时序, 且症状通常和"时间"看不出关系, 排查代价极高。
+#
+#  ⚠ 判据必须是 Reference ID / NTPSynchronized, 【不能只看 date】——
+#    钟面值恰好正确 ≠ 已同步。没有源在维持它, 随时会漂; 本次就有一台
+#    "看着正常"的机器在两次采样之间倒退了 8 小时。
+#  ⚠ 同理, 光 grep 配置文件里的 server 行也不够: 那只证明【文件】写对了,
+#    证明不了【进程】在用它(进程可能还挂着重启前的旧配置)。
+#
+#  本角色沿用 ignore_errors 的宽松风格, 所以这里只【响亮告警】不中断
+#  (os-init 侧同名检查是硬失败, 由 osinit_fail_on_unsynced 控制)。
+#  要在 init 里也硬失败: -e init_fail_on_unsynced=true
+# ============================================================================
+
+- name: 触发一次强制对时并等待 chrony 选定时间源(最多 {{ init_chrony_sync_wait | default(60) }} 秒)
+  shell: |
+    set -o pipefail
+    chronyc makestep >/dev/null 2>&1 || true
+    refid=$(chronyc tracking 2>/dev/null | awk -F': *' '/Reference ID/{print $2}' | awk '{print $1}')
+    sync=$(timedatectl show -p NTPSynchronized --value 2>/dev/null)
+    echo "REFID=${refid:-none}"
+    echo "SYNCED=${sync:-unknown}"
+    # 锁上源的判据: Reference ID 既非空也非全零。全零表示一个源都没选中。
+    if [ -n "$refid" ] && [ "$refid" != "00000000" ]; then echo "LOCKED=yes"; else echo "LOCKED=no"; fi
+  args:
+    executable: /bin/bash
+  register: init_chrony_state
+  until: "'LOCKED=yes' in init_chrony_state.stdout"
+  retries: "{{ ((init_chrony_sync_wait | default(60) | int) / 5) | round(0, 'ceil') | int }}"
+  delay: 5
+  changed_when: false
+  failed_when: false
+  tags: [chrony]
+
+- name: 时间同步状态
+  debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ init_chrony_state.stdout_lines | default(['(未采集到)']) }}
+      本机时间(UTC)={{ ansible_date_time.iso8601 | default('n/a') }}
+  tags: [chrony]
+
+# 未锁上源时响亮打一条 —— 别让它变成静默跳过。全集群跑完没人会回头看某台的
+# chronyc tracking, 而下次发现时通常已经是"TLS 报证书未生效""etcd 选举异常"
+# 这类间接症状, 再从那里倒查回时间要绕很大一圈。
+- name: ⚠ chrony 未锁定任何时间源(时间不可信)
+  debug:
+    msg: |
+      ⚠⚠⚠ {{ inventory_hostname }} 的 chrony 没有锁定任何时间源, 系统时间不可信。⚠⚠⚠
+
+      实测: {{ init_chrony_state.stdout_lines | default(['(未采集到)']) | join(' | ') }}
+      当前源配置: {{ '集群内自建 NTP server ' ~ (groups['chronyserver'] | default([]) | join(','))
+                     if (groups['chronyserver'] | default([]) | length) > 0
+                     else 'chrony_ip = ' ~ (chrony_ip | default('未定义')) }}
+
+      交付标准要求集群内最大时间差 <15 秒, 当前状态不满足。排查:
+        chronyc sources -v     # 状态符 ^* = 已选中; 全是 ^? = 都不可达或被拒
+        chronyc tracking       # Reference ID 全零 = 一个源都没选中
+      常见原因:
+        1) 源在本机房不可达(封闭机房指了公网源) —— 内网有 NTP 就改 chrony_ip,
+           或把某台能出网的机器放进 inventory 的 [chronyserver] 组自建
+        2) 防火墙未放行 udp/123
+        3) 自建了 server 但 chrony_allow_networks 没覆盖本机所在网段 ——
+           症状正是 server 自己 tracking 正常、这台客户端全 ^?
+           (上面那个 assert 只检查列表非空, 不检查是否覆盖所有客户端网段)
+        4) systemd-timesyncd 与 chrony 抢 udp/123 —— 停掉并 mask 它
+      核对跨节点实际差值:
+        ansible all -m shell -a 'date -u +%FT%T'
+  when: "'LOCKED=yes' not in (init_chrony_state.stdout | default(''))"
+  tags: [chrony]
+
+- name: chrony 未锁定时间源则中止(需显式开启)
+  fail:
+    msg: >-
+      {{ inventory_hostname }} 的 chrony 未锁定任何时间源, 且已设
+      init_fail_on_unsynced=true。详情见上一条。
+  when:
+    - init_fail_on_unsynced | default(false) | bool
+    - "'LOCKED=yes' not in (init_chrony_state.stdout | default(''))"
+  tags: [chrony]
