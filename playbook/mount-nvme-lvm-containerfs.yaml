@@ -1,32 +1,57 @@
 ---
-# 4 块 NVMe -> LVM 条带 -> XFS -> /var/lib/container
+# 4 块 NVMe -> LVM 条带 -> XFS -> {{ container_base }}(来自 env.yaml, 默认 /var/lib/container)
 #
 # 对应现场命令（设备列表由 Playbook 自动识别，不依赖编号连续）：
 #   wipefs -a <自动识别出的4块NVMe>
 #   pvcreate <自动识别出的4块NVMe> -y -f
 #   vgcreate vg <自动识别出的4块NVMe>
-#   lvcreate -n containerfs -L 1.5T -i 4 -I 256 vg -y
+#   lvcreate -n containerfs -L 1.5T -i 4 -I 256 vg -y     <- 大小由 lv_size 决定, 见下
 #   mkfs.xfs -f /dev/mapper/vg-containerfs
 #
 # 按现场交付流程首次执行会清除 4 块盘上的签名；确认目标盘可清空后再执行。
 # 已存在 vg 时会跳过磁盘识别、清盘和 PV/VG 创建，只补齐后续 LV、文件系统与挂载。
 #
-# 注意：自动识别 lsblk 显示容量为 3.5T 的 Linux NVMe namespace 整盘，不依赖编号连续。
+# 注意：自动识别容量落在 expected_disk_bytes ±disk_size_tolerance_pct 区间内的 Linux NVMe
+#      namespace 整盘，不依赖编号连续，也不依赖 lsblk 的显示字符串（理由见下方 vars 注释）。
+#
+# --check 可以当预览用：所有只读任务都带 check_mode: false，跑完选盘校验后 end_host 早停，
+#      不会执行 wipefs / pvcreate / vgcreate / lvcreate / mkfs 中的任何一个。
 - name: Build four-NVMe striped LVM for containerd and kubelet
   hosts: cluster
   become: yes
   vars:
     expected_disk_count: 4
-    expected_disk_size: "3.5T"
+    # 选盘按【字节数区间】匹配，不用 lsblk 的显示字符串。
+    # 原因：lsblk 的 SIZE 是 util-linux 四舍五入到 1 位小数的显示值（3.84TB 盘 = 3.493 TiB
+    #   -> 显示 "3.5T"），既受 locale 小数点符号影响，同容量级别的不同型号也可能跨到相邻的
+    #   舍入桶。按字节数比没有这两个问题。
+    # 3.84TB 级 NVMe 标称 3840755982336 字节（= 3.493 TiB，lsblk 显示 3.5T）。
+    expected_disk_bytes: 3840755982336
+    # ±5% -> [3.319, 3.668] TiB。相邻档位 3.2TB(2.911) / 7.68TB(6.986) 不会误入；
+    # 4.0TB(3.639) 会一并落入 —— 同属一个交付档位，可接受，且下面的同容量校验仍拦混插。
+    # 换档位（如 7.68TB）时改 expected_disk_bytes，并一起调 lv_size / stripe_count。
+    disk_size_tolerance_pct: 5
+    disk_bytes_min: "{{ expected_disk_bytes | int * (100 - (disk_size_tolerance_pct | int)) // 100 }}"
+    disk_bytes_max: "{{ expected_disk_bytes | int * (100 + (disk_size_tolerance_pct | int)) // 100 }}"
     nvme_devices: []
     nvme_wipe_signatures: true
     vg_name: vg
     lv_name: containerfs
+    # LV 大小：两种写法都兼容，按值里有没有 '%' 自动选 lvcreate 的参数，不用改命令。
+    #   绝对大小  1.5T / 500G / 2048M ...        -> lvcreate -L（大写）
+    #   百分比    100%FREE / 80%VG / 50%PVS ...  -> lvcreate -l（小写）
+    # 交付标准是固定 1.5T（VG 里留余量）；想用满 VG 就把 lv_size 改成 100%FREE。
     lv_size: 1.5T
+    lv_size_flag: "{{ '-l' if '%' in (lv_size | string) else '-L' }}"
     fstype: xfs
     stripe_count: 4
     stripe_size_kb: 256
-    container_base: /var/lib/container
+    # container_base / containerd_root 来自 group_vars/all(与 containerd_setup 共用)。
+    # 改挂载路径: 改 env.yaml 的 container_base 一处即可(三个挂盘 playbook + containerd_setup
+    #   都读它); 只想临时试一次用 -e container_base=/xxx。
+    # 【不要】在这里重复定义 container_base —— play vars 优先级高于 group_vars, 写在这会让
+    # env.yaml 的改动对本 playbook 静默失效, 而 containerd_setup 仍按 env.yaml 走, 两边路径
+    # 对不上(盘挂在 A, containerd 却往 B 写, 数据落回系统盘且不报错)。本文件曾经就这么写过。
     container_binds:
       - { src: containerd, dest: /var/lib/containerd }
       - { src: kubelet, dest: /var/lib/kubelet }
@@ -43,12 +68,13 @@
       register: vg_check
       changed_when: false
       failed_when: false
+      check_mode: false        # 只读; 不设则 --check 下被跳过, 下一步取 vg_check.rc 直接 undefined
 
     - name: 判断卷组状态
       set_fact:
         vg_exists: "{{ vg_check.rc == 0 and (vg_check.stdout | trim) != '' }}"
 
-    # 自动识别 lsblk 显示容量为 3.5T 的 NVMe 整盘，不要求设备编号连续。
+    # 自动识别容量落在 [disk_bytes_min, disk_bytes_max] 内的 NVMe 整盘，不要求设备编号连续。
     # 只排除容量不符、有子设备/挂载、holders、已有 PV 的盘；有残留签名的裸盘保留，
     # 首次流程会按 nvme_wipe_signatures 决定是否执行 wipefs。
     - name: 自动识别可用的 NVMe 整盘
@@ -56,13 +82,15 @@
         set -o pipefail
         for d in $(lsblk -dpno NAME,TYPE | awk '$2 == "disk" && $1 ~ /\/dev\/nvme[0-9]+n[0-9]+$/ {print $1}'); do
           base=$(basename "$d")
-          human_size=$(lsblk -dnpo SIZE "$d" | xargs)
-          [ "$human_size" = "{{ expected_disk_size }}" ] || continue
+          size_bytes=$(lsblk -bdno SIZE "$d" | xargs)
+          [ -n "$size_bytes" ] || continue
+          [ "$size_bytes" -ge {{ disk_bytes_min }} ] || continue
+          [ "$size_bytes" -le {{ disk_bytes_max }} ] || continue
           [ "$(lsblk -nrpo NAME "$d" | tail -n +2 | wc -l)" -eq 0 ] || continue
           [ -z "$(lsblk -dnpo MOUNTPOINT "$d" | xargs)" ] || continue
           [ -d "/sys/block/${base}/holders" ] && [ -n "$(find "/sys/block/${base}/holders" -mindepth 1 -maxdepth 1 -print -quit)" ] && continue
           pvs --noheadings --options pv_name 2>/dev/null | tr -d ' ' | grep -qx "$d" && continue
-          size_bytes=$(lsblk -bdno SIZE "$d" | xargs)
+          human_size=$(lsblk -dnpo SIZE "$d" | xargs)
           echo "$d $human_size $size_bytes"
         done
       args:
@@ -70,6 +98,7 @@
       register: detected_nvme
       changed_when: false
       when: not vg_exists
+      check_mode: false        # 只读; --check 下也要跑出设备列表, 否则预览毫无意义
 
     - name: 整理自动识别的 NVMe 列表
       set_fact:
@@ -80,18 +109,23 @@
 
     - name: 显示自动识别结果
       debug:
-        msg: "自动识别到 {{ nvme_devices | length }} 块 {{ expected_disk_size }} NVMe：{{ nvme_lines }}"
+        msg: >-
+          容量区间 [{{ disk_bytes_min }}, {{ disk_bytes_max }}] 字节内自动识别到
+          {{ nvme_devices | length }} 块 NVMe：{{ nvme_lines }}
       when: not vg_exists
 
-    - name: 校验自动识别结果为 4 块 3.5T 同容量 NVMe
+    - name: 校验自动识别结果为 4 块同容量 NVMe
       assert:
         that:
           - nvme_devices | length == expected_disk_count
           - nvme_sizes | length == 1
         fail_msg: >-
-          自动识别失败：识别到 {{ nvme_devices | length }} 块 {{ expected_disk_size }} NVMe，
-          容量字节数种类 {{ nvme_sizes | length }} 种；要求正好 {{ expected_disk_count }} 块且实际字节数一致。
+          自动识别失败：在容量区间 [{{ disk_bytes_min }}, {{ disk_bytes_max }}] 字节
+          （= 标称 {{ expected_disk_bytes }} ± {{ disk_size_tolerance_pct }}%）内识别到
+          {{ nvme_devices | length }} 块 NVMe，容量字节数种类 {{ nvme_sizes | length }} 种；
+          要求正好 {{ expected_disk_count }} 块且实际字节数一致。
           明细（设备/显示容量/字节数）：{{ nvme_lines }}
+          换盘型号/档位时改 expected_disk_bytes（并一起调 lv_size / stripe_count）。
       when: not vg_exists
 
     # 防止把带分区、正在挂载、被 dm/raid/crypt 占用的盘直接 wipefs。
@@ -105,6 +139,7 @@
       register: nvme_children
       changed_when: false
       when: not vg_exists
+      check_mode: false        # 只读
 
     - name: 检查 NVMe holders
       shell: |
@@ -117,6 +152,7 @@
       changed_when: false
       failed_when: false
       when: not vg_exists
+      check_mode: false        # 只读
 
     - name: 拦截有分区、挂载或底层占用的 NVMe
       assert:
@@ -138,6 +174,40 @@
       changed_when: false
       failed_when: false
       when: not vg_exists
+      check_mode: false        # 只读(--noheadings 只列签名, 不清)
+
+    # ================= --check 预览到此为止 =================
+    # 下面开始是破坏性操作(wipefs / pvcreate / vgcreate / lvcreate / mkfs)。
+    # --check 时在这里早停: 上面的选盘、安全拦截、签名盘点都已跑完并打印,
+    # 这就是实跑前要核对的全部信息; 再往下 check 模式也做不出有意义的判断
+    # (VG/LV 还不存在, lvs/blkid 拿不到东西, 只会连环报错)。
+    - name: "[--check] 预览汇总：将纳入 LVM 的盘 / 将被 wipefs 清掉的盘"
+      debug:
+        msg:
+          - "本次会纳入 LVM 的盘({{ nvme_devices | length }} 块): {{ nvme_devices | default([]) }}"
+          # 设备与签名成对列出: 签名为空 = 裸盘(跳过 wipefs); 非空 = 会被 wipefs -a 清掉。
+          # 用 | trim 与下面真实的清盘条件(item.stdout | trim != '')保持一致, 避免纯空白被误报;
+          # item 和 stdout 取自同一个 results 列表, 顺序天然对齐。
+          - >-
+            设备 / 残留签名: {{ (nvme_signatures.results | default([])) | map(attribute='item') | list
+            | zip((nvme_signatures.results | default([])) | map(attribute='stdout') | map('trim') | list)
+            | list }}
+          - "nvme_wipe_signatures={{ nvme_wipe_signatures }} (注意: 即使置 false, 后面 pvcreate -y -f 仍会覆盖签名)"
+          - "核对无误后去掉 --check 实跑。"
+      when:
+        - ansible_check_mode | bool
+        - not vg_exists
+
+    - name: "[--check] 卷组已存在, 不会碰任何磁盘"
+      debug:
+        msg: "卷组 {{ vg_name }} 已存在 -> 跳过选盘/清盘/PV/VG 创建, 实跑只会补齐 LV、文件系统与挂载。"
+      when:
+        - ansible_check_mode | bool
+        - vg_exists
+
+    - name: "[--check] 早停(不执行任何破坏性操作)"
+      meta: end_host
+      when: ansible_check_mode | bool
 
     - name: 清除 NVMe 文件系统/LVM/分区表签名（需显式开启）
       command: "wipefs -a {{ item.item }}"
@@ -166,9 +236,11 @@
       set_fact:
         lv_exists: "{{ lv_check.rc == 0 and (lv_name in (lv_check.stdout_lines | map('trim') | list)) }}"
 
-    - name: 创建 1.5T、4 路、256K 条带逻辑卷
+    # lv_size_flag 由 lv_size 派生: 含 '%' -> -l(小写, 百分比), 否则 -L(大写, 绝对大小)。
+    # 用 -L 传百分比 / 用 -l 传绝对值都会被 lvcreate 拒绝, 故必须跟着切。
+    - name: "创建逻辑卷({{ lv_size }}、{{ stripe_count }} 路、{{ stripe_size_kb }}K 条带)"
       command: >-
-        lvcreate -n {{ lv_name }} -L {{ lv_size }}
+        lvcreate -n {{ lv_name }} {{ lv_size_flag }} {{ lv_size }}
         -i {{ stripe_count }} -I {{ stripe_size_kb }} {{ vg_name }} -y
       when: not lv_exists
 
@@ -191,7 +263,7 @@
         state: directory
         mode: '0711'
 
-    - name: 挂载 containerfs 到 /var/lib/container 并写入 fstab
+    - name: "挂载 containerfs 到 {{ container_base }} 并写入 fstab"
       mount:
         path: "{{ container_base }}"
         src: "/dev/{{ vg_name }}/{{ lv_name }}"
