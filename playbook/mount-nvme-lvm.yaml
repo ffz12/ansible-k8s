@@ -37,6 +37,7 @@
       register: vg_check
       changed_when: false
       failed_when: false
+      check_mode: false        # 只读; 不设则 --check 下被跳过, 下一步取 vg_check.rc 直接 undefined
 
     - name: 判断 VG 是否已存在
       set_fact:
@@ -72,6 +73,7 @@
       register: free_nvme
       changed_when: false
       when: not already_mounted and not vg_exists
+      check_mode: false        # 只读; --check 下也要跑出设备列表, 否则预览毫无意义
 
     - name: 整理空闲盘列表 (设备名 + 容量种类)
       set_fact:
@@ -97,6 +99,34 @@
           明细: {{ nvme_lines }}。为防误操作已中止。
         success_msg: "校验通过: {{ nvme_disks | length }} 块同容量空盘 -> {{ nvme_lines }}"
       when: not already_mounted and not vg_exists
+
+    # ================= --check 预览到此为止 =================
+    # 下面开始动磁盘(pvcreate/vgcreate -> lvcreate -> mkfs -> mount)。
+    # --check 时早停: 上面的选盘与安全校验已跑完并打印, 这就是实跑前要核对的全部信息;
+    # 再往下 check 模式做不出有意义的判断(VG/LV 还不存在, blkid 拿不到东西, 只会连环报错)。
+    - name: "[--check] 预览汇总：将纳入 LVM 的盘"
+      debug:
+        msg:
+          - "本次会纳入 LVM 的空白盘({{ nvme_disks | default([]) | length }} 块): {{ nvme_disks | default([]) }}"
+          - "本 playbook 只选完全空白的盘(6 道检查), 有任何签名/分区/PV/挂载的盘都已被跳过, 不会被碰。"
+          - "核对无误后去掉 --check 实跑。"
+      when:
+        - ansible_check_mode | bool
+        - not already_mounted
+        - not vg_exists
+
+    - name: "[--check] 已挂载或卷组已存在, 不会新建 LVM"
+      debug:
+        msg: >-
+          {{ container_base }} 已挂载={{ already_mounted }}, 卷组 {{ vg_name }} 已存在={{ vg_exists }}
+          -> 跳过选盘与 LVM 创建, 实跑只会补齐挂载与目录。
+      when:
+        - ansible_check_mode | bool
+        - already_mounted or vg_exists
+
+    - name: "[--check] 早停(不动任何磁盘)"
+      meta: end_host
+      when: ansible_check_mode | bool
 
     # ---------- 创建 LVM ----------
     - name: 创建卷组 (pvcreate + vgcreate)

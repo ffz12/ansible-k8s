@@ -47,6 +47,7 @@
       register: existing_fs
       changed_when: false
       failed_when: false
+      check_mode: false        # 只读; 不设则 --check 下被跳过, 下一步取 existing_fs.stdout 直接 undefined
 
     - name: 📢 [终端显示] 盘上文件系统检测
       debug:
@@ -66,6 +67,28 @@
       debug:
         msg: "⚠️ {{ device_path }} 已有文件系统({{ existing_fs.stdout }})，已跳过格式化，将直接挂载，数据保留。"
       when: existing_fs.stdout != ""
+
+    # ================= --check 预览到此为止 =================
+    # --check 时早停: 设备存在性、是否已挂载、盘上有无文件系统都已判完并打印, 这就是实跑前
+    # 要核对的全部信息。再往下 check 模式做不出有意义的判断 —— 空白盘在 check 下不会真格式化,
+    # 紧接着取 UUID 会拿到空值, 挂载步骤只会连环报错。
+    - name: "[--check] 预览汇总"
+      debug:
+        msg:
+          - "目标设备: {{ device_path }}"
+          - "{{ container_base }} 已挂载: {{ already_mounted }}"
+          # 判据与下面真实的格式化条件保持字面一致(existing_fs.stdout == "", 不加 trim),
+          # 否则预览结论可能与实跑行为不符。
+          - >-
+            {{ ('盘上已有文件系统(' ~ existing_fs.stdout ~ ') -> 实跑不会格式化, 直接挂载, 数据保留')
+               if existing_fs.stdout != ''
+               else ('盘完全空白 -> 实跑会执行 mkfs.' ~ fstype ~ ' 格式化该盘') }}
+          - "核对无误后去掉 --check 实跑。"
+      when: ansible_check_mode | bool
+
+    - name: "[--check] 早停(不动任何磁盘)"
+      meta: end_host
+      when: ansible_check_mode | bool
 
     # 4. 获取 UUID
     - name: Get UUID of the device
