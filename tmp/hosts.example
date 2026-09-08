@@ -57,6 +57,20 @@
 [cri_docker_nodes]
 # cri-dockerd 已弃用,留空
 
+# ---- 挂盘方式分组(只列主机名; 挂盘 playbook 靠 --limit 认这两个组) ----
+# 按【盘的形态】分, 不按有没有 GPU 卡 —— 两者没必然关系(CPU 机也可能 4 盘、
+# GPU 机也可能只 1 块盘), 用 accelerator_type 推断挂盘方式换个机型就错。
+#   ansible-playbook playbook/mount-nvme-lvm-containerfs.yaml --limit nvme_lvm
+#   ansible-playbook playbook/mount-nvme.yaml --limit nvme_single -e device_path=/dev/nvme0n1
+# 组留空则那条命令匹配不到主机, 不会误跑。详见 docs/部署说明.md 五。
+[nvme_lvm]
+# 多盘组 LVM 的机器(4 块同容量走 containerfs; 2 或 4 块走 mount-nvme-lvm)
+#gn-10-14-64-1
+
+[nvme_single]
+# 单盘机器(盘符不一致时在 [cluster] 的机器行上写 device_path=/dev/nvmeXn1)
+#cn-10-14-72-1
+
 # ---- 扩缩容临时组(平时留空; 加/删时才填,只列主机名) ----
 # 注: 加 master/worker 直接进 [k8s_master]/[k8s_node] + --limit 即可, 无需 master_to_add
 [node_to_delete]
