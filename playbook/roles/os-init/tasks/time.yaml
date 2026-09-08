@@ -58,6 +58,35 @@
     enabled: yes
     daemon_reload: yes
 
+# ⚠ 这一步【必须】在 makestep 和等同步之前 —— handler 默认要等整个 play 跑完才执行,
+#   而下面 makestep / until NTPSynchronized 立刻就要用新配置。不 flush 的话:
+#     chrony 进程还挂着【旧配置】(比如旧的、连不上的公网池)
+#     → makestep 无源可用 → until 必然超时 → osinit_fail_on_unsynced 让 play 中断
+#     → handler 连最后跑的机会都没有 → 配置文件是新的、进程是旧的
+#   现象是"配置明明写对了却死活不同步", 而且重跑也不会好(见下一个 task 的说明)。
+- name: 应用 chrony 配置(立即重启, 不等 play 结束)
+  meta: flush_handlers
+
+# flush_handlers 只在上面 template 报 changed 时才有东西可刷。配置文件已经正确
+# (上一轮写过)但进程仍跑着旧配置的机器, template 是 ok 不是 changed, notify 不触发,
+# flush 也刷不到东西 —— 于是【重跑多少次都修不好】。这里按 chrony 的实际状态兜底:
+# 没锁上任何源就强制重启一次, 与配置文件有没有变化无关。
+- name: 探测 chrony 当前是否已锁定时间源
+  shell: |
+    set -o pipefail
+    chronyc tracking 2>/dev/null | awk -F': *' '/Reference ID/{print $2}' | awk '{print $1}'
+  args:
+    executable: /bin/bash
+  register: osinit_chrony_refid
+  changed_when: false
+  failed_when: false
+
+- name: 未锁定任何源则强制重启 chrony(兜底幂等陷阱)
+  systemd:
+    name: "{{ osinit_chrony_service }}"
+    state: restarted
+  when: (osinit_chrony_refid.stdout | default('') | trim) in ['', '00000000']
+
 - name: 立即触发一次强制对时(makestep)
   command: chronyc makestep
   register: osinit_makestep
