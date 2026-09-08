@@ -18,6 +18,35 @@
   run_once: true
   delegate_to: localhost
 
+# 预检: 三个【建集群后不可改】的变量必须在 env.yaml 显式写, 故意不给 defaults 兜底 ——
+# 猜错网段/DNS 域名要重建集群或重签证书, 明确报错比静默取默认值安全。
+# (早先生成的精简版 env.yaml 缺这几项, 原先会拖到渲染 kubeadm-config 时才报笼统的
+#  undefined; 这里提前拦住并点名缺哪几个。)
+- name: 预检 —— pod_subnet / service_subnet / dns_domain 必须显式配置
+  assert:
+    that:
+      - (pod_subnet | default('') | trim | length) > 0
+      - (service_subnet | default('') | trim | length) > 0
+      - (dns_domain | default('') | trim | length) > 0
+    fail_msg: >-
+      以下变量未配置(或为空):
+      {{ ((['pod_subnet']     if (pod_subnet     | default('') | trim | length) == 0 else [])
+        + (['service_subnet'] if (service_subnet | default('') | trim | length) == 0 else [])
+        + (['dns_domain']     if (dns_domain     | default('') | trim | length) == 0 else []))
+         | join(', ') }}。
+      这三项【建完集群不可再改】(pod/service 网段要改等于重建集群, dns_domain 会进 apiserver
+      证书 SAN 与 kubelet clusterDomain, 改了得重签证书), 因此【故意不在 defaults.yaml 兜底】,
+      必须在 inventory/group_vars/all/env.yaml 显式写清。
+      参考值见 tmp/env.yaml.example:
+        pod_subnet: 10.244.0.0/12      # 与 service_subnet 及现网/LB 网段都不能重叠
+        service_subnet: 10.96.0.0/12
+        dns_domain: cluster.local      # 几乎不用改
+      (老环境的 env.yaml 若是早先生成的精简版, 按 tmp/env.yaml.example 逐项比对补全)
+    success_msg: >-
+      网段/DNS 预检通过 (pod={{ pod_subnet }}, service={{ service_subnet }}, dns={{ dns_domain }})
+  run_once: true
+  delegate_to: localhost
+
 # 按标签执行阶段
 
 - name: 同步 k8s 核心镜像到 Harbor(仅离线)

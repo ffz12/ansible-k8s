@@ -1,4 +1,21 @@
 ---
+# ⚠ 本 role 会按 etcd_data_dir 执行 state: absent 删目录。缺这个变量时 ansible 本身会报
+# undefined(不会误删), 但报错只说"undefined", 不会告诉你该填什么 —— 在删数据的路径上,
+# 报错信息含糊比缺失更危险(容易被顺手 -e 一个猜的值糊过去)。故先明确拦住并给出查法。
+# etcd_data_dir【故意不在 defaults.yaml 兜底】: 猜一个默认值会导致删错目录。
+- name: 预检 —— etcd_data_dir 必须显式配置(本 role 会按它删目录)
+  assert:
+    that:
+      - (etcd_data_dir | default('') | trim | length) > 0
+    fail_msg: >-
+      etcd_data_dir 未配置(或为空), 已中止 —— 本 role 会按它删除 etcd 数据目录。
+      【故意不在 defaults.yaml 兜底】(猜错等于删错目录), 请在
+      inventory/group_vars/all/env.yaml 显式写: etcd_data_dir: "/var/lib/etcd"
+      ⚠ 务必与现网实际路径一致, 在任一 etcd 节点查:
+        grep data-dir /etc/etcd/etcd.conf.yml
+  run_once: true
+  delegate_to: localhost
+
 - name: Stop etcd
   systemd:
     name: etcd

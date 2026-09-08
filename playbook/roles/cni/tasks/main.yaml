@@ -6,6 +6,19 @@
       - kube_network_plugin in ['calico', 'flannel', 'cilium']
     fail_msg: "kube_network_plugin 必须是 calico/flannel/cilium 之一, 当前={{ kube_network_plugin }}"
 
+# pod_subnet 决定 Pod 网段, 三个 CNI 都要用(calico/flannel 的 manifest、cilium 的 cluster-pool)。
+# 它【建完集群不可再改】, 故意不在 defaults.yaml 兜底 —— 猜错网段等于重建集群。
+# 单独跑 k8s-cni.yaml / k8s-cni-switch.yaml 时不经过 kube-init-master 的预检, 故在此也拦一道。
+- name: 预检 —— pod_subnet 必须显式配置
+  assert:
+    that:
+      - (pod_subnet | default('') | trim | length) > 0
+    fail_msg: >-
+      pod_subnet 未配置(或为空)。它决定 Pod 网段, {{ kube_network_plugin }} 的 manifest 要用;
+      【建完集群不可再改】, 因此【故意不在 defaults.yaml 兜底】, 必须在
+      inventory/group_vars/all/env.yaml 显式写清。参考: pod_subnet: 10.244.0.0/12
+      (需与 service_subnet 及现网/LB 网段都不重叠; 开 calico 双池时改填能覆盖两段的超网)
+
 # 离线: 先把所选 CNI 的镜像 load 并推到自建 Harbor(在线跳过,直接从公共 mirror 拉)
 - name: "[CNI] 离线同步 {{ kube_network_plugin }} 镜像到 Harbor"
   include_tasks: sync-cni-images.yaml

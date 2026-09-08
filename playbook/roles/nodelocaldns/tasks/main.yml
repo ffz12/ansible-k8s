@@ -20,6 +20,21 @@
     fail_msg: >-
       kube_proxy_mode 必须是 iptables 或 ipvs, 当前={{ kube_proxy_mode | default('iptables') }}
 
+# dns_domain 进 Corefile 的 <dns_domain>:53 区块, 必须与集群实际域名一致 ——
+# 不一致会导致 Pod 解析 svc.cluster.local 全部失败。它【建完集群不可改】(进了 apiserver
+# 证书 SAN 与 kubelet clusterDomain), 故意不在 defaults.yaml 兜底: 这里猜一个默认值,
+# 会在"站点自定义过 dns_domain 但 env.yaml 缺了这项"时静默生成错的 Corefile。
+- name: "[NodeLocalDNS] 预检 —— dns_domain 必须显式配置"
+  assert:
+    that:
+      - (dns_domain | default('') | trim | length) > 0
+    fail_msg: >-
+      dns_domain 未配置(或为空)。它会写进 nodelocaldns 的 Corefile(<dns_domain>:53 区块),
+      必须与集群实际 DNS 域名一致 —— 不一致会让 Pod 解析集群内服务全部失败。
+      【故意不在 defaults.yaml 兜底】(建完集群改不了, 猜错还会静默生成错的 Corefile),
+      请在 inventory/group_vars/all/env.yaml 显式写: dns_domain: cluster.local
+      不确定现网用的是什么, 查: kubectl -n kube-system get cm kubeadm-config -o yaml | grep dnsDomain
+
 - name: "[NodeLocalDNS] 本次部署模式"
   debug:
     msg: >-

@@ -1,4 +1,22 @@
 ---
+# etcd_data_dir 是数据落盘位置, 本 role 会按它建目录, etcd.conf 也指向它。
+# 它【建完集群不可改】—— 指向别处等于指向空目录, etcd 起不来/看不到既有数据。
+# 故意不在 defaults.yaml 兜底: 猜一个 /var/lib/etcd 会在"站点自定义过数据目录但 env.yaml
+# 缺了这项"时静默把数据写到别处。本 role 是 etcd-deploy / etcd-install / etcd-scale-up
+# 的必经路径, 拦在这里三条路都覆盖。
+- name: 预检 —— etcd_data_dir 必须显式配置
+  assert:
+    that:
+      - (etcd_data_dir | default('') | trim | length) > 0
+    fail_msg: >-
+      etcd_data_dir 未配置(或为空)。它是 etcd 数据落盘位置, 本 role 按它建目录、
+      etcd.conf 与备份脚本都指向它。【建完集群不可改】(指向别处等于指向空目录, 集群起不来),
+      因此【故意不在 defaults.yaml 兜底】, 请在 inventory/group_vars/all/env.yaml 显式写:
+        etcd_data_dir: "/var/lib/etcd"
+      已有集群不确定实际路径, 在任一 etcd 节点查: grep data-dir /etc/etcd/etcd.conf.yml
+  run_once: true
+  delegate_to: localhost
+
 - name: 创建 etcd 组
   group:
     name: "{{ etcd_group }}"

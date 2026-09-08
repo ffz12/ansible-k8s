@@ -340,15 +340,24 @@ apiserver_entry_port: "{{ apiserver_lb_port if (has_lbvip | bool) else apiserver
 # 端口兜底(与 13 个版本变量同理: versions/模板都要用, 精简 env.yaml 不该 undefined)
 apiserver_port: 6443
 apiserver_lb_port: 8443
-# 集群内 DNS 域名兜底(同上理由)。两处【裸引用、无 default()】:
-#   kube-init-master/templates/kubeadm-config.yaml.j2  -> networking.dnsDomain
-#   nodelocaldns/templates/nodelocaldns.yaml.j2        -> Corefile 的 <dns_domain>:53 区块
-# 精简版 env.yaml 少写这一项, 上面两个模板会直接 undefined 渲染失败(与 --check 无关, 实跑也一样)。
-# cluster.local 同时是 kubeadm 的默认值, 给兜底等于把现状显式化; env.yaml 写了就覆盖这里。
-# ⚠ 它会进 apiserver 证书 SAN 与 kubelet clusterDomain —— 建集群后不要再改, 改了得重签证书。
-dns_domain: cluster.local
+# ============================================================================
+#  ⚠【故意不在此兜底】的 4 个: pod_subnet / service_subnet / dns_domain / etcd_data_dir
+#
+#  它们都是【建集群后不可改】的值 —— 改了等于重建集群或重签证书。给兜底的代价是:
+#  精简版 env.yaml 会【静默】拿到默认值而不是报错, 拿错网段建完集群才发现, 代价是重建。
+#  对这 4 个, "宁可明确报错也别猜" 比 "不炸" 更合理。
+#
+#  改为在真正消费它们的 role 里做预检 assert, 缺了就明确报错并告知该在 env.yaml 填什么:
+#    pod_subnet     -> kube-init-master/tasks/main.yml + cni/tasks/main.yaml
+#    service_subnet -> kube-init-master/tasks/main.yml
+#    dns_domain     -> kube-init-master/tasks/main.yml + nodelocaldns/tasks/main.yml
+#    etcd_data_dir  -> etcd/etcd-common/tasks/main.yaml + etcd/etcd-destroy/tasks/main.yml
+#  (放 role 而非 playbook: 所有入口 playbook 自动覆盖, 不会漏掉单独跑的那些)
+#
+#  取值见 tmp/env.yaml.example, 必须在 env.yaml 显式写。【不要往这里加默认值。】
+# ============================================================================
 
-# ---- kubeadm-config 模板要用的其余变量, 兜底(同上理由) ----
+# ---- kubeadm-config 模板要用的其余变量, 兜底 ----
 # 下面这些被 kube-init-master/templates/kubeadm-config.yaml.j2 【裸引用、无 default()】,
 # 且都在模板顶层(不在 {% if %} 守卫内), 原先只定义在 tmp/env.yaml.example 里 ——
 # 早先生成的精简版 env.yaml 少任一项, 跑 k8s-init-master 就在渲染模板时报 undefined。
@@ -357,11 +366,7 @@ dns_domain: cluster.local
 #   kubelet_pod_pids_limit 已由 7d82b51 有意从 10000 调到 50000)。
 # env.yaml 后加载, 写了仍然覆盖这里; 这里只保证"不写也不炸"。
 #
-# ⚠ pod_subnet / service_subnet 会进 kubeadm 的 podSubnet / serviceSubnet ——
-#   建完集群不可再改(要改等于重建集群)。给兜底的代价是: 精简 env.yaml 会【静默】拿到
-#   下面这两个网段而不是报错提醒。规划网段的站点务必在 env.yaml 显式写清。
-pod_subnet: 10.244.0.0/12
-service_subnet: 10.96.0.0/12
+# ⚠ pod_subnet / service_subnet 不在这里兜底(见上方那段说明), 改走 role 内预检 assert。
 kube_proxy_mode: ipvs                    # ipvs(默认,需内核 ip_vs 模块) / iptables(无 ipvs 时退回)
 # kubelet 资源预留 / 驱逐阈值 / 日志与关机宽限。这些是【调优值】, 按机型该调:
 #   AI 大节点常调 kubelet_max_pods 与两组 *_reserved_*; 调之前先看清各项含义。
@@ -400,14 +405,14 @@ crictl_arch_map:
   aarch64: "crictl-v{{ crictl_version }}-linux-arm64.tar.gz"
 
 # ================= etcd(外置二进制集群) =================
-# 这两项原先只在 tmp/env.yaml.example 里定义, 但被裸引用(无 default()):
-#   etcd_install_dir -> 下面 etcd_bin_dir 派生它, 另在 etcd-install/etcd-common 的 tasks 里用;
-#   etcd_data_dir    -> etcd.conf.yml.j2 / etcd-backup.sh.j2 / etcd 各 role 的 tasks(共 4 处)。
-# 即本节第一行 etcd_bin_dir 就依赖一个可能未定义的变量 —— 精简版 env.yaml 少写任一项,
-# 跑 etcd-deploy 会直接 undefined。取值 = 当前 example 与 2492b30^ 基线一致(无漂移)。
-# ⚠ etcd_data_dir 是已建集群的数据落盘位置, 建完不要改(改了等于指向空目录, 集群起不来)。
+# etcd_install_dir 原先只在 tmp/env.yaml.example 里定义, 但被裸引用(无 default()):
+#   下面 etcd_bin_dir 直接派生它, 另在 etcd-install/etcd-common 的 tasks 里用 ——
+#   即本节第一行就依赖一个可能未定义的变量, 精简版 env.yaml 跑 etcd-deploy 直接 undefined。
+#   取值 = 当前 example 与 2492b30^ 基线一致(无漂移)。二进制目录改了重装即可, 故给兜底。
 etcd_install_dir: "/opt/etcd"            # 二进制目录
-etcd_data_dir: "/var/lib/etcd"           # 数据目录
+# ⚠ etcd_data_dir 【故意不兜底】(见上方 "故意不在此兜底" 那段): 它是已建集群的数据落盘
+#   位置, 猜错等于指向空目录、集群起不来, 且 etcd-destroy 会按它删目录。改走 role 内预检
+#   assert(etcd-common / etcd-destroy), 必须在 env.yaml 显式写。【不要往这里加默认值。】
 # etcd_config 整个 dict 也要兜底 —— etcd.conf.yml.j2 里 6 处写的是
 #   {{ etcd_config.X | default(...) }}, 那个 default 守的是【属性】, 守不住 etcd_config 本身:
 #   etcd_config 未定义时 jinja2 直接抛 UndefinedError('etcd_config' is undefined), default 不生效
