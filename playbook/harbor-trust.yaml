@@ -1,6 +1,45 @@
-# deploy-trust-harbor.yml
+# harbor-trust.yaml —— 把 Harbor 自签 CA 装进节点的系统信任链 + Docker 证书目录
+#
+# hosts 为什么是 docker:containerd 而不是 cluster:
+#   CA 信任只对【会拉/推镜像的节点】有意义 —— 没装任何容器运行时的机器装了 CA 也用不上,
+#   还会让 trust-harbor-ca 末尾的 TLS 探针在那些机器上报 FAILED(它们可能连 harbor
+#   的域名解析都没有), 变成一堆需要人工甄别的噪音。
+#   两个组的并集: [containerd] 是 k8s 节点用的运行时, [docker] 是给 harbor 构建/推镜像用的。
+#
+# ⚠ 什么时候需要跑本 playbook:
+#   只在【harbor 的证书被重新签发过】之后。CA 在 harbor 首次安装时生成一次(harbor/tasks/ssl.yaml
+#   每个生成任务都带 creates: 守卫, 之后重跑 harbor-install 不会动它), 所以平时不用管。
+#   本 playbook 分发的是【它运行那一刻】harbor 节点上的 CA —— 是快照, 不是订阅。
+#   重签证书后旧的分发即刻作废, 全集群会报
+#     x509: certificate signed by unknown authority ... crypto/rsa: verification error
+#   此时必须重跑本 playbook, 且跑完要重启 docker:
+#     ansible docker:containerd -b -m shell -a "systemctl restart docker"
+#   原因: dockerd 是长驻进程, 系统证书池在进程内只加载一次并缓存, 不重启读不到新 CA。
+#   (daemon.json 里有 live-restore: true, 重启 dockerd 不会停掉正在跑的容器。)
+
+# 前置检查: 两个组都空时 `hosts: docker:containerd` 会静默匹配不到任何主机 ——
+# 一个 play 都不跑、也不报错, 看起来像"跑完了没事"。这里先拦一下, 别让配置错误
+# 变成静默无操作(k8s-init-master.yaml 的切片写法就有过这个问题)。
+- name: 前置检查 —— 目标主机组非空
+  hosts: localhost
+  gather_facts: no
+  become: no
+  tasks:
+    - name: 校验 [docker] / [containerd] 至少有一个非空
+      assert:
+        that:
+          - ((groups['docker'] | default([])) + (groups['containerd'] | default([]))) | length > 0
+        fail_msg: >-
+          inventory 的 [docker] 和 [containerd] 两个组都是空的, 本 playbook 将不会
+          在任何主机上执行。请确认要装 CA 的节点已填进其中之一
+          (通常是 [containerd]: k8s 节点用的运行时)。
+        success_msg: >-
+          目标主机:
+          {{ ((groups['docker'] | default([])) + (groups['containerd'] | default([]))) | unique | join(', ') }}
+      run_once: true
+
 - name: Trust Harbor CA on all build and worker nodes
-  hosts: cluster
+  hosts: docker:containerd
   become: yes
   roles:
     - trust-harbor-ca

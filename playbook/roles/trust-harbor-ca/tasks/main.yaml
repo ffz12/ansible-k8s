@@ -16,9 +16,14 @@
 # ============================================================================
 
 # -------------------------------------------------- 0. 确保域名能解析
-# 必须在验证之前: 本 playbook 的 hosts 是 cluster(超集), 而 harbor 的 /etc/hosts
-# 解析原先只由 containerd-setup / docker-daemon / docker-gpu 三个角色写 —— 没装
-# 容器运行时的节点压根没有这条解析, TLS 验证必然失败, 且失败原因与 CA 无关。
+# 必须在验证之前: harbor 的 /etc/hosts 解析由 containerd-setup / docker-daemon /
+# docker-gpu 三个角色写(现已统一 include 同一个共享任务), 但本角色可能在它们【之前】
+# 跑 —— 例如全新节点先跑 harbor-trust 再装运行时。那时解析还不存在, 末尾的 TLS 探针
+# 会报 FAILED, 且失败原因是"域名解析不了", 与 CA 信任毫无关系, 极易误判成证书问题。
+# 故这里自己先确保一遍(共享任务幂等, 与那三处重复调用无副作用)。
+#
+# 注: harbor-trust.yaml 的 hosts 已从 cluster 收窄为 docker:containerd(2026-09-09),
+# 所以"没装任何运行时的节点"不再进入本角色 —— 但上面那个【顺序】问题依然存在。
 - name: Ensure harbor DNS resolves via /etc/hosts
   include_tasks: "{{ playbook_dir }}/tasks/ensure-harbor-hosts.yml"
 
