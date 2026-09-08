@@ -6,7 +6,19 @@
 #  站点定制(桩区 / registry hosts)走 env.yaml 的 nodelocaldns_stub_zones / nodelocaldns_hosts。
 #
 #  ⚠ 现网已在运行(名字/结构一致), 本 playbook 对现网 apply 是 reconcile 同一 DS(幂等), 不新建。
-#    但仍建议先 --check 或先在测试集群验, 确认渲染出的 manifest 与现网一致再动生产。
+#    但仍建议先确认渲染出的 manifest 与现网一致再动生产。
+#
+#    --check 可以当预览用(只读任务已带 check_mode: false):
+#      ansible-playbook -i inventory/hosts playbook/nodelocaldns.yaml --check --diff
+#    会探测上游 CoreDNS svc、渲染 manifest 并用 --diff 打出内容差异, 然后跳过 apply 与
+#    rollout; 离线时也跳过镜像 load/push。⚠ check 下 template 不落盘, 故此时磁盘上没有新
+#    文件, kubectl diff 读到的是上次实跑留下的旧文件(或报不存在)。
+#
+#    想拿 kubectl diff 比对【本次渲染结果】与现网, 用单步跑:
+#      kubectl -n kube-system get ds,cm,sa nodelocaldns -o yaml > /root/nodelocaldns-backup.yaml
+#      ansible-playbook -i inventory/hosts playbook/nodelocaldns.yaml --step
+#      # 停在 "apply nodelocaldns" 之前时, 另开终端:
+#      kubectl diff -f /etc/kubernetes/nodelocaldns.yaml     # 无输出=与现网完全一致
 #
 #  用法:
 #    ansible-playbook -i inventory/hosts playbook/nodelocaldns.yaml            # 在线
