@@ -1,6 +1,44 @@
 ---
 # playbook/roles/init/tasks/debian.yaml
 
+# ==================== DNS(可选,默认关) ====================
+# 默认 init_config_dns=false: 不碰 DNS,保持系统装机/DHCP/netplan 原有配置。
+# 需要 ansible 统一接管时: 在 env.yaml 置 init_config_dns: true,并填 dns / domains。
+# 用 resolved.conf.d drop-in(不整覆盖主文件),幂等,可重复跑。
+- name: 配置 DNS(systemd-resolved)
+  tags: [dns]
+  when:
+    - init_config_dns | bool
+    - dns is defined
+  block:
+    - name: 确保 resolved.conf.d 目录存在
+      file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        mode: '0755'
+
+    - name: 写入 DNS drop-in(不覆盖 resolved.conf 主文件)
+      template:
+        src: debian-resolved.conf.j2
+        dest: /etc/systemd/resolved.conf.d/99-init-dns.conf
+        backup: yes
+      register: init_resolved_dropin
+
+    - name: 让 /etc/resolv.conf 指向 systemd-resolved(幂等, 已是软链则不动)
+      file:
+        src: /run/systemd/resolve/resolv.conf
+        dest: /etc/resolv.conf
+        state: link
+        force: yes
+      register: init_resolv_link
+
+    - name: 重启 systemd-resolved 使 DNS 生效
+      systemd:
+        name: systemd-resolved
+        state: restarted
+        enabled: yes
+      when: init_resolved_dropin is changed or init_resolv_link is changed
+
 # ==================== 1. 软件源策略分流 ====================
 
 - name: 【离线模式】配置本地双架构离线 APT 源
@@ -20,16 +58,37 @@
         owner: root
         group: root
 
-    - name: 【Ubuntu 22.04 离线】覆写传统 sources.list
+    - name: 【Ubuntu 22.04 离线】覆写传统 sources.list(留时间戳备份)
       copy:
         dest: /etc/apt/sources.list
         content: "deb [trusted=yes] file:///opt/ubuntu-offline-pkgs ./\n"
+        backup: yes
       when: ansible_distribution_version == "22.04"
 
-    - name: 【Ubuntu 24.04 离线】屏蔽官方默认源并添加离线源
-      shell: |
-        echo "" > /etc/apt/sources.list.d/ubuntu.sources
-        echo "deb [trusted=yes] file:///opt/ubuntu-offline-pkgs ./" > /etc/apt/sources.list
+    # 24.04 的官方源在 sources.list.d/ubuntu.sources(deb822 格式)。
+    # ⚠ 原先这里是 `echo "" > ubuntu.sources` 直接清空 —— 原内容不可恢复, 装完想回在线源
+    #   只能靠仓库自带的标准源文件重建, 站点定制过的内网 mirror 就丢了。
+    #   改为【改名保留】: mv 成 ubuntu.sources.disabled-<时间戳>, apt 不再读它(只认 *.sources),
+    #   要恢复直接改回名字即可。幂等: 文件已被移走(不存在)时跳过, 不会用空文件覆盖已有备份。
+    - name: 【Ubuntu 24.04 离线】检查官方源文件是否还在
+      stat:
+        path: /etc/apt/sources.list.d/ubuntu.sources
+      register: _ubuntu_sources
+      when: ansible_distribution_version == "24.04"
+
+    - name: 【Ubuntu 24.04 离线】改名屏蔽官方源(保留原内容, 可改回)
+      command: >-
+        mv /etc/apt/sources.list.d/ubuntu.sources
+           /etc/apt/sources.list.d/ubuntu.sources.disabled-{{ ansible_date_time.iso8601_basic_short }}
+      when:
+        - ansible_distribution_version == "24.04"
+        - _ubuntu_sources.stat.exists | default(false)
+
+    - name: 【Ubuntu 24.04 离线】写入离线源(留时间戳备份)
+      copy:
+        dest: /etc/apt/sources.list
+        content: "deb [trusted=yes] file:///opt/ubuntu-offline-pkgs ./\n"
+        backup: yes
       when: ansible_distribution_version == "24.04"
   when: is_offline | bool
 
@@ -317,40 +376,3 @@
       - zlib1g
       - "{{ 'libpcre2-8-0' if ansible_distribution_version.split('.')[0] | int >= 24 else 'libpcre3' }}"
 
-# ==================== DNS(可选,默认关) ====================
-# 默认 init_config_dns=false: 不碰 DNS,保持系统装机/DHCP/netplan 原有配置。
-# 需要 ansible 统一接管时: 在 env.yaml 置 init_config_dns: true,并填 dns / domains。
-# 用 resolved.conf.d drop-in(不整覆盖主文件),幂等,可重复跑。
-- name: 配置 DNS(systemd-resolved)
-  tags: [dns]
-  when:
-    - init_config_dns | bool
-    - dns is defined
-  block:
-    - name: 确保 resolved.conf.d 目录存在
-      file:
-        path: /etc/systemd/resolved.conf.d
-        state: directory
-        mode: '0755'
-
-    - name: 写入 DNS drop-in(不覆盖 resolved.conf 主文件)
-      template:
-        src: debian-resolved.conf.j2
-        dest: /etc/systemd/resolved.conf.d/99-init-dns.conf
-        backup: yes
-      register: init_resolved_dropin
-
-    - name: 让 /etc/resolv.conf 指向 systemd-resolved(幂等, 已是软链则不动)
-      file:
-        src: /run/systemd/resolve/resolv.conf
-        dest: /etc/resolv.conf
-        state: link
-        force: yes
-      register: init_resolv_link
-
-    - name: 重启 systemd-resolved 使 DNS 生效
-      systemd:
-        name: systemd-resolved
-        state: restarted
-        enabled: yes
-      when: init_resolved_dropin is changed or init_resolv_link is changed
