@@ -10,33 +10,11 @@
 # 多网卡节点: kubelet 默认按「默认路由网卡」自选 Node IP, 可能选错(如落到 10.101.16.x)。
 # 默认已把 kubelet --node-ip 钉成 ansible_host; 若 k8s InternalIP 要用与 SSH 不同的地址,
 # 单独指定: #cpu06 ansible_host=172.18.1.66 kube_node_ip=172.18.1.66
-#
-# ---- accelerator_type: 写在机器行上, 一处声明三处生效 ----
-# 取值 nvidia / dcu / npu(华为昇腾); 纯 CPU 机器不写(默认 runc)。它决定三件事:
-#   ① containerd: 装 nvidia-container-toolkit 等对应运行时(见 container-toolkit 角色)
-#   ② docker    : 同上(见下方 [docker] 组的说明)
-#   ③ calico 双池: nvidia/dcu/npu -> 打 hardware=gpu 标签; 不写或 none -> hardware=cpu
-#      标签由 kube-init-master / kube-add-node / kube-add-master 自动打(仅
-#      calico_dual_ippool_enabled=true 时), 不用手工 kubectl label。
-#   ⚠ 所以【GPU 机器务必写】—— 漏写会被当成 CPU 节点, Pod 从 CPU 池拿地址。
-#
-# ---- calico_pool: 只覆盖"分到哪个 Pod 网段", 不影响装什么运行时 ----
-# 某台想跟 accelerator_type 的自动判定不一样时用它(优先级更高):
-#   #cpu-009 ansible_host=10.14.64.9 calico_pool=gpu    # 没插卡但想用 GPU 网段
-#   #gpu-002 ansible_host=10.14.64.12 accelerator_type=nvidia calico_pool=cpu   # 有卡但走 CPU 网段
-# 写 calico_pool=gpu 就行, 不用自己拼 hardware=gpu 那种键值对里套键值对的格式。
-#
-# ⚠ hardware 标签只在【节点首次加入】时打(kube-add-node/-master 的 when 里有
-#   not kubelet_conf.stat.exists)。已加入的存量节点事后才开双池不会自动补标签 ——
-#   无标签节点两个池都匹配不上、拿不到地址块, 需手工补:
-#     kubectl label node <名> hardware=gpu --overwrite
-#     kubectl get node -L hardware        # 核对每台都有值
-#
-# 全是 GPU 机器时不必每行都写, 可建 inventory/group_vars/<组名>.yaml 统一设:
-#   # inventory/group_vars/gpu_nodes.yaml
-#   accelerator_type: nvidia
-# ⚠ 别写成本文件的 [组名:vars] —— inventory 文件里的组变量优先级【低于】group_vars/ 目录,
-#   会被 group_vars/all/env.yaml 静默盖掉(与下方 [all:vars] 那条警告同一个坑)。
+# accelerator_type=nvidia/dcu/npu: 决定装哪种运行时, 同时决定 calico 双池分池
+#   (nvidia/dcu/npu -> hardware=gpu 标签, 不写 -> cpu)。GPU 机器漏写会被当 CPU 节点。
+# calico_pool=gpu|cpu: 只覆盖分池, 不影响运行时。如 #cpu-009 ... calico_pool=gpu
+# ⚠ hardware 标签只在节点【首次加入】时打; 存量节点事后开双池要手工补:
+#   kubectl label node <名> hardware=gpu --overwrite
 
 [init]
 # 要跑系统初始化(init.yaml)的节点(只列主机名; 同名=同一台, 机器本体仍写在 [cluster])。
