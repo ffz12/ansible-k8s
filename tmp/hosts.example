@@ -19,6 +19,30 @@
 [containerd]
 # 用 containerd 的节点(只列主机名); GPU/加速器节点加 accelerator_type=nvidia/dcu/npu(华为昇腾), 纯 CPU 不写(默认 runc)
 #cpu-001
+#
+# ---- accelerator_type: 一处声明, 三处生效 ----
+# 它不只决定装什么运行时, 还决定 calico 双池怎么分池, 所以【GPU 机器务必写】:
+#   ① containerd: accelerator_type=nvidia -> 装 nvidia-container-toolkit(见 container-toolkit 角色)
+#   ② docker    : 同上(见 [docker] 组的说明)
+#   ③ calico 双池: nvidia/dcu/npu -> 打 hardware=gpu 标签; 不写或 none -> hardware=cpu
+#      标签由 kube-init-master / kube-add-node / kube-add-master 自动打(仅
+#      calico_dual_ippool_enabled=true 时), 不用手工 kubectl label。
+#
+# ---- calico_pool: 只覆盖"分到哪个 Pod 网段", 不影响运行时 ----
+# 某台想跟 accelerator_type 的自动判定不一样时用它(优先级更高):
+#   #cpu-009 ansible_host=10.14.64.9 calico_pool=gpu     # 没插卡但想用 GPU 网段
+#   #gpu-002 ansible_host=10.14.64.12 accelerator_type=nvidia calico_pool=cpu  # 有卡但走 CPU 网段
+# 写 calico_pool=gpu 就行, 不用自己拼 hardware=gpu 那种键值对里套键值对的格式。
+#
+# ⚠ 标签只在【节点首次加入】时打(kube-add-node/-master 的 when 里有 not kubelet_conf.stat.exists)。
+#   已加入的存量节点事后开双池, 不会自动补标签 —— 无标签节点两个池都匹配不上、拿不到地址块,
+#   需手工补: kubectl label node <名> hardware=gpu --overwrite  (然后 kubectl get node -L hardware 核对)
+#
+# 全是 GPU 机器时不必每行都写, 可建 inventory/group_vars/<组名>.yaml 统一设:
+#   # inventory/group_vars/gpu_nodes.yaml
+#   accelerator_type: nvidia
+# ⚠ 别写成本文件的 [组名:vars] —— inventory 文件里的组变量优先级【低于】group_vars/ 目录,
+#   会被 group_vars/all/env.yaml 静默盖掉(与下方 [all:vars] 那条警告同一个坑)。
 [k8s_master]
 # 控制平面(建议奇数台); 多 master 需配 lbvip + 跑 LB(见 [k8slb])
 #cpu-001
