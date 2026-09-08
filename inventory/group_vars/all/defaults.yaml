@@ -123,6 +123,9 @@ flannel_cni_version: "1.6.2-flannel1"
 cilium_version: "1.16.5"
 helm_version: "3.18.5"                   # 不带 v; 模板会拼 helm-v{{helm_version}}
 multus_cni_version: "4.2.4"
+# 装哪个 CNI。被 roles/cni 及 k8s-cni-switch / sync-cni-images 裸引用(9 处 {{ }} + 6 处 when:,
+# 均无 default()), 精简 env.yaml 少这一项会直接 undefined。取值 = example 与 2492b30^ 一致。
+kube_network_plugin: calico              # calico(manifest) / flannel(manifest) / cilium(helm)
 
 k8s_minor: "{{ k8s_version.split('.')[0] ~ '.' ~ k8s_version.split('.')[1] }}"
 # k8s 小版本 -> 配套组件(兜底默认). 权威值在装 k8s 时由 `kubeadm config images list` 自动查询覆盖
@@ -345,6 +348,41 @@ apiserver_lb_port: 8443
 # ⚠ 它会进 apiserver 证书 SAN 与 kubelet clusterDomain —— 建集群后不要再改, 改了得重签证书。
 dns_domain: cluster.local
 
+# ---- kubeadm-config 模板要用的其余变量, 兜底(同上理由) ----
+# 下面这些被 kube-init-master/templates/kubeadm-config.yaml.j2 【裸引用、无 default()】,
+# 且都在模板顶层(不在 {% if %} 守卫内), 原先只定义在 tmp/env.yaml.example 里 ——
+# 早先生成的精简版 env.yaml 少任一项, 跑 k8s-init-master 就在渲染模板时报 undefined。
+# 只补 example 治不了已生成的老 env.yaml(改 example 不回写 live), 故在此兜底。
+# 取值 = 当前 tmp/env.yaml.example 的值(权威口径; 不取 2492b30^ 基线 —— 其中
+#   kubelet_pod_pids_limit 已由 7d82b51 有意从 10000 调到 50000)。
+# env.yaml 后加载, 写了仍然覆盖这里; 这里只保证"不写也不炸"。
+#
+# ⚠ pod_subnet / service_subnet 会进 kubeadm 的 podSubnet / serviceSubnet ——
+#   建完集群不可再改(要改等于重建集群)。给兜底的代价是: 精简 env.yaml 会【静默】拿到
+#   下面这两个网段而不是报错提醒。规划网段的站点务必在 env.yaml 显式写清。
+pod_subnet: 10.244.0.0/12
+service_subnet: 10.96.0.0/12
+kube_proxy_mode: ipvs                    # ipvs(默认,需内核 ip_vs 模块) / iptables(无 ipvs 时退回)
+# kubelet 资源预留 / 驱逐阈值 / 日志与关机宽限。这些是【调优值】, 按机型该调:
+#   AI 大节点常调 kubelet_max_pods 与两组 *_reserved_*; 调之前先看清各项含义。
+kubelet_cpu_manager_policy: "none"       # none(通用) / static(CPU 绑核, 仅 AI 物理机)
+kubelet_kube_reserved_cpu: "200m"
+kubelet_kube_reserved_mem: "512Mi"
+kubelet_system_reserved_cpu: "200m"
+kubelet_system_reserved_mem: "256Mi"
+kubelet_eviction_hard_mem: "5%"          # 硬驱逐: 低于此立即驱逐 Pod(无宽限)
+kubelet_eviction_soft_mem: "10%"         # 软驱逐: 低于此且持续超宽限期才驱逐
+kubelet_eviction_soft_grace: "1m30s"     # 软驱逐宽限期
+kubelet_eviction_max_pod_grace: 120      # 驱逐时给 Pod 的最大优雅退出秒数
+kubelet_eviction_pressure_transition: "30s"   # 退出驱逐压力状态的最短停留(防抖)
+kubelet_max_pods: 110                    # AI 大节点可调大(注意 pod CIDR 每节点容量)
+# 仅在 kubelet_unlimited_pids=false(本文件默认)时生效; 为 true 时模板走 podPidsLimit: -1
+kubelet_pod_pids_limit: 50000            # 单 Pod 最大进程数(防 fork 炸弹); AI 训练易撞 1w, 故 5w
+kubelet_container_log_max_size: "5Mi"    # 单容器日志文件上限
+kubelet_container_log_max_files: 3       # 容器日志保留文件数
+kubelet_shutdown_grace: "30s"            # 节点关机时给普通 Pod 的优雅退出时间
+kubelet_shutdown_grace_critical: "10s"   # 其中留给关键 Pod 的部分
+
 # ================= k8s 路径 =================
 kube_bin_dir: /usr/local/bin
 kube_config_dir: /etc/kubernetes
@@ -362,6 +400,28 @@ crictl_arch_map:
   aarch64: "crictl-v{{ crictl_version }}-linux-arm64.tar.gz"
 
 # ================= etcd(外置二进制集群) =================
+# 这两项原先只在 tmp/env.yaml.example 里定义, 但被裸引用(无 default()):
+#   etcd_install_dir -> 下面 etcd_bin_dir 派生它, 另在 etcd-install/etcd-common 的 tasks 里用;
+#   etcd_data_dir    -> etcd.conf.yml.j2 / etcd-backup.sh.j2 / etcd 各 role 的 tasks(共 4 处)。
+# 即本节第一行 etcd_bin_dir 就依赖一个可能未定义的变量 —— 精简版 env.yaml 少写任一项,
+# 跑 etcd-deploy 会直接 undefined。取值 = 当前 example 与 2492b30^ 基线一致(无漂移)。
+# ⚠ etcd_data_dir 是已建集群的数据落盘位置, 建完不要改(改了等于指向空目录, 集群起不来)。
+etcd_install_dir: "/opt/etcd"            # 二进制目录
+etcd_data_dir: "/var/lib/etcd"           # 数据目录
+# etcd_config 整个 dict 也要兜底 —— etcd.conf.yml.j2 里 6 处写的是
+#   {{ etcd_config.X | default(...) }}, 那个 default 守的是【属性】, 守不住 etcd_config 本身:
+#   etcd_config 未定义时 jinja2 直接抛 UndefinedError('etcd_config' is undefined), default 不生效
+#   (仅 ChainableUndefined 才会兜住, ansible 默认不用它)。安全写法应是 (x | default({})).attr,
+#   即本文件 k8s_compat 那种; 此处不改模板, 用兜底 dict 达到同样效果。
+# 取值 = 当前 example 与 2492b30^ 基线(两边一致)。注意 heartbeat/election 取 500/5000 ——
+#   模板里那对 default(100)/default(1000) 是没同步的旧兜底, 别按它来。
+etcd_config:
+  quota_backend_bytes: 8589934592        # 8G
+  auto_compaction_retention: "1h"
+  auto_compaction_mode: periodic
+  heartbeat_interval: 500
+  election_timeout: 5000
+  log_level: info
 etcd_bin_dir: "{{ etcd_install_dir }}/bin"
 etcd_conf_dir: "/etc/etcd"
 etcd_cert_dir: "{{ etcd_conf_dir }}/ssl"
