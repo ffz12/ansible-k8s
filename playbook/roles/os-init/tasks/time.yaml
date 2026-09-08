@@ -22,19 +22,38 @@
     masked: yes
   failed_when: false
 
+- name: 预检 —— [chronyserver] 组的机器必须配 chrony_allow_networks
+  assert:
+    that:
+      - (chrony_allow_networks | default([]) | length) > 0
+    fail_msg: |
+      ❌ 本机 {{ inventory_hostname }} 在 inventory 的 [chronyserver] 组里(要当内网 NTP server),
+         但 chrony_allow_networks 没配 —— chrony 默认【拒绝所有】NTP 请求, 这样装出来的
+         server 谁都同步不上, 且 server 自己 chronyc tracking 一切正常, 很难发现。
+
+      在 inventory/group_vars/all/env.yaml 填要放行的客户端网段:
+        chrony_allow_networks:
+          - 10.14.64.0/24
+          - 10.101.16.0/24
+
+      不想自建 NTP server 了: 把 inventory 的 [chronyserver] 组【整组留空】即可,
+      本特性完全不生效, 全集群沿用原来指向 osinit_ntp_servers 的纯客户端行为。
+    success_msg: "本机将作为内网 NTP server, 放行网段: {{ chrony_allow_networks | join(', ') }}"
+  when: inventory_hostname in (groups['chronyserver'] | default([]))
+
 - name: 写入 chrony 配置
   template:
     src: chrony.conf.j2
-    dest: /etc/chrony/chrony.conf
+    dest: "{{ osinit_chrony_conf }}"
     owner: root
     group: root
     mode: '0644'
     backup: yes
   notify: restart chrony
 
-- name: 启用并启动 chrony
+- name: 启用并启动 chrony({{ osinit_chrony_service }})
   systemd:
-    name: chrony
+    name: "{{ osinit_chrony_service }}"
     state: started
     enabled: yes
     daemon_reload: yes

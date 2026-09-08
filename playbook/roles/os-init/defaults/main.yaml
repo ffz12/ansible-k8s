@@ -75,6 +75,15 @@ osinit_sync_wait: 60            # 等待 chrony 实际同步上的最长秒数
 #   置 false 前先确认跨节点差在 osinit_time_max_offset 秒内:
 #     ansible cluster -m shell -a 'date -u +%FT%T'
 osinit_fail_on_unsynced: true
+# chrony 的配置路径与服务名【按发行版区分】。init 角色 common.yaml 早就这么做了(见那两个
+# chrony task 的行内三元式, 以及"Debian 上服务名是 chrony 不是 chronyd"那条注释);
+# os-init 原先写死 Debian 取值, 在 openEuler / Kylin / RHEL 上会:
+#   · 配置写到不存在的 /etc/chrony/ 目录 —— template 模块不建父目录, 直接报错
+#   · systemd 找不到名为 chrony 的服务 —— 那边叫 chronyd
+# 而 os-init 侧的 chrony 任务【没有 ignore_errors】(init 侧有), 所以是硬失败,
+# 不会像老角色那样被静默掩盖 —— 非 Debian 站点跑 --tags time 会直接中断。
+osinit_chrony_conf: "{{ '/etc/chrony/chrony.conf' if ansible_os_family == 'Debian' else '/etc/chrony.conf' }}"
+osinit_chrony_service: "{{ 'chrony' if ansible_os_family == 'Debian' else 'chronyd' }}"
 
 # ---------------- 统一登录账号 / root 密码 ----------------
 # 账号相关默认值已抽到独立角色 os-account(roles/os-account/defaults/main.yaml):

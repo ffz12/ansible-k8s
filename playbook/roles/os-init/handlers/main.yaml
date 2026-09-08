@@ -5,7 +5,9 @@
 
 - name: restart chrony
   systemd:
-    name: chrony
+    # 服务名按发行版区分(Debian=chrony, RHEL/openEuler/Kylin=chronyd), 见 defaults 里
+    # osinit_chrony_service 的注释。写死 chrony 会让非 Debian 站点重启不到服务。
+    name: "{{ osinit_chrony_service }}"
     state: restarted
 
 - name: restart rsyslog

@@ -1,6 +1,20 @@
+{#- ==========================================================================
+    自建内网 NTP server 特性(可选)
+    开关 = inventory 的 [chronyserver] 组。该组【为空时下面所有条件块都不生效】,
+    渲染结果与本特性引入前逐字节一致 —— 现有站点不受影响。
+    ========================================================================== -#}
+{%- set chrony_servers = groups['chronyserver'] | default([]) -%}
+{%- set is_chrony_server = inventory_hostname in chrony_servers -%}
 # Use public servers from the pool.ntp.org project.
 # Please consider joining the pool (http://www.pool.ntp.org/join.html).
+{% if chrony_servers | length > 0 and not is_chrony_server %}
+# 集群内有自建 NTP server([chronyserver] 组), 本机作为客户端指向它
+{% for h in chrony_servers %}
+server {{ hostvars[h].ansible_host | default(h) }} iburst
+{% endfor %}
+{% else %}
 server {{ chrony_ip }}  iburst
+{% endif %}
 
 # Record the rate at which the system clock gains/losses time.
 driftfile /var/lib/chrony/drift
@@ -20,10 +34,29 @@ rtcsync
 #minsources 2
 
 # Allow NTP client access from local network.
+{% if is_chrony_server %}
+{#- 本机在 [chronyserver] 组里 -> 放行客户端网段。chrony 默认拒绝所有请求,
+    漏了 allow 的症状: server 自己 tracking 正常, 客户端全是 ^? 不可达。 -#}
+{% for net in chrony_allow_networks | default([]) %}
+allow {{ net }}
+{% endfor %}
+{% else %}
 #allow 192.168.0.0/16
+{% endif %}
 
 # Serve time even if not synchronized to a time source.
+{% if is_chrony_server and (chrony_server_serve_when_unsynced | default(true) | bool) %}
+{#- 上游断了也继续对下服务, 保证「集群内最大时间差 <15 秒」在外网不通时依然成立。
+    stratum 取较大值(越大越不权威), 真实上游恢复后客户端自动优先真源。 -#}
+local stratum {{ chrony_server_local_stratum | default(10) }}
+{% else %}
 #local stratum 10
+{% endif %}
+{% if is_chrony_server and (chrony_server_bindaddress | default('') | trim | length > 0) %}
+
+# 只在指定 IP 上监听 udp 123(多网卡机器钉到管理网, 别把 NTP 暴露到不需要的网段)
+bindaddress {{ chrony_server_bindaddress }}
+{% endif %}
 
 # Specify file containing keys for NTP authentication.
 #keyfile /etc/chrony.keys
@@ -34,6 +67,11 @@ logdir /var/log/chrony
 # Select which information is logged.
 #log measurements statistics tracking
 
+{% if chrony_cloud_metadata_ntp | default(true) | bool %}
 # default ntp server
+{# 云厂商元数据地址(link-local)。裸金属上永远不可达, 只是 chronyc sources 里多一条
+   ^? 噪音, 不会阻止其他源被选中。裸金属站点可在 env.yaml 置
+   chrony_cloud_metadata_ntp: false 去掉它。 #}
 server 169.254.169.254 iburst prefer
+{% endif %}
 

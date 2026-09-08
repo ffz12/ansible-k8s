@@ -175,6 +175,29 @@
   changed_when: true
   tags: [swap]
 
+# ⚠ 本任务【不加 ignore_errors】—— 下面两个 chrony 任务都带 ignore_errors, 配置写歪了
+#   不会报错; 而 allow 漏配的症状(客户端全 ^? 不可达)要到部署后才发现。故在这里硬拦,
+#   别让它变成静默失败。
+- name: 预检 —— [chronyserver] 组的机器必须配 chrony_allow_networks
+  assert:
+    that:
+      - (chrony_allow_networks | default([]) | length) > 0
+    fail_msg: |
+      ❌ 本机 {{ inventory_hostname }} 在 inventory 的 [chronyserver] 组里(要当内网 NTP server),
+         但 chrony_allow_networks 没配 —— chrony 默认【拒绝所有】NTP 请求, 这样装出来的
+         server 谁都同步不上, 且 server 自己 chronyc tracking 一切正常, 很难发现。
+
+      在 inventory/group_vars/all/env.yaml 填要放行的客户端网段:
+        chrony_allow_networks:
+          - 10.14.64.0/24
+          - 10.101.16.0/24
+
+      不想自建 NTP server 了: 把 inventory 的 [chronyserver] 组【整组留空】即可,
+      本特性完全不生效, 全集群沿用原来指向 chrony_ip 的纯客户端行为。
+    success_msg: "本机将作为内网 NTP server, 放行网段: {{ chrony_allow_networks | join(', ') }}"
+  when: inventory_hostname in (groups['chronyserver'] | default([]))
+  tags: [chrony]
+
 - name: 统一配置时间同步 chrony.conf 配置文件
   template:
     src: chrony.conf.j2

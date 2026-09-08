@@ -66,6 +66,13 @@
 #[gpu_driver]
 #gpu-su1-001
 
+# ---- 内网 NTP 服务器(可选; 不需要就【整组留空】, 全集群沿用原来的 chrony_ip 客户端行为)----
+# 填了才生效: 该机 chrony 变成对下服务的 NTP server, 其余节点自动改指向它(不用再改 chrony_ip)。
+# 只列主机名(机器本体仍写在上面 [cluster])。配套变量见 env.yaml 的 chrony_allow_networks。
+# ⚠ 填了本组就必须配 chrony_allow_networks, 否则 role 内 assert 会拦住(chrony 默认拒绝所有请求)。
+[chronyserver]
+#cpu-001
+
 # os-init / os-check 直接跑 [cluster] 组(= 全部机器), 不再用单独的别名组。
 
 [cluster:vars]
