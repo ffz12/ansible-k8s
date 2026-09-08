@@ -4,7 +4,15 @@
     渲染结果与本特性引入前逐字节一致 —— 现有站点不受影响。
     ========================================================================== -#}
 {%- set chrony_servers = groups['chronyserver'] | default([]) -%}
-{%- set is_chrony_server = inventory_hostname in chrony_servers -%}
+{#- ⚠ 本机是不是 NTP server, 必须【同时按 inventory 名和 ansible_host 比】——
+    [chronyserver] 里常被写成裸 IP(如 10.14.73.1), 而同一台在 [cluster] 里是
+    `cn-10-14-73-1 ansible_host=10.14.73.1`。只比 inventory_hostname 时两者永不相等,
+    于是这台【自己】被判成客户端: 渲染出 `server <自己的IP>` 指向自己, 且下面的
+    allow / local stratum 全部不渲染 -> chrony 默认拒绝所有请求 -> 其他节点全 ^? 不可达,
+    而这台自己 chronyc tracking 一切正常, 极难发现(common.yaml 里那个 assert 用的是
+    同一判据, 所以 chrony_allow_networks 漏没漏也一起被静默跳过)。 -#}
+{%- set is_chrony_server = (inventory_hostname in chrony_servers)
+                           or ((ansible_host | default('')) in chrony_servers) -%}
 # Use public servers from the pool.ntp.org project.
 # Please consider joining the pool (http://www.pool.ntp.org/join.html).
 {% if chrony_servers | length > 0 and not is_chrony_server %}

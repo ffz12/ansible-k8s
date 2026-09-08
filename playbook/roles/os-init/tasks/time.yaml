@@ -39,7 +39,11 @@
       不想自建 NTP server 了: 把 inventory 的 [chronyserver] 组【整组留空】即可,
       本特性完全不生效, 全集群沿用原来指向 osinit_ntp_servers 的纯客户端行为。
     success_msg: "本机将作为内网 NTP server, 放行网段: {{ chrony_allow_networks | join(', ') }}"
-  when: inventory_hostname in (groups['chronyserver'] | default([]))
+  # ⚠ 判据与 chrony.conf.j2 里的 is_chrony_server 必须一致, 原因见那里的注释
+  #   ([chronyserver] 写裸 IP 时只比 inventory_hostname 会匹配不上, assert 被静默跳过)
+  when: >
+    inventory_hostname in (groups['chronyserver'] | default([]))
+    or (ansible_host | default('')) in (groups['chronyserver'] | default([]))
 
 - name: 写入 chrony 配置
   template:

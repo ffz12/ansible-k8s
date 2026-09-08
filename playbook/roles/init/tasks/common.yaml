@@ -195,7 +195,13 @@
       不想自建 NTP server 了: 把 inventory 的 [chronyserver] 组【整组留空】即可,
       本特性完全不生效, 全集群沿用原来指向 chrony_ip 的纯客户端行为。
     success_msg: "本机将作为内网 NTP server, 放行网段: {{ chrony_allow_networks | join(', ') }}"
-  when: inventory_hostname in (groups['chronyserver'] | default([]))
+  # ⚠ 判据与 chrony.conf.j2 里的 is_chrony_server 必须一致 —— [chronyserver] 常被写成
+  #   裸 IP, 而同一台在 [cluster] 里是 `名字 ansible_host=IP`。只比 inventory_hostname
+  #   时这台永远匹配不上, 于是本 assert 被静默跳过(chrony_allow_networks 漏没漏都不报),
+  #   同时模板也把它渲染成"指向自己的客户端"。两处一起错, 症状是客户端集体 ^? 不可达。
+  when: >
+    inventory_hostname in (groups['chronyserver'] | default([]))
+    or (ansible_host | default('')) in (groups['chronyserver'] | default([]))
   tags: [chrony]
 
 - name: 统一配置时间同步 chrony.conf 配置文件

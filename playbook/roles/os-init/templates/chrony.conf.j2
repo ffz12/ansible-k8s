@@ -12,7 +12,12 @@
      且 allow/local 被抹掉时【不报错】, 只表现为客户端集体掉同步。
    ========================================================================== #}
 {% set chrony_servers = groups['chronyserver'] | default([]) %}
-{% set is_chrony_server = inventory_hostname in chrony_servers %}
+{#- ⚠ 必须同时按 inventory 名和 ansible_host 比 —— [chronyserver] 常写成裸 IP,
+    而同一台在 [cluster] 里是 `名字 ansible_host=IP`, 只比 inventory_hostname 会让
+    这台自己被判成客户端(指向自己 + 不渲染 allow/local), 客户端集体 ^? 且难发现。
+    详见 init/templates/chrony.conf.j2 里的同段注释。 -#}
+{% set is_chrony_server = (inventory_hostname in chrony_servers)
+                          or ((ansible_host | default('')) in chrony_servers) %}
 {% if chrony_servers | length > 0 and not is_chrony_server %}
 # 集群内有自建 NTP server([chronyserver] 组), 本机作为客户端指向它
 {% for h in chrony_servers %}
