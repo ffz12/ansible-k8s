@@ -10,13 +10,25 @@
 # 于是 trust-harbor-ca 的 TLS 验证在那些节点上必然失败 —— 且失败原因是"域名解析不了",
 # 跟 CA 信任毫无关系, 极易误判成证书问题查半天。
 #
-# ⚠ marker 的坑: 上面三处的 blockinfile 都【没写 marker】, 用的是 ansible 默认的
-#   "# BEGIN/END ANSIBLE MANAGED BLOCK"。它们内容相同所以互相覆盖看不出问题, 但
-#   /etc/hosts 上任何另一个不写 marker 的 blockinfile 都会把它整块顶掉。本任务用
-#   独立 marker, 与那三处互不干扰(同一条 ip+dns 在 /etc/hosts 里重复出现无害,
-#   解析取第一条; 三处旧调用要不要收敛到本任务, 见文件末尾说明)。
+# 2026-09-09: ①②③ 三处已全部改为 include 本任务, 本文件是 harbor 解析的【唯一写入方】。
+#
+# marker 说明: 本任务用 "# Ansible harbor hosts", 而 ①②③ 历史上用的是
+# "# Ansible inventory hosts"(命名 marker, 不是 ansible 默认的 BEGIN/END ANSIBLE
+# MANAGED BLOCK)。收敛前机器上会同时留着新旧两份, 内容相同所以看不出问题, 但改了
+# harbor IP 时【旧块不会被更新】, 而它在 /etc/hosts 里可能排在前面 —— 解析取第一条,
+# 于是被旧值带偏。故下面第一步显式清掉旧块。
+# 已确认旧 marker 只被上述三处使用、内容只有 harbor 解析(2026-09-09 全仓 grep),
+# 所以清它不会误删别的角色写的东西。
 #
 # 用法: - include_tasks: "{{ playbook_dir }}/tasks/ensure-harbor-hosts.yml"
+
+# 先清旧块再写新块, 顺序要紧: 反过来的话同一次运行里文件中会短暂存在两份。
+- name: "[Harbor] 清理历史 marker 写下的 harbor 解析块(收敛为单一来源)"
+  blockinfile:
+    path: /etc/hosts
+    marker: "# Ansible inventory hosts {mark}"
+    state: absent
+    backup: yes
 
 # 少写 ip 的话渲染出来是一行孤零零的域名, /etc/hosts 会把它整行当无效记录忽略,
 # 不报错、但解析照样不通 —— 在这儿拦掉, 比到 TLS 那步再猜好查。
@@ -45,12 +57,3 @@
       {% for item in harbor_instances %}
       {{ item.ip }} {{ item.dns }}
       {% endfor %}
-
-# 收敛说明(留给后续): 上述 ①②③ 三处旧 blockinfile 可以直接换成 include 本任务,
-# 但换的时候要一起清掉它们写下的默认 marker 块, 否则机器上会同时留着新旧两份 ——
-# 改了 harbor IP 时旧块不会被更新, 而它在文件里可能排在前面, 解析就被旧值带偏。
-# 清理写法(和 os-init/tasks/hostname.yaml 移除历史块的做法一致):
-#   - blockinfile: { path: /etc/hosts, state: absent }   # 默认 marker
-# 这一步有风险: 默认 marker 块可能被别的角色用来写别的内容, 清之前先在现网确认
-#   grep -A5 'BEGIN ANSIBLE MANAGED BLOCK' /etc/hosts
-# 里面确实只有 harbor 这几行。本次未动, 因为三处旧调用当前工作正常。

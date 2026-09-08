@@ -32,16 +32,12 @@
   loop: "{{ harbor_instances }}"
 
 # 5. 添加 Harbor 域名解析到 /etc/hosts (无 DNS 时,containerd 才能按域名拉镜像)
+# 收敛到共享任务(2026-09-09): 原本这里、docker-daemon、docker-gpu 三处各写一遍同样的
+# blockinfile, 且与 trust-harbor-ca 用的 marker 不同, 机器上会留下内容相同的两份块 ——
+# 改 harbor IP 时旧块不会更新, 而它可能排在前面, 解析取第一条就被旧值带偏。
+# 共享任务里会先清掉历史 marker 的旧块, 再写唯一一份。
 - name: 添加 harbor 域名解析到 /etc/hosts
-  blockinfile:
-    path: /etc/hosts
-    block: |-
-      {% for item in harbor_instances %}
-      {{ item.ip }} {{ item.dns }}
-      {% endfor %}
-    state: present
-    backup: yes
-    marker: "# Ansible inventory hosts {mark}"
+  include_tasks: "{{ playbook_dir }}/tasks/ensure-harbor-hosts.yml"
 
 
 - name: 处理 NVIDIA CDI 设备映射

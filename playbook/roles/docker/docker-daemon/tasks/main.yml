@@ -1,17 +1,16 @@
+# 收敛到共享任务(2026-09-09), 原因见 ensure-harbor-hosts.yml 头部注释:
+# 三处各写一遍 + marker 与 trust-harbor-ca 不同 -> 机器上留两份块 -> 改 IP 时旧块不更新。
+#
+# ⚠ 故意放在下面那个 block 【外面】: 那个 block 带 ignore_errors: true, 会连带把
+#   include 进去的任务一起吞掉 —— 共享任务里的 assert(校验 harbor_instances 有没有
+#   漏写 ip)就白设了。放在 block 前面既避开继承, 又保证解析先于 docker login 写好。
+- name: 添加harbor域名解析
+  include_tasks: "{{ playbook_dir }}/tasks/ensure-harbor-hosts.yml"
+
 - name: 修改daemon.json
   block:
   - name: 拷贝daemon.json
-    template: src=daemon.json.j2 dest=/etc/docker/daemon.json 
-  - name: 添加harbor域名解析
-    blockinfile:
-      path: /etc/hosts
-      block: |-
-        {% for item in harbor_instances %}
-        {{ item.ip }} {{ item.dns }}
-        {% endfor %}
-      state: present
-      backup: yes
-      marker: "# Ansible inventory hosts {mark}"
+    template: src=daemon.json.j2 dest=/etc/docker/daemon.json
   - name: 启动docker并登录harbor
     shell: |
       systemctl enable docker --now
