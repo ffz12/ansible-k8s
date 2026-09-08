@@ -1,19 +1,94 @@
-- name: 停止服务
-  service: name={{ item }} state=stopped enabled=no
-  loop: "{{ docker_services }}"
+---
+# ============================================================
+# 卸载本 role 装的 docker(只动 /usr/local/bin 那份)
+#
+# ⚠⚠ 两个必须一起看的点, 少一个就会把 k8s 全集群搞挂:
+#
+# 1) 路径要与 docker-install 的安装位置一致。
+#    原先这里删的是 /usr/sbin/{{ item }}, 而 install 是 copy 到 /usr/local/bin/,
+#    所以卸载其实一个文件都没删掉, 之后重装又因"已存在"跳过 → 状态不干净。
+#
+# 2) 但 docker_softs 里含 containerd / containerd-shim-runc-v2 / ctr / runc ——
+#    这四个正是 containerd-install role 装到 /usr/local/bin 的【同名文件】,
+#    docker_services 里也含 containerd.service。
+#    所以把路径改对之后, 若不排除这四个 + containerd.service, 卸 docker 会连带
+#    删掉 containerd 二进制并 stop+disable containerd.service → 节点上所有 Pod 全挂。
+#    (原来的 /usr/sbin 路径错误反而掩盖了这个隐患: 删不到文件 → 误删也没发生)
+#    docker-install 用 reuse_containerd 判断跳过这四个(见其 tasks 里的 difference),
+#    这里做对称处理。
+#
+# 包管理器(apt/yum)装在 /usr/bin 的那份【不动】: 那是用户自己装的, 卸载本 role 装的
+# 东西不该顺手删它; 需要彻底清理时自行 apt purge docker-ce / yum remove docker-ce。
+# ============================================================
+
+- name: 检测节点上是否有外部 containerd(有则本次卸载必须避开它)
+  shell: "test -x /usr/local/bin/containerd && /usr/local/bin/containerd --version"
+  register: ctd_exist
+  failed_when: false
+  changed_when: false
+
+- name: 设置卸载范围(排除 containerd 那套)
+  set_fact:
+    reuse_containerd: "{{ ctd_exist.rc == 0 }}"
+    containerd_provided_bins: ['containerd', 'containerd-shim-runc-v2', 'ctr', 'runc']
+
+- name: 📢 [终端显示] 本次卸载范围
+  debug:
+    msg: >-
+      {{ '⚠ 检测到外部 containerd(' + (ctd_exist.stdout_lines[0] | default('')) + ') → 保留 containerd/shim/ctr/runc 与 containerd.service, 只卸 docker 自身'
+         if reuse_containerd
+         else '未检测到外部 containerd → 按 docker_softs 全量卸载(含 docker 自带的 containerd/runc)' }}
+
+- name: 停止服务(复用 containerd 时不碰 containerd.service)
+  service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: no
+  loop: "{{ (docker_services | difference(['containerd.service'])) if reuse_containerd else docker_services }}"
   ignore_errors: true
+
 #- name: 删除docker组
 #  group:  name=docker state=absent
 #- name: 删除目录
 #  file: path=/etc/docker state=absent
 #- name: 删除数据目录
 #  file: path={{ data_root }} state=absent
-- name: 删除docker二进制包
-  file: path=/usr/sbin/{{ item }} state=absent
-  loop: "{{ docker_softs }}"
-- name: 删除service存在
-  file: path=/usr/lib/systemd/system/{{ item }} state=absent
-  loop: "{{ docker_services }}"
-- name: 删除/usr/libexec/docker/cli-plugins
-  file: path=/usr/libexec/docker/cli-plugins state=absent
- 
+
+- name: 删除 docker 二进制(本 role 装在 /usr/local/bin; 复用 containerd 时保留其四个二进制)
+  file:
+    path: "/usr/local/bin/{{ item }}"
+    state: absent
+  loop: "{{ (docker_softs | difference(containerd_provided_bins)) if reuse_containerd else docker_softs }}"
+
+- name: 删除 systemd 服务文件(复用 containerd 时保留 containerd.service)
+  file:
+    path: "/usr/lib/systemd/system/{{ item }}"
+    state: absent
+  loop: "{{ (docker_services | difference(['containerd.service'])) if reuse_containerd else docker_services }}"
+
+# 复用外部 containerd 时 docker-install 会写这个 drop-in(指定 ExecStart 与 --containerd),
+# 不删掉的话下次装 docker 会带着旧的 ExecStart, 指向可能已被删的二进制 → 203/EXEC。
+- name: 删除 docker.service drop-in(复用 containerd 时写入的)
+  file:
+    path: /etc/systemd/system/docker.service.d/10-external-containerd.conf
+    state: absent
+
+- name: 删除 /usr/libexec/docker/cli-plugins
+  file:
+    path: /usr/libexec/docker/cli-plugins
+    state: absent
+
+- name: daemon-reload 使删除生效
+  systemd:
+    daemon_reload: yes
+
+- name: 📢 [终端显示] containerd 是否仍在运行(复用场景下应为 active)
+  shell: "systemctl is-active containerd || true"
+  register: ctd_after
+  changed_when: false
+  when: reuse_containerd
+
+- name: 📢 [终端显示] 卸载后 containerd 状态
+  debug:
+    msg: "containerd = {{ ctd_after.stdout | default('') | trim }} (复用场景下应为 active; 若不是, 检查是否被误停)"
+  when: reuse_containerd

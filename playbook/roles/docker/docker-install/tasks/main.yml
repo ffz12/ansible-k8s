@@ -3,11 +3,30 @@
 #docker buildx 插件：https://github.com/docker/buildx
 
 
-- name: 检查 Docker 是否已安装
-  shell: "which dockerd || ls /usr/bin/dockerd /usr/sbin/dockerd /usr/local/bin/dockerd"
-  ignore_errors: yes
-  register: docker_bin
-  changed_when: false
+# ⚠ 只认 /usr/local/bin/dockerd —— 必须与下面 drop-in 里写死的 ExecStart 路径一致。
+#   原先是 `which dockerd || ls /usr/bin/dockerd /usr/sbin/dockerd /usr/local/bin/dockerd`,
+#   机器上若有 apt/yum 装的 docker(dockerd 在 /usr/bin/)就判"已装"→ 跳过解压 →
+#   /usr/local/bin/dockerd 从未生成, 而 drop-in 指向它 → systemd 报 203/EXEC:
+#     docker.service: Main process exited, code=exited, status=203/EXEC
+#   现象很迷惑: 重启前 docker 一直正常(跑的是包管理器那份 + 原生 unit),
+#   一旦 restart 就再也起不来。现场 cn-10-14-72-1 即此。
+#   与 containerd-install role 同款做法(那边检测/解压/unit 都统一在 /usr/local/bin, 本就自洽)。
+#   包管理器装的那份留着不动(不卸), 只是 systemd 用 drop-in 指定的这份。
+- name: 检查 Docker 是否已安装(只认 /usr/local/bin/dockerd, 与 drop-in 的 ExecStart 一致)
+  stat:
+    path: /usr/local/bin/dockerd
+  register: docker_bin_stat
+
+- name: 记录 docker 二进制检测结果
+  set_fact:
+    docker_bin_present: "{{ docker_bin_stat.stat.exists and docker_bin_stat.stat.executable | default(false) }}"
+
+- name: 📢 [终端显示] docker 二进制检测
+  debug:
+    msg: >-
+      /usr/local/bin/dockerd {{ '已存在' if docker_bin_present else '缺失 → 将解压安装' }}
+      {{ '(注意: 包管理器可能另装了一份在 /usr/bin, 保留不动; systemd 走 drop-in 指定的 /usr/local/bin 这份)'
+         if not docker_bin_present else '' }}
 
 # 检测节点上是否已有 containerd(通常是 containerd_install 装的 1.7.32)。
 # 有 → docker 复用它,不覆盖: 跳过 docker 自带的 containerd/runc/shim/ctr 及 containerd.service,
@@ -58,7 +77,7 @@
         mode: '0755'
         remote_src: yes
       loop: "{{ (docker_softs | difference(containerd_provided_bins)) if reuse_containerd else docker_softs }}"
-  when: docker_bin.rc != 0
+  when: not docker_bin_present
 
 - name: 安装 Docker 插件 (Buildx & Compose)
   copy:
