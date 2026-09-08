@@ -48,3 +48,51 @@
     executable: /bin/bash
   register: calico_apply
   changed_when: "'created' in calico_apply.stdout or 'configured' in calico_apply.stdout"
+
+# ==================== 双池 IPPool: 必须与主 manifest 分开 apply ====================
+# 两个 IPPool 是【使用】ippools CRD 的自定义资源(CR), 而该 CRD 定义在主 manifest 里。
+# 放同一个文件 apply 会撞 apiserver 的异步注册竞态: CRD 本身创建成功了, 但注册进
+# discovery 缓存需要时间, kubectl 按文件顺序推进到末尾时还查不到这个 kind, 报
+#   resource mapping not found for name: "gpu-pool" ... no matches for kind "IPPool"
+#   in version "crd.projectcalico.org/v1"; ensure CRDs are installed first
+# 全新集群首次开双池【必踩】(重跑一次就好 —— 但不该让人重跑)。单池模式主 manifest 里
+# 没有任何 CR, 所以这个缺陷此前一直没暴露, 是现场测试环境首次开双池才打出来的。
+- name: 渲染双池 IPPool manifest(仅双池模式)
+  template:
+    src: calico-ippools.yaml.j2
+    dest: "{{ kube_config_dir }}/calico-ippools.yaml"
+    owner: root
+    group: root
+    mode: "0600"
+  when: calico_dual_ippool_enabled | default(false) | bool
+
+# 用 kubectl wait 而非 sleep: established 条件是 apiserver 明确置位的, 比定时更可靠。
+# 90s 是宽裕值 —— 正常几秒内就绪; 真到 90s 还不 established 说明 apiserver 有别的问题,
+# 这时明确失败比继续 apply 出一堆 no matches 更好排查。
+- name: 等 ippools CRD 注册就绪(仅双池模式)
+  shell: |
+    kubectl wait --for condition=established --timeout=90s \
+      crd/ippools.crd.projectcalico.org
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: calico_dual_ippool_enabled | default(false) | bool
+
+- name: apply 双池 IPPool(仅双池模式)
+  shell: |
+    kubectl apply -f "{{ kube_config_dir }}/calico-ippools.yaml"
+  args:
+    executable: /bin/bash
+  register: calico_ippool_apply
+  changed_when: "'created' in calico_ippool_apply.stdout or 'configured' in calico_ippool_apply.stdout"
+  when: calico_dual_ippool_enabled | default(false) | bool
+
+- name: 双池结果(仅双池模式)
+  debug:
+    msg:
+      - "gpu-pool = {{ calico_gpu_pool_cidr }} (blockSize /{{ calico_gpu_pool_blockSize | default(28) }}, nodeSelector hardware == \"gpu\")"
+      - "cpu-pool = {{ calico_cpu_pool_cidr }} (blockSize /{{ calico_cpu_pool_blockSize | default(26) }}, nodeSelector hardware == \"cpu\")"
+      - "验收: kubectl get ippools.crd.projectcalico.org -o custom-columns=NAME:.metadata.name,CIDR:.spec.cidr,BLOCK:.spec.blockSize,SEL:.spec.nodeSelector"
+      - "关键: kubectl get ipamblocks.crd.projectcalico.org -o custom-columns=NAME:.metadata.name,CIDR:.spec.cidr,AFFINITY:.spec.affinity  (看地址块实际从哪个池切)"
+      - "⚠ 无 hardware 标签的节点两个池都匹配不上, 拿不到地址块 —— 存量节点需手工 kubectl label"
+  when: calico_dual_ippool_enabled | default(false) | bool

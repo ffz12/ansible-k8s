@@ -313,6 +313,17 @@ kubelet_unlimited_pids: false
 #   确需限速再置 true: kube-common 会自动给每个节点装 cni-plugins 包(见下方 cni_plugins_*)。
 calico_enable_bandwidth: false
 
+# calico-node 用哪种方式自动探测本机 IP(BGP 对端地址 / 隧道源地址)。
+# 默认 first-found = calico 上游默认, 保持现网行为不变: 按网卡顺序取第一个非本地地址。
+# ⚠ 多网卡机器上 first-found 很容易挑错(挑到管理网/存储网), 表现为跨节点 Pod 不通、
+#   或流量走错网卡; 而 kubelet 那层已用 kube_node_ip 钉成 ansible_host(见上方),
+#   两层不一致时症状很像"CNI 没装好", 排查费劲。
+# 多网卡站点建议在 env.yaml 设为 kubernetes-internal-ip —— 直接跟随 Node 的 InternalIP
+#   (即 kubelet 上报、已被 kube_node_ip 钉死的那个地址), 两层自动对齐。
+# 其它可选写法: interface=bond0 / interface=eth.* / can-reach=<网关IP> / cidr=10.14.64.0/24
+# ⚠ 改这个值会让 calico-node 重启并重新选址 —— 已跑起来且当前挑对了的集群不要动。
+calico_ip_autodetection_method: first-found
+
 # ---- CNI 标准插件包(containernetworking/plugins) ----
 # 提供 bandwidth/portmap/tuning/firewall 等; calico 只装自己那几个, 这个包要另外装。
 cni_plugins_version: "1.6.2"

@@ -1,0 +1,49 @@
+# ============================================================================
+# GPU/CPU 双 IPPool —— 从主 manifest(calico.yaml.j2)拆出来单独 apply。
+#
+# 为什么必须拆开: ippools 的 CRD 定义在主 manifest 里(calico.yaml.j2 约 2699 行),
+#   而这两个 IPPool 是【使用】该 CRD 的自定义资源(CR)。放在同一个文件里 kubectl apply,
+#   会撞 apiserver 的异步注册竞态 —— CRD 本身创建成功了, 但注册进 discovery 缓存需要
+#   一点时间, kubectl 按文件顺序推进到末尾时还查不到这个 kind, 于是报:
+#     resource mapping not found for name: "gpu-pool" ... no matches for kind "IPPool"
+#     in version "crd.projectcalico.org/v1"; ensure CRDs are installed first
+#   全新集群首次开双池必踩(重跑一次就好, 因为那时 CRD 已就绪 —— 但不该让人重跑)。
+#   单池模式下主 manifest 里没有任何 CR, 所以这个缺陷此前一直没暴露。
+#   现在的顺序是: apply 主 manifest -> kubectl wait CRD established -> apply 本文件。
+#
+# nodeSelector 是 Calico selector 表达式(非 k8s label 语法), 按 hardware=gpu/cpu 标签
+#   匹配 —— 该标签由 kube-add-node / kube-add-master / kube-init-master 里的打标签任务
+#   下发, 判定依据是 inventory 的 accelerator_type(nvidia/dcu/npu -> gpu, 否则 -> cpu);
+#   单台想覆盖自动判定, 在该主机 inventory 行加 calico_pool=gpu 或 calico_pool=cpu。
+#
+# CIDR 由使用者在 env.yaml 的 calico_gpu_pool_cidr / calico_cpu_pool_cidr 自行规划。
+#   roles/cni/tasks/calico.yaml 开头的 assert 只校验【非空 + 形如 a.b.c.d/n】;
+#   两池是否重叠、是否与 service_subnet 重叠、pod_subnet 是否覆盖两池, 都【不】校验
+#   (需 netaddr 滤镜, 本仓库无该依赖), 请按 docs/部署说明.md 十三.1 的 python 片段自行验算。
+#
+# blockSize 决定每节点一次拿多少地址, 不等于可容纳节点数 ——
+#   可容纳节点数 = 池内块数 / ceil(每节点Pod数 / 每块地址数)。详见 defaults.yaml 的注释。
+# ============================================================================
+apiVersion: crd.projectcalico.org/v1
+kind: IPPool
+metadata:
+  name: gpu-pool
+spec:
+  cidr: "{{ calico_gpu_pool_cidr }}"
+  blockSize: {{ calico_gpu_pool_blockSize | default(28) }}
+  ipipMode: "{{ 'Always' if calico_encapsulation | default('none') == 'ipip' else ('CrossSubnet' if calico_encapsulation | default('none') == 'crosssubnet' else 'Never') }}"
+  vxlanMode: "{{ 'Always' if calico_encapsulation | default('none') == 'vxlan' else 'Never' }}"
+  natOutgoing: true
+  nodeSelector: 'hardware == "gpu"'
+---
+apiVersion: crd.projectcalico.org/v1
+kind: IPPool
+metadata:
+  name: cpu-pool
+spec:
+  cidr: "{{ calico_cpu_pool_cidr }}"
+  blockSize: {{ calico_cpu_pool_blockSize | default(26) }}
+  ipipMode: "{{ 'Always' if calico_encapsulation | default('none') == 'ipip' else ('CrossSubnet' if calico_encapsulation | default('none') == 'crosssubnet' else 'Never') }}"
+  vxlanMode: "{{ 'Always' if calico_encapsulation | default('none') == 'vxlan' else 'Never' }}"
+  natOutgoing: true
+  nodeSelector: 'hardware == "cpu"'

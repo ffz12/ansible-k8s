@@ -7208,6 +7208,17 @@ spec:
             # Auto-detect the BGP IP address.
             - name: IP
               value: "autodetect"
+            # 用哪种方式自动探测本机 IP(BGP 对端地址 / 隧道源地址)。
+            # 默认 first-found = calico 上游默认: 按网卡顺序取第一个非本地地址 ——
+            #   多网卡机器上很容易挑错(挑到管理网/存储网), 表现为跨节点 Pod 不通或
+            #   走错网卡跑流量, 而 kubelet 那层已用 kube_node_ip 钉成 ansible_host,
+            #   两层不一致时排查很费劲。
+            # 多网卡站点建议在 env.yaml 设 calico_ip_autodetection_method: kubernetes-internal-ip
+            #   —— 直接跟随 Node 的 InternalIP(= kubelet 上报的那个), 两层自动对齐。
+            # 其它可选: interface=bond0 / can-reach=<网关IP> / cidr=10.14.64.0/24
+            # ⚠ 改这个会让 calico-node 重启并重新选址; 已跑的集群若当前挑对了就别动。
+            - name: IP_AUTODETECTION_METHOD
+              value: "{{ calico_ip_autodetection_method | default('first-found') }}"
             # Enable IPIP
             # 封装模式由 env.yaml 的 calico_encapsulation 决定:
             #   none=纯BGP(需二层互通) / crosssubnet=跨子网才封装 / ipip / vxlan
@@ -7243,8 +7254,9 @@ spec:
             # - name: CALICO_IPV4POOL_CIDR
             #   value: "192.168.0.0/16"
 {% if calico_dual_ippool_enabled | default(false) | bool %}
-            # 双 IPPool 模式: 分池由文件末尾显式声明的两个 IPPool 资源接管, 阻止 calico-node
-            # 在启动时按 podSubnet 再自建一个默认池(否则会和手动建的两个池冲突/抢占)。
+            # 双 IPPool 模式: 分池由 calico-ippools.yaml.j2 里那两个 IPPool 资源接管
+            # (单独 apply, 因为 CRD 与引用它的 CR 同文件会撞 apiserver 异步注册竞态),
+            # 这里阻止 calico-node 启动时按 podSubnet 再自建默认池(否则会和那两个池冲突/抢占)。
             - name: NO_DEFAULT_POOLS
               value: "true"
 {% endif %}
@@ -7433,37 +7445,3 @@ spec:
             periodSeconds: 10
           securityContext:
             runAsNonRoot: true
-{% if calico_dual_ippool_enabled | default(false) | bool %}
----
-# ============================================================================
-# GPU/CPU 双 IPPool(仅 calico_dual_ippool_enabled=true 时渲染)
-# nodeSelector 是 Calico selector 表达式(非 k8s label 语法), 按 hardware=gpu/cpu
-# 标签匹配 —— 该标签由 kube-add-node / kube-add-master / kube-init-master 里的打标签
-# 任务下发, 判定依据是 inventory 的 accelerator_type(nvidia/dcu/npu -> gpu, 否则 -> cpu)。
-# CIDR 由使用者在 env.yaml 的 calico_gpu_pool_cidr / calico_cpu_pool_cidr 自行规划,
-# 本模板不做地址段合法性校验。
-# ============================================================================
-apiVersion: crd.projectcalico.org/v1
-kind: IPPool
-metadata:
-  name: gpu-pool
-spec:
-  cidr: "{{ calico_gpu_pool_cidr }}"
-  blockSize: {{ calico_gpu_pool_blockSize | default(28) }}
-  ipipMode: "{{ 'Always' if calico_encapsulation | default('none') == 'ipip' else ('CrossSubnet' if calico_encapsulation | default('none') == 'crosssubnet' else 'Never') }}"
-  vxlanMode: "{{ 'Always' if calico_encapsulation | default('none') == 'vxlan' else 'Never' }}"
-  natOutgoing: true
-  nodeSelector: 'hardware == "gpu"'
----
-apiVersion: crd.projectcalico.org/v1
-kind: IPPool
-metadata:
-  name: cpu-pool
-spec:
-  cidr: "{{ calico_cpu_pool_cidr }}"
-  blockSize: {{ calico_cpu_pool_blockSize | default(26) }}
-  ipipMode: "{{ 'Always' if calico_encapsulation | default('none') == 'ipip' else ('CrossSubnet' if calico_encapsulation | default('none') == 'crosssubnet' else 'Never') }}"
-  vxlanMode: "{{ 'Always' if calico_encapsulation | default('none') == 'vxlan' else 'Never' }}"
-  natOutgoing: true
-  nodeSelector: 'hardware == "cpu"'
-{% endif %}
