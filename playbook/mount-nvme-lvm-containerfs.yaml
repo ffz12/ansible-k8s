@@ -17,7 +17,10 @@
 # --check 可以当预览用：所有只读任务都带 check_mode: false，跑完选盘校验后 end_host 早停，
 #      不会执行 wipefs / pvcreate / vgcreate / lvcreate / mkfs 中的任何一个。
 - name: Build four-NVMe striped LVM for containerd and kubelet
-  hosts: cluster
+  # 多盘组 LVM 的机器组(inventory 的 [nvme_lvm], 只列主机名; 机器本体仍在 [cluster])。
+  # ⚠ 组留空 = 本 playbook 匹配不到主机、直接跳过, 不会误清全集群的盘。
+  #   老 inventory 若没有这个组, 加上再跑; 想临时指定几台仍可叠加 --limit。
+  hosts: nvme_lvm
   become: yes
   vars:
     expected_disk_count: 4

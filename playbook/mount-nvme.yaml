@@ -1,6 +1,9 @@
 ---
 - name: Mount data disk; containerd via config-root, kubelet via bind
-  hosts: cluster
+  # 单盘机器组(inventory 的 [nvme_single], 只列主机名; 机器本体仍在 [cluster])。
+  # ⚠ 组留空 = 本 playbook 匹配不到主机、直接跳过, 不会误挂全集群。
+  #   老 inventory 若没有这个组, 加上再跑; 想临时指定几台仍可叠加 --limit。
+  hosts: nvme_single
   become: yes
   vars:
     # ===== 换盘只改这里 =====

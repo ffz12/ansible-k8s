@@ -2,7 +2,10 @@
 # 自动识别空闲 NVMe 盘(2或4块) -> 组 LVM -> 挂载,供 containerd(config root) 和 kubelet(bind) 使用
 # 安全策略: 只选"无文件系统/无分区/未挂载/非PV"的整盘; 数量必须为 2 或 4,否则中止
 - name: Auto-detect free NVMe disks, build LVM, mount for containerd & kubelet
-  hosts: cluster
+  # 多盘组 LVM 的机器组(inventory 的 [nvme_lvm], 只列主机名; 机器本体仍在 [cluster])。
+  # ⚠ 组留空 = 本 playbook 匹配不到主机、直接跳过, 不会误挂全集群。
+  #   老 inventory 若没有这个组, 加上再跑; 想临时指定几台仍可叠加 --limit。
+  hosts: nvme_lvm
   become: yes
   vars:
     vg_name: "vg_container"
