@@ -222,8 +222,13 @@ calico_dual_ippool_enabled: false
 #   /28(16 地址) 跑满 110 需 7 块;  /26(64 地址) 跑满 110 需 2 块。
 calico_gpu_pool_blockSize: 28    # 每块 16 个地址; GPU 节点 Pod 数通常不多(但别忘 DaemonSet 也占)
 calico_cpu_pool_blockSize: 26    # 每块 64 个地址; 若 CPU 节点真按 kubelet_max_pods=110 跑, 每节点要 2 块
-calico_gpu_pool_cidr: ""         # 必填(calico_dual_ippool_enabled=true 时), 由使用者自己规划
-calico_cpu_pool_cidr: ""         # 同上
+# 两池 CIDR 必填(calico_dual_ippool_enabled=true 时), 由使用者自己规划。
+# roles/cni/tasks/calico.yaml 开头有 assert 校验【非空 + 形如 a.b.c.d/n】; 但做不到:
+#   掩码取值合法性(/33 也通过) / 两池是否重叠 / 池与 service_subnet 是否重叠 /
+#   pod_subnet 是否覆盖两池 —— 这些要 netaddr 滤镜(本仓库无该依赖), 需自行验算,
+#   算法与 python 片段见 docs/部署说明.md 十三.1。
+calico_gpu_pool_cidr: ""
+calico_cpu_pool_cidr: ""
 cilium_image_repo: "{{ registry if (is_offline | default(false) | bool) else cilium_registry_online }}"
 
 # ================= 离线包路径(多版本 v{{k8s_version}}) =================

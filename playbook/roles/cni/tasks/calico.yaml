@@ -1,6 +1,38 @@
 # 部署 Calico (manifest 方式, kubectl apply)
 # 镜像地址由 calico_images 变量提供(离线->Harbor, 在线->docker.io/calico, 见 group_vars/all.yaml)
 # pod CIDR 由 kubeadm 的 podSubnet({{ pod_subnet }}) 决定, calico 自动继承
+
+# 双池模式下两个 pool CIDR 必填: 默认是空串, 开了开关但没填会渲染出 `cidr: ""` 的非法
+# IPPool —— kubectl apply 未必立刻报错, 但 Pod 永远拿不到 IP, 排查成本高。
+# ⚠ 本 assert 只校验【非空 + 形如 a.b.c.d/n】。做不到的部分(需 netaddr/ipaddr 滤镜, 本仓库
+#   无该依赖, Kylin 离线环境额外装 python 包很麻烦, 故不引入):
+#     · 掩码取值是否合法(/33 这种也会被判通过);
+#     · 两池之间、池与 service_subnet 之间是否重叠;
+#     · pod_subnet 是否覆盖两个池段。
+#   这三项请实跑前用 docs/部署说明.md 十三.1 里的 python 片段自行验算。
+- name: 校验双池 CIDR 已填且形如 CIDR(仅双池模式)
+  assert:
+    that:
+      - (calico_gpu_pool_cidr | default('') | trim
+         | regex_search('^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$')) is not none
+      - (calico_cpu_pool_cidr | default('') | trim
+         | regex_search('^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$')) is not none
+    fail_msg: >-
+      calico_dual_ippool_enabled=true 但 pool CIDR 未填(或格式不对):
+      calico_gpu_pool_cidr={{ calico_gpu_pool_cidr | default('') | trim | default('<空>', true) }},
+      calico_cpu_pool_cidr={{ calico_cpu_pool_cidr | default('') | trim | default('<空>', true) }}。
+      两者默认是空串且模板不校验, 空着会渲染出 cidr: "" 的非法 IPPool ——
+      apply 未必报错, 但 Pod 永远拿不到 IP。请在 inventory/group_vars/all/env.yaml 填,
+      并确认: ①两池互不重叠 ②两池都不与 service_subnet 重叠
+      ③pod_subnet 是能覆盖两池的超网(不连续网段的超网算法与验算脚本见
+      docs/部署说明.md 十三.1 "pod_subnet 超网怎么算")。
+    success_msg: >-
+      双池 CIDR 已填: gpu={{ calico_gpu_pool_cidr }}, cpu={{ calico_cpu_pool_cidr }}
+      (重叠/覆盖关系本 assert 不校验, 需自行验算)
+  when: calico_dual_ippool_enabled | default(false) | bool
+  run_once: true
+  delegate_to: localhost
+
 - name: 渲染 calico manifest
   template:
     src: calico.yaml.j2
