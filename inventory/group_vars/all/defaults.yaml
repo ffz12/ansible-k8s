@@ -216,8 +216,12 @@ flannel_images:
 # 也可在某台机器的 inventory 行显式写 calico_pool=cpu(或 calico_pool=gpu)覆盖自动判定
 # (不用自己拼 "hardware=xxx" 这种键值对里套键值对的格式)。
 calico_dual_ippool_enabled: false
-calico_gpu_pool_blockSize: 28    # 每块 16 个地址, 单 GPU 节点 Pod 数一般不多
-calico_cpu_pool_blockSize: 26    # 每块 64 个地址, 匹配 kubelet_max_pods 默认 110 的量级
+# blockSize 决定"每节点一次拿多少地址"。calico 按块分配, 节点上 Pod 数超过一块容量就再要一块,
+# 所以【池内块数不等于可容纳节点数】—— 可容纳节点数 = 块数 / ceil(每节点Pod数 / 每块地址数)。
+# 规划时按"实际每节点 Pod 数"算, 别只看块数。注意 kubelet_max_pods 默认 110:
+#   /28(16 地址) 跑满 110 需 7 块;  /26(64 地址) 跑满 110 需 2 块。
+calico_gpu_pool_blockSize: 28    # 每块 16 个地址; GPU 节点 Pod 数通常不多(但别忘 DaemonSet 也占)
+calico_cpu_pool_blockSize: 26    # 每块 64 个地址; 若 CPU 节点真按 kubelet_max_pods=110 跑, 每节点要 2 块
 calico_gpu_pool_cidr: ""         # 必填(calico_dual_ippool_enabled=true 时), 由使用者自己规划
 calico_cpu_pool_cidr: ""         # 同上
 cilium_image_repo: "{{ registry if (is_offline | default(false) | bool) else cilium_registry_online }}"
