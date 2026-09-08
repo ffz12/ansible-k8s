@@ -49,6 +49,13 @@ ansible_user: >-
      else (bootstrap_user | mandatory) }}
 ansible_become: "{{ not (_use_root | bool) }}"
 ansible_become_method: sudo
-# 密码仅在有 bootstrap_* 时才带(root 全程免密→omit→纯密钥); root 分支即便带上, ssh 也先走密钥
-ansible_ssh_pass: "{{ bootstrap_ssh_pass | default(omit) }}"
-ansible_become_pass: "{{ bootstrap_become_pass | default(bootstrap_ssh_pass | default(omit)) }}"
+# 密码仅在有 bootstrap_* 时才带(root 全程免密→空串→纯密钥); root 分支即便带上, ssh 也先走密钥。
+# ⚠ 这里【不能用 default(omit)】: omit 只在"直接传给模块参数"时有效(ansible 会在参数层面
+#   整个抹掉该参数); 而这两个是【连接变量】, 要被连接插件读取。root 免密时 bootstrap_ssh_pass
+#   未定义 -> default(omit) 返回 omit 哨兵 -> ansible-core 2.19+ 的模板引擎直接报
+#     A template was resolved to an Omit scalar. Callers must be prepared to handle this value.
+#   老版本静默容忍所以一直没暴露; 现场 ansible-core 2.21.2 上跑 k8s-add-master 必炸
+#   (delegate_to / synchronize 会为委派机重新解析整套连接变量, 正好走到这两行)。
+#   空串与 omit 在这里语义等价(空密码=不用密码), 且不触发该错误。
+ansible_ssh_pass: "{{ bootstrap_ssh_pass | default('') }}"
+ansible_become_pass: "{{ bootstrap_become_pass | default(bootstrap_ssh_pass | default('')) }}"

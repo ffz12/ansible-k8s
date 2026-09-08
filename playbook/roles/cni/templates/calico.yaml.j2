@@ -6799,11 +6799,26 @@ rules:
     verbs:
       - watch
       - list
-  # Watch for changes to Kubernetes (Baseline)AdminNetworkPolicies.
+  # Watch for changes to Kubernetes (Baseline)AdminNetworkPolicies + ClusterNetworkPolicies.
+  # ⚠ clusternetworkpolicies 曾漏掉(与头部注释里那 9 个 CRD/2 条规则是同一次遗漏),
+  #   现象: felix 反复 "cannot list resource clusternetworkpolicies ... forbidden"
+  #   -> Connection to datastore has failed -> CalculationGraph 永远 not ready
+  #   -> readiness 503, calico-node 一直 NotReady, 整个集群没网络。
+  #   即便集群里没有该 CRD 也要授权: felix 无条件 watch 它, 拿不到权限就报 forbidden,
+  #   而 CRD 不存在只会是空列表(不报错)。
   - apiGroups: ["policy.networking.k8s.io"]
     resources:
       - adminnetworkpolicies
       - baselineadminnetworkpolicies
+      - clusternetworkpolicies
+    verbs:
+      - watch
+      - list
+  # KubeVirt 虚拟机热迁移期间 felix 需要感知迁移状态(未装 KubeVirt 时该 CRD 不存在,
+  # 授权后 list 返回空, 不再刷 forbidden 噪音)。
+  - apiGroups: ["kubevirt.io"]
+    resources:
+      - virtualmachineinstancemigrations
     verbs:
       - watch
       - list
