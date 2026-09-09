@@ -104,6 +104,16 @@ harbor_dns: "{{ harbor_instances[0].dns }}"
 harbor_ip: "{{ harbor_instances[0].ip }}"
 registry: "{{ harbor_dns }}/{{ harbor_project | default('kubernetes') }}"   # 自建 harbor 前缀(项目名可在 env.yaml 覆盖, 默认 kubernetes)
 
+# ================= apt 代理(playbook/apt-proxy.yaml 用) =================
+# ⚠ 这是【站点专属值】, 必须在 env.yaml 里覆盖, 别改 playbook ——
+#   原先 apt-proxy.yaml 把地址硬编码在 vars 里, 每个站点都得改那一行, 于是每次
+#   git pull 都撞 "Your local changes would be overwritten by merge"。
+#   env.yaml 在 .gitignore 里(不入库), 值放那儿就再也不会和上游打架。
+# 用法(inventory/group_vars/all/env.yaml):
+#   apt_proxy_url: "http://10.14.73.20:3128"
+# 下面这个默认值只是兜底(保持引入本变量之前 playbook 里的写法), 基本一定要覆盖。
+apt_proxy_url: "http://10.2.0.15:3128"
+
 # ================= k8s 版本配套(A 组自动派生) =================
 # ================= 版本兜底(env.yaml 未定义时生效) =================
 # ⚠ 这些是【变参】, 正常由 env.yaml 提供(见 tmp/env.yaml.example)。这里给兜底是因为

@@ -13,7 +13,13 @@
   hosts: init
   become: true
   vars:
-    proxy_url: "http://10.2.0.15:3128"
+    # ⚠ 地址【不要写在这里】—— 站点专属值放 inventory/group_vars/all/env.yaml 的
+    #   apt_proxy_url(env.yaml 在 .gitignore 里, 不入库)。以前硬编码在这一行,
+    #   每个站点都得改它, 于是每次 git pull 都撞:
+    #     error: Your local changes to the following files would be overwritten by merge
+    #   兜底值见 group_vars/all/defaults.yaml 的 apt_proxy_url。
+    #   临时换一个也可以不改文件: -e apt_proxy_url=http://x.x.x.x:3128
+    proxy_url: "{{ apt_proxy_url }}"
     proxy_state: present          # present=设置代理; absent=移除代理
 
   tasks:
