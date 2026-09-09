@@ -111,22 +111,10 @@
     force: yes
   become: yes
 
-# Calico 双 IPPool(calico_dual_ippool_enabled=true 时)靠这个标签选池, 仅在双池模式下打。
-# 判定: inventory 的 accelerator_type(nvidia/dcu/npu -> gpu, 未写/none -> cpu);
-# 某台想覆盖自动判定时, 在该主机的 inventory 行加 calico_pool=gpu 或 calico_pool=cpu 即可
-# (不用自己拼 "hardware=xxx" 这种键值对里套键值对的格式)。
-- name: "[Add Master] 打 hardware 标签(供 Calico 双 IPPool 选池, 仅双池模式)"
-  command: >
-    kubectl --kubeconfig /etc/kubernetes/admin.conf
-    label node {{ inventory_hostname }}
-    hardware={{ calico_pool | default('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu'] else 'cpu') }}
-    --overwrite
-  delegate_to: "{{ groups['k8s_master'][0] }}"
-  become: yes
-  changed_when: false
-  when:
-    - not kubelet_conf.stat.exists
-    - calico_dual_ippool_enabled | default(false) | bool
+# hardware 标签(Calico 双 IPPool 选池)已移到 playbook/k8s-add-master.yaml 的 pre_tasks,
+# 走共享任务 playbook/tasks/ensure-hardware-label.yml。原因见 kube-add-node/tasks/main.yml
+# 里的同段说明: 本文件的 `when: not kubelet_conf.stat.exists` 与 playbook 的
+# `meta: end_host`(已加入则整台跳过)两层叠加, 会让 join 失败过的机器永远补不上标签且不报错。
 
 - name: "移除污点(允许 master 调度; 幂等,污点不存在也不报错)"
   shell: |

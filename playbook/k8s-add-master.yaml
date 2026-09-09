@@ -33,6 +33,12 @@
              or (_pre_m_in_cluster.rc != 0 and _pre_m_kubelet_conf.stat.exists) }}
       tags: always
 
+    # ⚠ 必须放在下面 end_host 【之前】, 原因同 k8s-add-node.yaml 里的同名任务:
+    #   已加入的节点会被整台跳过, 放到 roles 里就永远轮不到执行。
+    - name: "[Add Master] 对齐 hardware 标签(Calico 双池选池; 已加入的节点也会被对齐)"
+      include_tasks: "{{ playbook_dir }}/tasks/ensure-hardware-label.yml"
+      tags: always
+
     - name: "[Add Master] 已加入则整台跳过(-e force_common=true 可强制重跑 kube-common)"
       meta: end_host
       when:

@@ -54,22 +54,12 @@
   changed_when: false
   when: not kubelet_conf.stat.exists
 
-# Calico 双 IPPool(calico_dual_ippool_enabled=true 时)靠这个标签选池, 仅在双池模式下打。
-# 判定: inventory 的 accelerator_type(nvidia/dcu/npu -> gpu, 未写/none -> cpu);
-# 某台想覆盖自动判定时, 在该主机的 inventory 行加 calico_pool=gpu 或 calico_pool=cpu 即可
-# (不用自己拼 "hardware=xxx" 这种键值对里套键值对的格式)。
-- name: "[Add Node] 打 hardware 标签(供 Calico 双 IPPool 选池, 仅双池模式)"
-  command: >
-    kubectl --kubeconfig /etc/kubernetes/admin.conf
-    label node {{ inventory_hostname }}
-    hardware={{ calico_pool | default('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu'] else 'cpu') }}
-    --overwrite
-  delegate_to: "{{ groups['k8s_master'][0] }}"
-  become: yes
-  changed_when: false
-  when:
-    - not kubelet_conf.stat.exists
-    - calico_dual_ippool_enabled | default(false) | bool
+# hardware 标签(Calico 双 IPPool 选池)已移到 playbook/k8s-add-node.yaml 的 pre_tasks,
+# 走共享任务 playbook/tasks/ensure-hardware-label.yml。原因(2026-09-09):
+#   本文件里的任务带 `when: not kubelet_conf.stat.exists`, 而 playbook 的 pre_tasks 里还有
+#   `meta: end_host`(已加入则整台跳过)—— 两层跳过叠加, 导致 join 中途失败过的机器
+#   (kubelet.conf 已落盘)重跑时标签永远补不上, 且【不报错】。现网漏过一台。
+#   放到 end_host 之前 + 内部比对现值才能真正幂等。
 
 - name: 设置 kubectl 别名 k(软链接,幂等)
   file:

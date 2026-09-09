@@ -39,6 +39,16 @@
              or (_pre_node_in_cluster.rc != 0 and _pre_kubelet_conf.stat.exists) }}
       tags: always
 
+    # ⚠ 必须放在下面 end_host 【之前】—— 已加入的节点会被整台跳过, 放到 roles 里就永远
+    #   轮不到执行。原先打标签在 kube-add-node/tasks 里、还额外带
+    #   `when: not kubelet_conf.stat.exists`, 两层跳过叠加导致: 某台 join 中途失败
+    #   (kubelet.conf 已落盘)后重跑, 标签永远补不上, 且【不报错】—— 池配得再对也不生效,
+    #   只表现为那台从 cpu 池拿 /26 而不是 gpu 池的 /28。2026-09-09 现网漏过一台。
+    #   共享任务内部幂等: 先比对现值, 一致则不动、不产生 API 写入。
+    - name: "[Add Node] 对齐 hardware 标签(Calico 双池选池; 已加入的节点也会被对齐)"
+      include_tasks: "{{ playbook_dir }}/tasks/ensure-hardware-label.yml"
+      tags: always
+
     - name: "[Add Node] 已加入则整台跳过(-e force_common=true 可强制重跑 kube-common)"
       meta: end_host
       when:

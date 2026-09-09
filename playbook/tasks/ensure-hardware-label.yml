@@ -1,0 +1,84 @@
+# playbook/tasks/ensure-hardware-label.yml
+# 幂等确保本机的 hardware=gpu|cpu 标签与 inventory 一致(Calico 双 IPPool 靠它选池)。
+#
+# 判定: inventory 的 accelerator_type(nvidia/dcu/npu -> gpu, none/未写 -> cpu);
+#   某台想覆盖自动判定, 在该主机 inventory 行加 calico_pool=gpu 或 calico_pool=cpu。
+#
+# 为什么抽成共享任务、且必须由【playbook 的 pre_tasks】调用而不是放在 role 里:
+#   k8s-add-node.yaml / k8s-add-master.yaml 的 pre_tasks 里有
+#       - meta: end_host   when: _already_joined and not force_common
+#   它在 roles 之前执行, 已加入的节点【整台跳过】。而打标签原先写在
+#   kube-add-node / kube-add-master 的 tasks 里, 还额外带
+#       when: not kubelet_conf.stat.exists
+#   于是两层跳过叠加, 出现这个静默失败:
+#     · 某台 join 中途失败(网络抖/镜像拉不到/preflight 报错) -> kubelet.conf 已落盘
+#     · 第二次重跑 -> 被判「已加入」整台跳过, 或 kubelet.conf 已存在 -> 标签永远补不上
+#     · 【不报错】—— 池配得再对也不生效, 只表现为那台从 cpu 池拿 /26 而不是 gpu 池的 /28
+#   2026-09-09 现网就这么漏了一台(gn-10-14-64-1 被打成 hardware=cpu, 手工 kubectl label
+#   + 删该节点 ipamblock 才修好)。35 台规模下逐台人工兜底不现实, 故改为无条件对齐。
+#
+# 幂等性: kubectl label --overwrite 本身幂等; 这里再比对现值, 只有不一致才执行,
+#   所以对已正确的节点既不 changed 也不产生 API 写入。
+#
+# 用法(放在 pre_tasks 里, 且必须在 meta: end_host 【之前】):
+#   - include_tasks: "{{ playbook_dir }}/tasks/ensure-hardware-label.yml"
+
+- name: "[hardware-label] 计算期望标签值"
+  set_fact:
+    _hw_expect: >-
+      {{ calico_pool
+         | default('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu']
+                   else 'cpu', true) }}
+  when: calico_dual_ippool_enabled | default(false) | bool
+
+# 节点还没进集群时 kubectl 查不到, 属正常 —— 那种情况下 join 之后由本任务下一次运行
+# (或 add-node 流程结束时)补上; 这里 failed_when: false 不让它中断。
+- name: "[hardware-label] 读取集群里该 Node 现有的 hardware 标签"
+  command: >
+    kubectl --kubeconfig {{ kube_config_dir | default('/etc/kubernetes') }}/admin.conf
+    get node {{ inventory_hostname }}
+    -o jsonpath={.metadata.labels.hardware}
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  become: yes
+  register: _hw_current
+  changed_when: false
+  failed_when: false
+  when: calico_dual_ippool_enabled | default(false) | bool
+
+- name: "[hardware-label] 标签缺失或不符则对齐(hardware={{ _hw_expect | default('') }})"
+  command: >
+    kubectl --kubeconfig {{ kube_config_dir | default('/etc/kubernetes') }}/admin.conf
+    label node {{ inventory_hostname }}
+    hardware={{ _hw_expect }}
+    --overwrite
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  become: yes
+  register: _hw_relabel
+  changed_when: "'labeled' in (_hw_relabel.stdout | default(''))"
+  failed_when: false
+  when:
+    - calico_dual_ippool_enabled | default(false) | bool
+    - _hw_current.rc | default(1) == 0          # Node 已在集群里才有意义
+    - (_hw_current.stdout | default('') | trim) != (_hw_expect | trim)
+
+# 改了标签但该节点已有 ipamblock 时, Calico【不会】自动把已分配的块挪到新池 ——
+# 旧块还在旧池里, 新 Pod 仍从旧块取地址。必须删掉该节点的块让它重新申请。
+# 这一步只提示不自动做: 删块会影响该节点上正在跑的 Pod 的地址, 得人工确认时机。
+- name: "[hardware-label] ⚠ 标签已变更, 需手工迁移该节点的 IPAM 块"
+  debug:
+    msg: |
+      {{ inventory_hostname }} 的 hardware 标签已从
+      "{{ _hw_current.stdout | default('(无)') | trim }}" 改为 "{{ _hw_expect }}"。
+
+      ⚠ Calico 不会自动把【已分配】的地址块挪到新池 —— 该节点现有 ipamblock 仍在旧池,
+        新 Pod 会继续从旧块取地址。确认该节点上没有要保留地址的业务 Pod 后, 执行:
+
+          kubectl get ipamblocks.crd.projectcalico.org \
+            -o custom-columns=NAME:.metadata.name,CIDR:.spec.cidr,AFFINITY:.spec.affinity \
+            | grep {{ inventory_hostname }}
+          kubectl delete ipamblocks.crd.projectcalico.org <上面查到的块名>
+
+        删除后节点会按新标签从对应池重新申请。验收: 块的网段与 blockSize 应与目标池一致。
+  when:
+    - _hw_relabel is defined
+    - _hw_relabel is changed
