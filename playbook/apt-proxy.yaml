@@ -4,7 +4,13 @@
 # 取消代理: ansible-playbook -i ../inventory/hosts apt-proxy.yaml -e proxy_state=absent
 
 - name: Configure apt proxy
-  hosts: all
+  # hosts 用 init 而不是 all: apt 代理只对【要装包的机器】有意义, 而 [init] 正是
+  # "本次要初始化哪些节点"的清单(见 init.yaml 头部说明), 与装包动作天然对齐。
+  # ⚠ all 的问题不只是范围大: inventory 里 [harbor] 和 [chronyserver] 写的是裸 IP,
+  #   ansible 会把它们当成【独立主机】(与 [cluster] 里同一台机器的 inventory 名互不
+  #   相识), all 于是包含这些裸 IP 条目 —— 同一台机器被连两次、写两遍同一个文件,
+  #   而裸 IP 那份身份没有 group_vars 里的任何主机变量, 出问题也更难对上号。
+  hosts: init
   become: true
   vars:
     proxy_url: "http://10.2.0.15:3128"
