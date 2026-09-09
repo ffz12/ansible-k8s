@@ -86,30 +86,37 @@
   copy: src=sysctl.conf dest=/etc/sysctl.conf owner=root group=root mode=0644
   tags: [sysctl]
 
-# 大规模容器/K8s 场景补充调优(可选) —— 独立 drop-in, 不动主配置(便于回滚与按站点启用)
-# 99- 前缀确保后加载、优先级高于 /etc/sysctl.conf(systemd 视其为 99-sysctl.conf)
-- name: 下发补充内核参数到 /etc/sysctl.d/99-node-tuning.conf
-  template:
-    src: 99-node-tuning.conf.j2
-    dest: /etc/sysctl.d/99-node-tuning.conf
-    owner: root
-    group: root
-    mode: '0644'
-    backup: yes
-  when: node_tuning_sysctl | default(false) | bool
-  tags: [sysctl]
-
-- name: 未启用时移除该 drop-in(关掉开关即回滚)
+# ============================================================================
+#  为什么不再用 99-node-tuning.conf drop-in(2026-09-09 合并进 files/sysctl.conf)
+#
+#  原设计: 把交付标准 1.6 的 13 项 sysctl 放独立 drop-in, 靠 99- 前缀"后加载覆盖主配置"。
+#  实际相反 —— systemd 把 /etc/sysctl.conf 当作 99-sysctl.conf 处理, 而字母序是:
+#      99-node-tuning.conf  <  99-swap.conf  <  99-sysctl.conf
+#  drop-in 排在【前面】, 所以 /etc/sysctl.conf 最后加载、一律覆盖 drop-in 的同名项。
+#
+#  现网实测(35 节点全部一致)佐证: 两个文件都定义的 6 项全部按 sysctl.conf 生效 ——
+#      netdev_max_backlog 16384->65535   rmem_max/wmem_max 16M->32M
+#      fs.file-max 12000500->1000000     inotify max_user_{watches,instances} 1M->512K
+#  而只在 drop-in 里定义的 5 项(user.max_user_namespaces / ip_local_port_range /
+#  keys.maxkeys / keys.maxbytes / inotify.max_queued_events)才真正生效。
+#  连带后果: node_tuning_keep_higher_net_buffers 这个开关一直是【空转】的 ——
+#  设 true 或 false 结果都是 sysctl.conf 的大值。
+#
+#  与其靠文件名排序打架, 不如【只留一处定义】: 13 项全部合并进 files/sysctl.conf,
+#  删掉 drop-in。下面那个 state: absent 是无条件的, 用来清掉存量机器上的旧文件。
+# ============================================================================
+- name: 移除已废弃的 99-node-tuning.conf drop-in(已合并进 /etc/sysctl.conf)
   file:
     path: /etc/sysctl.d/99-node-tuning.conf
     state: absent
-  when: not (node_tuning_sysctl | default(false) | bool)
   tags: [sysctl]
 # ⚠ 必须用 --system 而非 -p:
 #   sysctl -p        只读 /etc/sysctl.conf, 【不读】 /etc/sysctl.d/ 下的 drop-in
 #   sysctl --system  按 99- 等前缀顺序加载全部 drop-in + 主配置(与开机时行为一致)
-#   本仓库已有 99-swap.conf、新增 99-node-tuning.conf 都在 sysctl.d 下 —— 用 -p 的话
-#   它们在本次运行里【不生效】, 只有重启后才生效, 容易误判"参数没写进去"。
+#   本仓库仍有 99-swap.conf 在 sysctl.d 下 —— 用 -p 的话它在本次运行里【不生效】,
+#   只有重启后才生效, 容易误判"参数没写进去"。
+#   (99-swap.conf 的 vm.swappiness=0 与 sysctl.conf 第 72 行同值, 实际赢的是后者;
+#    它是冗余的, 但删除属于行为变更, 留待单独处置。)
 - name: 执行sysctl(--system 以便同时加载 /etc/sysctl.d/ 下的 drop-in)
   shell: |
       sysctl --system

@@ -301,11 +301,18 @@ kubelet_rotate_server_cert_gate: true
 # ================= 节点调优可选开关(与本仓库既有默认值可能冲突, 故做成开关) =================
 # 全部默认【关】—— 不影响现网 111 节点集群及其它站点。需要的站点在 env.yaml 逐项打开。
 #
-# 补充内核参数: 下发 /etc/sysctl.d/99-node-tuning.conf(见该模板注释)
-node_tuning_sysctl: false
-# ⚠ 模板里这三项默认值比本仓库既有调优【更低】(仓库 65535/32M/32M, 模板默认 16384/16M/16M)。
-#   若实测吞吐不足要保留仓库大值, 置 true 则这三项不写, 沿用 /etc/sysctl.conf 里的更高值。
-node_tuning_keep_higher_net_buffers: false
+# ---- 已废弃(2026-09-09): node_tuning_sysctl / node_tuning_keep_higher_net_buffers ----
+# 交付标准 1.6 的 13 项 sysctl 原先走 /etc/sysctl.d/99-node-tuning.conf drop-in, 由这两个
+# 变量控制。现已【全部合并进 roles/init/files/sysctl.conf】, 模板与这两个变量一并删除。
+#
+# 为什么合并: drop-in 想靠 99- 前缀覆盖主配置, 但方向搞反了 —— systemd 把
+# /etc/sysctl.conf 当作 99-sysctl.conf 处理, 字母序 99-node-tuning < 99-sysctl,
+# 于是主配置【后】加载、一律覆盖 drop-in 的同名项。现网 35 节点实测: 两处都定义的 6 项
+# 全按 sysctl.conf 生效(netdev_max_backlog/rmem_max/wmem_max/file-max/inotify×2),
+# 只在 drop-in 里定义的 5 项才真正生效。keep_higher_net_buffers 因此一直是空转的。
+#
+# ⚠ 若你的 env.yaml 里还留着这两行, 删掉即可 —— 它们现在【不被任何代码读取】,
+#   留着会让人误以为改它们能调整 sysctl。改这 13 项请直接改 files/sysctl.conf。
 #
 # kubelet: podPidsLimit: -1(不限) + serializeImagePulls: false(并行拉镜像)
 # ⚠ -1 等于【放弃单 Pod 进程数上限】, fork 炸弹可打满整机 pid。
