@@ -3,5 +3,12 @@ is_offline: false
 # 是否由 ansible 接管 DNS(写 systemd-resolved)。默认 false: 保持系统原有
 # DNS(装机/DHCP/netplan 给的)不动。需要统一接管时在 env.yaml 置 true,
 # 并填 dns(列表)/ domains(字符串)。见 tasks/debian.yaml 的「配置 DNS」段。
+#
+# 这是个【双向开关】: true 写 drop-in, false 则把以前写过的 drop-in
+# (/etc/systemd/resolved.conf.d/99-init-dns.conf)删掉并重启 systemd-resolved。
+# 早先 false 只表示"不接管"、不清理 —— 用 true 写过再改回 false 的机器上会留一份
+# 再没人维护的 DNS 配置, 而 env.yaml 里的 dns 列表此时已空转, 看配置完全看不出
+# 机器实际在用什么解析器。且 /etc/resolv.conf 是指向 systemd-resolved 的软链,
+# 手工编辑它删不掉(随时被重写), 必须删源头 drop-in。
 init_config_dns: false
 

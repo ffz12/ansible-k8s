@@ -39,6 +39,51 @@
         enabled: yes
       when: init_resolved_dropin is changed or init_resolv_link is changed
 
+# 关掉本项(init_config_dns=false)时, 把以前写进去的 drop-in 清掉 —— 否则机器上会留着
+# 一份再没人维护的 DNS 配置: 改回 false 只是"不再接管", 文件却还在生效, 且 env.yaml
+# 里的 dns 列表已经空转、看配置完全看不出机器上到底用的什么解析器。
+#
+# 这个残留很难自己发现: systemd-resolved 会把 drop-in 的 DNS 汇总进
+# /run/systemd/resolve/resolv.conf, 而 /etc/resolv.conf 是指向它的软链 —— 手工编辑
+# /etc/resolv.conf 删不掉(随时被重写), 必须删源头的 drop-in。超过 3 个 DNS 时
+# systemd-resolved 还会自己插一行注释:
+#   # Too many DNS servers configured, the following entries may be ignored.
+# 看到这行就说明有多处在往里塞 DNS(drop-in + netplan/DHCP 叠加)。
+#
+# ⚠ 只删本角色自己写的那个文件名, 不动 resolved.conf 主文件、不动 /etc/resolv.conf
+#   软链(Ubuntu 上那是标准形态), 也不碰 netplan 里的 nameservers —— 那是装机配的,
+#   由 os-check 只读体检出报告后人工处置(本角色不碰网络配置)。
+# 与 os-init/tasks/hostname.yaml 里"移除历史写入的集群 hosts 解析块"同一套思路。
+- name: 移除历史写入的 DNS drop-in(init_config_dns=false 时)
+  tags: [dns]
+  when: not (init_config_dns | bool)
+  block:
+    - name: 检查是否存在历史 DNS drop-in
+      stat:
+        path: /etc/systemd/resolved.conf.d/99-init-dns.conf
+      register: init_dns_dropin_stat
+
+    - name: 删除历史 DNS drop-in
+      file:
+        path: /etc/systemd/resolved.conf.d/99-init-dns.conf
+        state: absent
+      when: init_dns_dropin_stat.stat.exists
+      register: init_dns_dropin_removed
+
+    - name: 重启 systemd-resolved 使删除生效
+      systemd:
+        name: systemd-resolved
+        state: restarted
+      when: init_dns_dropin_removed is changed
+
+    - name: 提示已清理历史 DNS drop-in
+      debug:
+        msg: >-
+          已删除 {{ inventory_hostname }} 上历史写入的 /etc/systemd/resolved.conf.d/99-init-dns.conf
+          并重启 systemd-resolved。本机 DNS 回归装机/DHCP/netplan 的原有配置,
+          核对实际生效: resolvectl status | grep -A5 'DNS Servers'
+      when: init_dns_dropin_removed is changed
+
 # ==================== 1. 软件源策略分流 ====================
 
 - name: 【离线模式】配置本地双架构离线 APT 源
