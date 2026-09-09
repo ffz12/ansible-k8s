@@ -30,13 +30,31 @@ timeouts:
 # === ClusterConfiguration ===
 apiVersion: kubeadm.k8s.io/v1beta4
 {% if has_lbvip | bool %}
-controlPlaneEndpoint: "{{ lbvip }}:{{ apiserver_lb_port }}"
+{# kube_cp_endpoint_host 默认就是 lbvip, 所以不配它时渲染结果与从前逐字节相同。
+   配成域名(如 apiserver.local.clusters)时, 域名会被 kubeadm 自动签进 apiserver
+   证书 SAN —— 但【只在 init 那一刻】, 见下面 certSANs 的说明。 #}
+controlPlaneEndpoint: "{{ kube_cp_endpoint_host | default(lbvip, true) }}:{{ apiserver_lb_port }}"
 {% endif %}
 caCertificateValidityPeriod: 876000h
 certificateValidityPeriod: 876000h
 certificatesDir: /etc/kubernetes/pki
 clusterName: kubernetes
 apiServer:
+{# apiserver 证书的额外 SAN。默认 apiserver_cert_extra_sans: [] -> 整段不渲染,
+   与本特性引入前逐字节一致, 现有站点不受影响。
+   ⚠ 为什么这个必须【提前】配好: certificateValidityPeriod 是 876000h(100y),
+     证书不会自动轮换。SAN 只在 kubeadm init 签发那一刻确定, 事后想加域名必须
+     显式删掉 /etc/kubernetes/pki/apiserver.{crt,key} 再 `kubeadm init phase
+     certs apiserver` 重签, 然后重启 apiserver 静态 Pod。
+     所以平滑迁移到域名入口的正确顺序是: 先把域名加进 apiserver_cert_extra_sans
+     (IP 仍可用, 纯增量) -> 全网能解析该域名 -> 各处 kubeconfig 改用域名
+     -> 最后才改 kube_cp_endpoint_host。反过来先改 endpoint 会直接断掉集群。 #}
+{% if (apiserver_cert_extra_sans | default([]) | length) > 0 %}
+  certSANs:
+{% for san in apiserver_cert_extra_sans %}
+    - "{{ san }}"
+{% endfor %}
+{% endif %}
   extraArgs:
     - name: bind-address
       value: 0.0.0.0                 # apiserver 默认已监听 0.0.0.0,这里显式写一份

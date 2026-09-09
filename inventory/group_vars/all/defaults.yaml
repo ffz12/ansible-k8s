@@ -357,6 +357,25 @@ has_lbvip: "{{ (lbvip is defined) and ((lbvip | default('') | trim | length) > 0
 # apiserver 入口地址/端口: 有 VIP 走 VIP:lb_port, 否则首 master:apiserver_port
 apiserver_entry_host: "{{ lbvip | default(hostvars[groups['k8s_master'][0]].ansible_host, true) if (has_lbvip | bool) else hostvars[groups['k8s_master'][0]].ansible_host }}"
 apiserver_entry_port: "{{ apiserver_lb_port if (has_lbvip | bool) else apiserver_port }}"
+
+# ---- controlPlaneEndpoint 用域名(可选) ----
+# 默认 = lbvip, 即保持原行为(endpoint 就是 VIP 的 IP), 现有站点渲染结果逐字节不变。
+# 想让 kubeadm 的 controlPlaneEndpoint 是域名(好处: 以后换 VIP 不用重签证书、
+# 不用改各处 kubeconfig)时, 在 env.yaml 写:
+#   kube_cp_endpoint_host: apiserver.local.clusters
+# ⚠ 域名的解析【本项目不自动全局下发】—— kube-add-node / kube-add-master 会在 join 时
+#   给新节点写 /etc/hosts(解析到 kube_cp_endpoint_ip, 默认 lbvip), 但首 master 自己
+#   和已在网的节点不在该逻辑覆盖范围内, 需自行确保能解析(写 /etc/hosts 或真 DNS)。
+#   解析不了的症状: kubectl / kubelet 连 endpoint 直接 DNS 失败, 与证书无关。
+kube_cp_endpoint_host: "{{ lbvip | default('', true) }}"
+# ---- apiserver 证书额外 SAN ----
+# 默认空 = 保持原行为(kubeadm 只签它自己那几个默认 SAN + controlPlaneEndpoint)。
+# ⚠ 这是"先让域名可用、暂不切 endpoint"的关键: 证书有效期是 876000h(100y),
+#   【不会自动轮换】, 所以域名必须在签发时就进 SAN, 事后加要显式删掉 apiserver.crt
+#   重新生成。想平滑迁移到域名入口时, 先把域名加进这里(IP 仍然可用, 纯增量),
+#   等所有客户端都改用域名之后再动 kube_cp_endpoint_host。
+#   例: apiserver_cert_extra_sans: [apiserver.local.clusters, 10.14.73.200]
+apiserver_cert_extra_sans: []
 # 端口兜底(与 13 个版本变量同理: versions/模板都要用, 精简 env.yaml 不该 undefined)
 apiserver_port: 6443
 apiserver_lb_port: 8443
