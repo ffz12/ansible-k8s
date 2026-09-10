@@ -168,8 +168,13 @@ HEADER = '''# ==================================================================
 #    手工只改镜像 tag 会漏掉上游新增的 CRD 与 ClusterRole 规则 —— 3.27->3.31 就因此
 #    漏了 9 个 CRD、2 条 ClusterRole 规则, 导致 felix 反复
 #    "cannot list resource ... forbidden" 而 readiness 503。
+#
+#  下面这行是【机器可读】的版本标记, roles/cni/tasks/calico.yaml 会 grep 它并与
+#  env.yaml 的 calico_version 比对, 不一致就 fail —— 把"镜像版本与 manifest 版本错配"
+#  这类静默故障变成部署时的显式报错。改版本请重跑本脚本, 不要手工改这一行。
+# CALICO_TEMPLATE_VERSION=%s
 # =============================================================================
-''' % ver
+''' % (ver, ver)
 
 open(dst, 'w', encoding='utf-8', newline='').write(HEADER + text)
 

@@ -33,6 +33,60 @@
   run_once: true
   delegate_to: localhost
 
+# ============================================================================
+#  预检: manifest 模板的生成版本 必须 == calico_version
+#
+#  为什么需要这个: calico_version 只决定【镜像 tag】(defaults.yaml 的 calico_images.*),
+#  而 CRD 与 ClusterRole 规则来自 calico.yaml.j2 —— 一份 7400+ 行的 vendored 上游
+#  manifest。改 calico_version 完全不会动那 7400 行, 于是很容易出现
+#  "新版镜像 + 旧版 manifest"(或反过来)的错配, 而且【不报错】, 只在运行时表现为:
+#      felix: cannot list resource "clusternetworkpolicies" ... forbidden
+#      -> readiness 503 -> calico-node 起不来
+#  历史上踩过两次: 3.27->3.31 漏了 9 个 CRD + 2 条 ClusterRole 规则; 之后现网
+#  env.yaml 写 3.32.2 而模板是 3.31.3 生成的, 当时按"补一条 RBAC"治标, 根因是错配。
+#  降版本同样会犯 —— 方向相反但性质一样, 所以这里做双向严格相等校验。
+#
+#  修法只有一条: scripts/gen-calico-template.sh <目标版本> 先看 diff(它会单独列出
+#  CRD 增减与各 ClusterRole 的 rules 增减), 确认无异常后 --apply 覆盖模板,
+#  再改 env.yaml 的 calico_version。两者必须一起走。
+# ============================================================================
+- name: 读取 calico manifest 模板的生成版本
+  shell: |
+    set -o pipefail
+    grep -m1 '^# CALICO_TEMPLATE_VERSION=' "{{ role_path }}/templates/calico.yaml.j2" \
+      | sed 's/^# CALICO_TEMPLATE_VERSION=//' | tr -d '[:space:]'
+  args:
+    executable: /bin/bash
+  register: _calico_tmpl_ver
+  changed_when: false
+  failed_when: false
+  run_once: true
+  delegate_to: localhost
+  become: false
+
+- name: 预检 —— 模板生成版本与 calico_version 一致
+  assert:
+    that:
+      - (_calico_tmpl_ver.stdout | default('') | trim) == (calico_version | string | trim)
+    fail_msg: >-
+      calico 版本错配: env.yaml 的 calico_version={{ calico_version }},
+      但 calico.yaml.j2 是由 v{{ _calico_tmpl_ver.stdout | default('<读不到标记>') | trim }}
+      的上游 manifest 生成的。
+      calico_version 只换镜像 tag, 不会带来该版本对应的 CRD 与 ClusterRole 规则 ——
+      错配【不会立刻报错】, 而是运行时 felix 反复
+      "cannot list resource ... forbidden" -> readiness 503 -> calico-node 起不来
+      (现网踩过, 当时误按"补一条 RBAC"治标)。
+      正确做法(两步必须一起):
+        1) scripts/gen-calico-template.sh {{ calico_version }}          # 先看 diff
+           离线: scripts/gen-calico-template.sh {{ calico_version }} --from /path/to/calico.yaml
+        2) scripts/gen-calico-template.sh {{ calico_version }} --apply  # 确认后覆盖模板
+      然后确认离线物料: ls offline/artifacts/cni/calico/v{{ calico_version }}/
+      读不到标记时说明模板是旧版脚本生成的(无版本行), 重跑一次上面的命令即可。
+    success_msg: >-
+      calico 版本一致: 模板与镜像同为 v{{ calico_version }}
+  run_once: true
+  delegate_to: localhost
+
 - name: 渲染 calico manifest
   template:
     src: calico.yaml.j2

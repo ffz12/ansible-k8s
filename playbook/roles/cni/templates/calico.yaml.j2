@@ -13,6 +13,11 @@
 #      节点按 hardware=gpu/cpu 标签(见 kube-add-node/kube-add-master/kube-init-master
 #      里的打标签任务, 判定依据是 inventory 的 accelerator_type)落入对应池。
 #
+#  下面这行是【机器可读】的版本标记, roles/cni/tasks/calico.yaml 会 grep 它并与
+#  env.yaml 的 calico_version 比对, 不一致就 fail —— 把"镜像版本与 manifest 版本错配"
+#  这类静默故障变成部署时的显式报错。改版本请重跑 gen-calico-template.sh, 别手工改这行。
+# CALICO_TEMPLATE_VERSION=3.31.3
+#
 #  ⚠ 升级 calico 版本时: 重新下载对应版本官方 manifest 并【重新施加上述参数化】,
 #    不要只改镜像 tag —— 3.27 ->3.31 就因只改 tag 而缺了 9 个 CRD、2 个 ClusterRole 规则,
 #    导致 felix 反复 "cannot list resource ... forbidden" 而 readiness 503。
