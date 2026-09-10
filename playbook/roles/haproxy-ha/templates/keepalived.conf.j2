@@ -13,12 +13,18 @@ vrrp_script chk_haproxy {
     timeout 2              # 脚本超时(避免卡死)
     rise 2                 # 连续成功 2 次才认为恢复
     fall 2                 # 连续失败 2 次才认为宕机
-    weight -30             # 失败时优先级降低值(触发切换)
+    # ⚠ |weight| 必须【小于】priority 间距(下面按 10 递减), 否则一台脚本失败就【跨级】切主。
+    #   原值 -30 的后果: .1(100) 掉到 70, 连最低优先级的 .3(80) 都能赢 —— 一次 haproxy
+    #   瞬时抖动就把 VIP 甩到末位节点, 而不是交给次高的 .2(90)。
+    weight {{ lb_vrrp_check_weight | default(-5) }}
 }
 
 vrrp_instance VI_1 {
     # 基础配置
-    state MASTER
+    # state: nopreempt / preempt_delay 只在 BACKUP 下生效(见 defaults.yaml 的
+    #   lb_vrrp_preempt_mode 注释), 故这两种模式下全部节点都渲染成 BACKUP,
+    #   靠 priority 选主; immediate 模式保持原来的 MASTER 写法。
+    state {{ 'MASTER' if (lb_vrrp_preempt_mode | default('delay')) == 'immediate' else 'BACKUP' }}
     interface {{ LB_IF_TMP.stdout }}  # 实际网卡名(自动探测)
 
     # 基于 VIP 哈希生成唯一 router_id (1-254)，避免同网段多套 LB 冲突
@@ -29,13 +35,41 @@ vrrp_instance VI_1 {
     priority {{ 100 - (groups['k8slb'].index(inventory_hostname) * 10) }}
 
     advert_int 1    # VRRP 心跳间隔，默认 1 秒
-    nopreempt       # 禁止备节点抢占(避免主恢复后频繁切换)
+{% set _preempt = lb_vrrp_preempt_mode | default('delay') %}
+{% if _preempt == 'nopreempt' %}
+    nopreempt       # 原主恢复后【永不】抢回 VIP(需 state BACKUP, 已在上面处理)
+{% elif _preempt == 'delay' %}
+    # 原主恢复后等 {{ lb_vrrp_preempt_delay | default(10) }} 秒再抢回 —— 仍会回切, 只是防抖动。
+    # 与 nopreempt 互斥, 二者都需 state BACKUP 才生效。
+    preempt_delay {{ lb_vrrp_preempt_delay | default(10) }}
+{% else %}
+    # immediate: 不写 nopreempt / preempt_delay, 原主恢复立即抢回(VRRP 默认行为)
+{% endif %}
 
     authentication {
         auth_type PASS
-        # 基于 VIP 生成认证密码，避免多套 LB 冲突
-        auth_pass {{ 'LB_VIP_' ~ lbvip | regex_replace('\.', '_') }}
+        # ⚠ keepalived 只取 auth_pass 的【前 8 字符】, 超出会在启动日志里报
+        #     Truncating auth_pass to 8 characters
+        #   原写法 'LB_VIP_' ~ <VIP去点> 前缀就占了 7 位, 实际生效只剩 1 位 —— 于是
+        #   "基于 VIP 生成、避免多套 LB 冲突"这个意图【失效】: 任何 VIP 都得到 LB_VIP_1。
+        #   改为把 VIP 后两段转成十六进制(每段 2 位, 共 4 位)+ 3 位前缀 = 7 位, 不被截断,
+        #   同网段不同 VIP 也能区分。同一套 LB 内三台必须一致, 否则互相拒收 advert。
+        auth_pass {{ 'VRP' ~ '%02X%02X' % (lbvip.split('.')[2] | int, lbvip.split('.')[3] | int) }}
     }
+{% if lb_vrrp_unicast | default(true) | bool %}
+
+    # ---- 单播模式(lb_vrrp_unicast=true, 默认) ----
+    # 不依赖交换机对 224.0.0.18 的组播转发。现网踩过单向组播故障导致的永久双 MASTER,
+    # 详见 group_vars/all/defaults.yaml 里 lb_vrrp_unicast 的注释。
+    # src 取本机 ansible_host、peer 自动排除自己 —— 手填极易出错(现网手改时三台的
+    # unicast_src_ip 全复制成同一个 IP, 非本机地址 bind 失败直接进 FAULT 状态)。
+    unicast_src_ip {{ ansible_host | default(inventory_hostname) }}
+    unicast_peer {
+{% for _h in groups['k8slb'] if _h != inventory_hostname %}
+        {{ hostvars[_h].ansible_host | default(_h) }}
+{% endfor %}
+    }
+{% endif %}
 
     # 虚拟 IP: 掩码用 vip_prefix(默认 22,可在 inventory 覆盖)，绑到自动探测的网卡并打 label 便于识别
     virtual_ipaddress {

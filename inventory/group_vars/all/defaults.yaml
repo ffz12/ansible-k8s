@@ -85,6 +85,50 @@ harbor_images_aarch64:
 - redis-photon-v2.13.0-aarch64.tar.gz
 - registry-photon-v2.13.0-aarch64.tar.gz
 
+# ================= VRRP 传输方式(keepalived) =================
+# true(默认) = 单播: 显式把对端 IP 列进 unicast_peer, VRRP 报文点对点发送。
+# false      = 组播: keepalived 的默认行为, 报文发往 224.0.0.18, 依赖交换机在同 VLAN 内泛洪。
+#
+# 为什么默认改成单播(2026-09-10 现网踩过):
+#   某站点三台 LB, .1 的 VRRP 组播【出了物理口】(eth3 上 tcpdump 抓到了)但交换机没转发给
+#   同 VLAN 的另外两台, 而 .2 <-> .3 之间双向正常 —— 单向组播故障。后果:
+#     .1 收得到 .2 的 advert 却每秒 "forcing new election" 无人响应;
+#     .2 收不到 .1, 认定自己是唯一 MASTER -> 两台同时持 VIP 且【永不收敛】。
+#   表面还能用(两台跑同样的 haproxy、后端同样几台 apiserver), 但双方 GARP 互打、
+#   交换机 ARP 表在两个 MAC 间抖, 症状是偶发 apiserver 连接重置, 极难定位。
+#   改单播后立即收敛, 且故障转移实测正常(停 MASTER -> VIP 漂移 -> 恢复 -> 漂回)。
+#
+# 单播的代价: 每台要知道对端 IP, 所以【只支持同一 play 内的固定成员】。
+#   本模板从 groups['k8slb'] 自动生成并排除自己, 不需要手填 —— 手填极易出错:
+#   现网手工改时三台的 unicast_src_ip 全复制成了同一个 IP, 非本机地址 bind 失败
+#   (bind unicast_src ... failed 99 - Cannot assign requested address)-> 直接进 FAULT
+#   状态, 不参与选主也不持 VIP。
+#
+# 什么时候用组播: LB 成员会动态增减、或交换机组播确认可靠且希望少改配置时。
+lb_vrrp_unicast: true
+
+# ---- 抢占策略(三选一) ----
+#   immediate  原主恢复后【立即】抢回 VIP。VRRP 默认行为。
+#   delay      原主恢复后等 lb_vrrp_preempt_delay 秒再抢回 —— 仍然会回切, 只是防抖动。
+#   nopreempt  原主恢复后【永不】抢回。VIP 一直留在当前 MASTER, 直到它自己故障。
+#
+# ⚠ 三者的关键前提: nopreempt 与 preempt_delay 【只在 state BACKUP 下生效】。
+#   本模板因此在这两种模式下把所有节点都渲染成 state BACKUP。
+#   历史上模板写的是 `state MASTER` + `nopreempt`, keepalived 启动时直接报
+#     (VI_1) Warning - nopreempt will not work with initial state MASTER - clearing
+#   把 nopreempt 清掉 —— 也就是说那行配置一直【没生效】, 实际行为是 immediate。
+#   配置意图与实际行为不一致, 后来人会误判"已经配了不回切"。
+#
+# ⚠ 全节点 state BACKUP 的副作用: 冷启动(全部同时起)时没有天然的 MASTER,
+#   要等约 3×advert_int(默认 3 秒)选主才有 VIP。热启动/单台重启不受影响。
+#
+# ⚠ nopreempt 的取舍: 它保证不回切, 但也意味着【VIP 可能长期停在低优先级节点上】。
+#   若各 LB 节点性能不对等(比如首台配置更好), 或希望 VIP 有确定的归属, 用 delay 更合适。
+lb_vrrp_preempt_mode: delay
+# delay 模式下等待多少秒再抢回。太短起不到防抖作用, 太长则故障恢复后 VIP 归位慢。
+# keepalived 允许 0-1000; 5-30 秒是常见区间。
+lb_vrrp_preempt_delay: 10
+
 # ================= Nginx / Keepalived 派生路径(nginx_dir/keepalived_dir 在 env.yaml) =================
 nginx_conf_dir: "{{ nginx_dir }}/conf"
 nginx_logs_dir: "{{ nginx_dir }}/logs"
