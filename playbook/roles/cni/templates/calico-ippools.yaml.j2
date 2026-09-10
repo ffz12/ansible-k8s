@@ -27,7 +27,11 @@
 apiVersion: crd.projectcalico.org/v1
 kind: IPPool
 metadata:
-  name: gpu-pool
+  # ⚠ 池名必须与【线上现有】的一致, 否则 kubectl apply 按 metadata.name 匹配不上,
+  #   会【新建】一个池而不是更新现有的 —— 于是同一段地址出现两个池、nodeSelector 又相同,
+  #   同一节点同时匹配两个池, IPAM 从哪个取块变得不确定。
+  #   手工建过池(名字带 -v2 之类)的站点, 在 env.yaml 里写 calico_gpu_pool_name 对齐。
+  name: {{ calico_gpu_pool_name | default('gpu-pool', true) }}
 spec:
   cidr: "{{ calico_gpu_pool_cidr }}"
   blockSize: {{ calico_gpu_pool_blockSize | default(28) }}
@@ -39,7 +43,8 @@ spec:
 apiVersion: crd.projectcalico.org/v1
 kind: IPPool
 metadata:
-  name: cpu-pool
+  # 同上: 与线上现有池名对齐, 否则会新建重叠的池。
+  name: {{ calico_cpu_pool_name | default('cpu-pool', true) }}
 spec:
   cidr: "{{ calico_cpu_pool_cidr }}"
   blockSize: {{ calico_cpu_pool_blockSize | default(26) }}

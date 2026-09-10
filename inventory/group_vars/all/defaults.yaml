@@ -232,6 +232,18 @@ calico_dual_ippool_enabled: false
 #   /28(16 地址) 跑满 110 需 7 块;  /26(64 地址) 跑满 110 需 2 块。
 calico_gpu_pool_blockSize: 28    # 每块 16 个地址; GPU 节点 Pod 数通常不多(但别忘 DaemonSet 也占)
 calico_cpu_pool_blockSize: 26    # 每块 64 个地址; 若 CPU 节点真按 kubelet_max_pods=110 跑, 每节点要 2 块
+# ---- 两池的资源名(IPPool 的 metadata.name) ----
+# ⚠ 必须与【线上现有】的池名一致。kubectl apply 按 metadata.name 匹配 —— 名字对不上时
+#   它会【新建】一个池而不是更新现有的, 于是同一段地址出现两个池, 且两者 nodeSelector
+#   相同(hardware == "gpu"/"cpu"), 同一节点同时匹配两个池, IPAM 从哪个取块变得不确定。
+#   这条在【换 calico 版本】时最容易踩: k8s-cni.yaml 会连带 apply 双池 IPPool(见
+#   roles/cni/tasks/calico.yaml 的 "apply 双池 IPPool"), 不是只更新主 manifest。
+# 手工建过池、名字不是默认值的站点(如带 -v2 后缀), 在 env.yaml 里覆盖成实际名字:
+#   calico_gpu_pool_name: gpu-pool-v2
+#   calico_cpu_pool_name: cpu-pool-v2
+# 核对线上实际名字: kubectl get ippools.crd.projectcalico.org
+calico_gpu_pool_name: gpu-pool
+calico_cpu_pool_name: cpu-pool
 # 两池 CIDR 必填(calico_dual_ippool_enabled=true 时), 由使用者自己规划。
 # roles/cni/tasks/calico.yaml 开头有 assert 校验【非空 + 形如 a.b.c.d/n】; 但做不到:
 #   掩码取值合法性(/33 也通过) / 两池是否重叠 / 池与 service_subnet 是否重叠 /
