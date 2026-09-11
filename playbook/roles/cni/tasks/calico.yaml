@@ -34,26 +34,80 @@
   delegate_to: localhost
 
 # ============================================================================
-#  预检: manifest 模板的生成版本 必须 == calico_version
+#  预检: 必须存在与 calico_version 对应的 manifest 模板
 #
 #  为什么需要这个: calico_version 只决定【镜像 tag】(defaults.yaml 的 calico_images.*),
-#  而 CRD 与 ClusterRole 规则来自 calico.yaml.j2 —— 一份 7400+ 行的 vendored 上游
-#  manifest。改 calico_version 完全不会动那 7400 行, 于是很容易出现
-#  "新版镜像 + 旧版 manifest"(或反过来)的错配, 而且【不报错】, 只在运行时表现为:
+#  而 CRD 与 ClusterRole 规则来自那份 7800+ 行的 vendored 上游 manifest。改
+#  calico_version 完全不会动那 7800 行, 于是很容易出现"新版镜像 + 旧版 manifest"
+#  (或反过来)的错配, 而且【不报错】, 只在运行时表现为:
 #      felix: cannot list resource "clusternetworkpolicies" ... forbidden
 #      -> readiness 503 -> calico-node 起不来
 #  历史上踩过两次: 3.27->3.31 漏了 9 个 CRD + 2 条 ClusterRole 规则; 之后现网
 #  env.yaml 写 3.32.2 而模板是 3.31.3 生成的, 当时按"补一条 RBAC"治标, 根因是错配。
-#  降版本同样会犯 —— 方向相反但性质一样, 所以这里做双向严格相等校验。
 #
-#  修法只有一条: scripts/gen-calico-template.sh <目标版本> 先看 diff(它会单独列出
-#  CRD 增减与各 ClusterRole 的 rules 增减), 确认无异常后 --apply 覆盖模板,
-#  再改 env.yaml 的 calico_version。两者必须一起走。
+#  ⚠ 2026-09-11 改为【按版本存放】: templates/calico/<版本>.yaml.j2
+#  原先是单一的 templates/calico.yaml.j2 + "模板版本必须等于 calico_version" 的双向
+#  严格相等校验。那样一份入库模板只能服务一个版本, 而 calico_version 在各站点自己的
+#  env.yaml(gitignore)里 —— 后果是【全部站点必须同时换版本】:
+#    · push 新模板的那一刻, 落后的站点立刻撞 assert 装不了 CNI;
+#    · 想让老集群停在旧版也不行 —— 双向相等, 写旧版号照样被拦, 没有退路。
+#  改成按版本存放后, 各站点按自己的节奏升级, push 不再是同步点。校验也从"版本相等"
+#  变成"该版本的模板存不存在", 缺了就明确告诉你去跑生成脚本。
+#
+#  加新版本: scripts/gen-calico-template.sh <目标版本> 先看 diff(它会单独列出 CRD
+#  增减与各 ClusterRole 的 rules 增减), 确认无异常后 --apply 生成新文件。
+#  旧版本文件保持不动, 老集群不受影响。
 # ============================================================================
-- name: 读取 calico manifest 模板的生成版本
+- name: 预检 —— 该 calico 版本的 manifest 模板是否存在
+  stat:
+    path: "{{ role_path }}/templates/calico/{{ calico_version }}.yaml.j2"
+  register: _calico_tmpl_stat
+  run_once: true
+  delegate_to: localhost
+  become: false
+
+- name: 列出仓库里已有哪些版本的模板(供上面缺失时提示)
   shell: |
     set -o pipefail
-    grep -m1 '^# CALICO_TEMPLATE_VERSION=' "{{ role_path }}/templates/calico.yaml.j2" \
+    ls -1 "{{ role_path }}/templates/calico/" 2>/dev/null \
+      | sed -n 's/\.yaml\.j2$//p' | sort -V | tr '\n' ' '
+  args:
+    executable: /bin/bash
+  register: _calico_tmpl_avail
+  changed_when: false
+  failed_when: false
+  run_once: true
+  delegate_to: localhost
+  become: false
+  when: not (_calico_tmpl_stat.stat.exists | default(false))
+
+- name: 预检 —— 缺少该版本模板时明确报错
+  assert:
+    that:
+      - _calico_tmpl_stat.stat.exists | default(false)
+    fail_msg: >-
+      找不到 calico_version={{ calico_version }} 对应的 manifest 模板:
+      roles/cni/templates/calico/{{ calico_version }}.yaml.j2
+      仓库里现有: {{ _calico_tmpl_avail.stdout | default('') | trim | default('(一个都没有)', true) }}
+      calico_version 只换镜像 tag, 不会带来该版本对应的 CRD 与 ClusterRole 规则 ——
+      所以【必须】先为该版本生成模板, 否则就是"新镜像 + 旧 manifest"的静默错配
+      (运行时 felix 反复 "cannot list resource ... forbidden" -> readiness 503)。
+      生成方法:
+        1) scripts/gen-calico-template.sh {{ calico_version }}          # 先看 CRD/RBAC diff
+           离线: scripts/gen-calico-template.sh {{ calico_version }} --from /path/to/calico.yaml
+        2) scripts/gen-calico-template.sh {{ calico_version }} --apply  # 确认后写入
+      然后确认离线物料: ls offline/artifacts/cni/calico/v{{ calico_version }}/
+    success_msg: >-
+      calico 模板已就位: templates/calico/{{ calico_version }}.yaml.j2
+  run_once: true
+  delegate_to: localhost
+
+# 文件名已经带版本, 这里再读一次文件内的标记做交叉校验 —— 防的是"文件名与内容不一致"
+# (手工复制改名、生成脚本被中断等)。文件名对但内容是别的版本, 同样会造成上面那种错配。
+- name: 读取模板内的版本标记(与文件名交叉校验)
+  shell: |
+    set -o pipefail
+    grep -m1 '^# CALICO_TEMPLATE_VERSION=' "{{ role_path }}/templates/calico/{{ calico_version }}.yaml.j2" \
       | sed 's/^# CALICO_TEMPLATE_VERSION=//' | tr -d '[:space:]'
   args:
     executable: /bin/bash
@@ -64,24 +118,16 @@
   delegate_to: localhost
   become: false
 
-- name: 预检 —— 模板生成版本与 calico_version 一致
+- name: 预检 —— 模板内版本标记与文件名一致
   assert:
     that:
       - (_calico_tmpl_ver.stdout | default('') | trim) == (calico_version | string | trim)
     fail_msg: >-
-      calico 版本错配: env.yaml 的 calico_version={{ calico_version }},
-      但 calico.yaml.j2 是由 v{{ _calico_tmpl_ver.stdout | default('<读不到标记>') | trim }}
-      的上游 manifest 生成的。
-      calico_version 只换镜像 tag, 不会带来该版本对应的 CRD 与 ClusterRole 规则 ——
-      错配【不会立刻报错】, 而是运行时 felix 反复
-      "cannot list resource ... forbidden" -> readiness 503 -> calico-node 起不来
-      (现网踩过, 当时误按"补一条 RBAC"治标)。
-      正确做法(两步必须一起):
-        1) scripts/gen-calico-template.sh {{ calico_version }}          # 先看 diff
-           离线: scripts/gen-calico-template.sh {{ calico_version }} --from /path/to/calico.yaml
-        2) scripts/gen-calico-template.sh {{ calico_version }} --apply  # 确认后覆盖模板
-      然后确认离线物料: ls offline/artifacts/cni/calico/v{{ calico_version }}/
-      读不到标记时说明模板是旧版脚本生成的(无版本行), 重跑一次上面的命令即可。
+      模板文件名与内容不一致: calico/{{ calico_version }}.yaml.j2 里的标记是
+      "{{ _calico_tmpl_ver.stdout | default('<读不到标记>') | trim }}"。
+      通常是手工复制改名、或生成脚本中途失败。重新生成即可:
+        scripts/gen-calico-template.sh {{ calico_version }} --apply
+      (读不到标记说明是旧版脚本生成的无版本行模板, 同样重跑一次)
     success_msg: >-
       calico 版本一致: 模板与镜像同为 v{{ calico_version }}
   run_once: true
@@ -89,7 +135,7 @@
 
 - name: 渲染 calico manifest
   template:
-    src: calico.yaml.j2
+    src: "calico/{{ calico_version }}.yaml.j2"
     dest: "{{ kube_config_dir }}/calico.yaml"
     owner: root
     group: root

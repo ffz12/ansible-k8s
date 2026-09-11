@@ -61,12 +61,32 @@ if [ -z "$PY" ]; then
   echo "     pip3 install pyyaml jinja2      # 或 apt install python3-yaml python3-jinja2" >&2
   exit 1
 fi
-TPL="$REPO_ROOT/playbook/roles/cni/templates/calico.yaml.j2"
+# 模板【按版本存放】(2026-09-11 改): templates/calico/<版本>.yaml.j2
+# 原先是单一 calico.yaml.j2, 一份入库模板只能服务一个版本, 导致所有站点必须同时换版本
+# (详见 roles/cni/tasks/calico.yaml 里那段说明)。现在每个版本一个文件, 互不影响。
+TPL_DIR="$REPO_ROOT/playbook/roles/cni/templates/calico"
+TPL="$TPL_DIR/${VER}.yaml.j2"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 UPSTREAM="$WORK/upstream.yaml"
 GENERATED="$WORK/generated.j2"
+
+# diff 的基准: 目标版本已存在就跟它自己比(重新生成同版本, 应无差异);
+# 不存在(新增版本)就跟【现有最高版本】比 —— 那才是"这次升级改了什么"的有效信息。
+# 一个都没有时跳过 diff。sort -V 按版本号排序(GNU coreutils, 交付机有)。
+mkdir -p "$TPL_DIR"
+if [ -f "$TPL" ]; then
+  DIFF_BASE="$TPL"
+  DIFF_BASE_VER="$VER"
+else
+  DIFF_BASE_VER="$(ls -1 "$TPL_DIR" 2>/dev/null | sed -n 's/\.yaml\.j2$//p' | sort -V | tail -1)"
+  if [ -n "$DIFF_BASE_VER" ]; then
+    DIFF_BASE="$TPL_DIR/${DIFF_BASE_VER}.yaml.j2"
+  else
+    DIFF_BASE=""
+  fi
+fi
 
 # ---------- 1. 取上游 manifest ----------
 if [ -n "$FROM" ]; then
@@ -216,8 +236,15 @@ if bad:
 PYEOF
 
 # ---------- 3. 结构化 diff ----------
-echo "[3/4] 与现有模板结构化比对(CRD / ClusterRole rules 是重点)"
-"$PY" - "$TPL" "$GENERATED" <<'PYEOF'
+if [ -z "$DIFF_BASE" ]; then
+  echo "[3/4] 跳过结构化比对 —— 仓库里还没有任何版本的模板, 没有可比的基准"
+else
+  if [ "$DIFF_BASE_VER" = "$VER" ]; then
+    echo "[3/4] 与同版本现有模板比对(重新生成 v$VER, 正常应无差异)"
+  else
+    echo "[3/4] 与现有最高版本 v$DIFF_BASE_VER 比对(CRD / ClusterRole rules 是重点)"
+  fi
+"$PY" - "$DIFF_BASE" "$GENERATED" <<'PYEOF'
 import sys, re, yaml
 
 def load(path):
@@ -286,6 +313,7 @@ for key in sorted(set(old) & set(new)):
 if not any_rule_change:
     print('       无变化')
 PYEOF
+fi
 
 # ---------- 4. 校验生成结果 ----------
 echo
@@ -340,19 +368,28 @@ PYEOF
 
 echo
 if [ "$APPLY" = "1" ]; then
-  cp "$TPL" "${TPL}.bak-$(date +%Y%m%dT%H%M%S)"
-  cp "$GENERATED" "$TPL"
-  echo "✅ 已覆盖 $TPL (原文件已备份为 ${TPL}.bak-*)"
+  # 只有重新生成【同一个版本】时才需要备份(会覆盖已有文件);
+  # 新增版本是写一个新文件, 旧版本文件原样不动, 没什么可备份的。
+  if [ -f "$TPL" ]; then
+    cp "$TPL" "${TPL}.bak-$(date +%Y%m%dT%H%M%S)"
+    cp "$GENERATED" "$TPL"
+    echo "✅ 已覆盖 $TPL (原文件已备份为 ${TPL}.bak-*)"
+  else
+    cp "$GENERATED" "$TPL"
+    echo "✅ 已新增 $TPL (未触碰其它版本的模板)"
+  fi
   echo
   echo "接下来:"
   echo "  1. git diff 复核上面 diff 里的 CRD / ClusterRole 变化"
-  echo "  2. 若现有模板有'我们补的'规则(diff 里带 ⚠ 的 - 行), 手工加回新模板"
+  echo "  2. 若基准模板有'我们补的'规则(diff 里带 ⚠ 的 - 行), 确认是否需要加回新模板"
   echo "     已知: policy.networking.k8s.io 的 clusternetworkpolicies、kubevirt.io 的"
   echo "           virtualmachineinstancemigrations —— 上游若仍未包含就必须保留"
-  echo "  3. 改 env.yaml 的 calico_version: $VER"
+  echo "     ⚠ 但 verb 集合变化会同时产生一条 - 和一条 +(同资源不同 verbs), 那是误报,"
+  echo "       先在 + 行里找同名资源再判断"
+  echo "  3. 改 env.yaml 的 calico_version: $VER  (其它站点不用动, 各自的旧模板还在)"
   echo "  4. 确认离线物料: ls offline/artifacts/cni/calico/v$VER/"
 else
-  cp "$GENERATED" "$REPO_ROOT/calico.yaml.j2.new"
-  echo "✅ 已生成 $REPO_ROOT/calico.yaml.j2.new (未覆盖现有模板)"
-  echo "   确认上面 diff 无异常后, 重跑加 --apply 覆盖"
+  cp "$GENERATED" "$REPO_ROOT/calico-${VER}.yaml.j2.new"
+  echo "✅ 已生成 $REPO_ROOT/calico-${VER}.yaml.j2.new (未写入模板目录)"
+  echo "   确认上面 diff 无异常后, 重跑加 --apply 写入 $TPL"
 fi
