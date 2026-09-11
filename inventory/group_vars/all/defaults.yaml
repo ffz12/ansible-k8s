@@ -190,11 +190,15 @@ k8s_minor: "{{ k8s_version.split('.')[0] ~ '.' ~ k8s_version.split('.')[1] }}"
 #     coredns/pause/etcd 来自 `kubeadm config images list --kubernetes-version v1.36.3`
 #       (输出 etcd:3.6.8-0, 表里取二进制版本 3.6.8, 去掉镜像构建后缀 -0)
 #     crictl 1.36.0 由实际下载的二进制 `crictl -v` 确认
+#   1.35 那行实测核对(2026-09-11): kubeadm v1.35.8 给出 coredns v1.13.1 / pause 3.10.1 /
+#     etcd 3.6.6-0; crictl 取 1.35.0(cri-tools 只发 minor.0, 无补丁版)。
 #   crictl 官方兼容 k8s ±1 个次要版本, 故各行的 crictl 需与该行 k8s 次要版本对齐, 不可混用
 #   (如 1.36.0 覆盖 1.35/1.36/1.37, 但不覆盖 1.34)。
+# ⚠ 换 k8s 次要版本必须先加对应行 —— 缺行时 crictl_version 兜底成补丁版(如 1.35.8)必然 404。
 k8s_compat:
   "1.28": { coredns: "1.10.1", pause: "3.9",    crictl: "1.28.0", etcd: "3.5.12" }
   "1.34": { coredns: "1.12.1", pause: "3.10.1", crictl: "1.34.0", etcd: "3.6.5"  }
+  "1.35": { coredns: "1.13.1", pause: "3.10.1", crictl: "1.35.0", etcd: "3.6.6"  }
   "1.36": { coredns: "1.14.2", pause: "3.10.2", crictl: "1.36.0", etcd: "3.6.8"  }
 coredns_version:     "{{ (k8s_compat[k8s_minor] | default({})).coredns | default('1.12.1') }}"
 pause_image_version: "{{ (k8s_compat[k8s_minor] | default({})).pause   | default('3.10.1') }}"
