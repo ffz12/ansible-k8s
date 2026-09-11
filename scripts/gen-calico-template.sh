@@ -93,6 +93,12 @@ src, dst, ver = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(src, encoding='utf-8').read()
 counts = {}
 
+# 上游是否【自带】conflist 里的 bandwidth 段: 3.28~3.31 有, 3.32.2 起上游删了。
+# 宽松子串判断(不看缩进/字段写法), 只用来决定下面 (e) 那处参数化是否为必需项:
+#   有 -> 严格正则必须命中; 命不中说明结构变了, 必须停(见 (e) 处注释)
+#   无 -> 本就没东西要包, 期望置 0, 不再误报"未命中"
+HAS_UPSTREAM_BANDWIDTH = '"type": "bandwidth"' in text
+
 def sub(pat, repl, key, flags=0):
     global text
     text, n = re.subn(pat, repl, text, flags=flags)
@@ -142,11 +148,14 @@ NODEFAULT_BLOCK = '''\\g<0>
 sub(r'(?m)^\s*#\s*-\s*name:\s*CALICO_IPV4POOL_CIDR\n\s*#\s*value:\s*"[^"]*"$',
     NODEFAULT_BLOCK, 'NO_DEFAULT_POOLS')
 
-# (e) conflist 的 bandwidth 段: 上游 3.28+ 默认写了这段但 calico-cni 镜像不含该插件,
-#     开了会导致全节点 Pod 建不了 sandbox。改为由 calico_enable_bandwidth 控制(默认 false)。
-sub(r'(?ms)(\}),\n(\s*\{\n\s*"type": "bandwidth",\n\s*"capabilities": \{"bandwidth": true\}\n\s*\})',
-    lambda m: '%s{%% if calico_enable_bandwidth | default(false) | bool %%},\n%s{%% endif %%}'
-              % (m.group(1), m.group(2)), 'bandwidth')
+# (e) conflist 的 bandwidth 段: 上游 3.28~3.31 默认写了这段, 但 calico-cni 镜像不含该
+#     插件二进制(它属于 containernetworking/plugins), 裸着写进去会让全节点 Pod 建不了
+#     sandbox。故用 calico_enable_bandwidth(默认 false)把它包起来。
+#     3.32.2 起上游【自己删掉了这段】—— 那时无需包装, 跳过即可(HAS_UPSTREAM_BANDWIDTH=False)。
+if HAS_UPSTREAM_BANDWIDTH:
+    sub(r'(?ms)(\}),\n(\s*\{\n\s*"type": "bandwidth",\n\s*"capabilities": \{"bandwidth": true\}\n\s*\})',
+        lambda m: '%s{%% if calico_enable_bandwidth | default(false) | bool %%},\n%s{%% endif %%}'
+                  % (m.group(1), m.group(2)), 'bandwidth')
 
 HEADER = '''# =============================================================================
 #  calico.yaml.j2 —— 由 Calico 官方 v%s manifest 对齐生成, 仅做以下参数化:
@@ -154,10 +163,15 @@ HEADER = '''# ==================================================================
 #    · CALICO_IPV4POOL_IPIP / _VXLAN -> 由 env.yaml 的 calico_encapsulation 派生
 #    · IP_AUTODETECTION_METHOD -> 由 calico_ip_autodetection_method 派生(默认 first-found)
 #    · conflist 末尾的 bandwidth 段 -> 由 calico_enable_bandwidth 控制(默认 false)
-#      ⚠ 官方 manifest 本身【不含】bandwidth: 该插件属于上游 containernetworking/plugins,
-#        calico-cni 镜像里没有。开了但没装插件 -> 全节点 Pod 建不了 sandbox:
+#      【仅当上游自带该段时才有这处参数化】: 3.28~3.31 上游写了它, 3.32.2 起上游删了 ——
+#      本模板若由 3.32.2+ 生成, conflist 里就没有 bandwidth, calico_enable_bandwidth
+#      置 true 也不产生任何效果(不报错, 但也不限速)。要在 3.32.2+ 上做 Pod 限速,
+#      得另行往 conflist 里加该段, 本脚本不做。
+#      ⚠ calico-cni 镜像【不含】bandwidth 二进制: 该插件属于上游 containernetworking/plugins。
+#        裸着写进 conflist 但没装插件 -> 全节点 Pod 建不了 sandbox:
 #          plugin type="bandwidth" failed (add): failed to find plugin "bandwidth"
-#        需要限速时先让 kube-common 装 cni-plugins 包(见 cni_plugins_* 变量)再置 true。
+#        这正是 3.28~3.31 需要把它包进 if 的原因。需要限速时先让 kube-common 装
+#        cni-plugins 包(见 cni_plugins_* 变量)再置 true。
 #    · calico_dual_ippool_enabled(默认 false)-> 按硬件类型(GPU/CPU)分两个 IPPool。
 #      关闭时行为不变: calico 用 CALICO_IPV4POOL_CIDR/podSubnet 自建单个默认池。
 #      开启时: 加 NO_DEFAULT_POOLS=true, 分池由 calico-ippools.yaml.j2 那两个 IPPool
@@ -181,12 +195,19 @@ open(dst, 'w', encoding='utf-8', newline='').write(HEADER + text)
 print('     参数化结果:')
 expect = {'image:cni': 2, 'image:node': 2, 'image:kube-controllers': 1,
           'CALICO_IPV4POOL_IPIP': 1, 'CALICO_IPV4POOL_VXLAN': 1,
-          'IP_AUTODETECTION_METHOD': 1, 'NO_DEFAULT_POOLS': 1, 'bandwidth': 1}
+          'IP_AUTODETECTION_METHOD': 1, 'NO_DEFAULT_POOLS': 1,
+          # bandwidth 是【条件必需】: 上游自带才要求命中(3.28~3.31), 上游没有就不该要求
+          # (3.32.2 起)。写死成 1 会让 3.32.2 永远"未命中"而无法 --apply。
+          'bandwidth': 1 if HAS_UPSTREAM_BANDWIDTH else 0}
 bad = 0
 for k, want in expect.items():
     got = counts.get(k, 0)
-    flag = 'OK' if got >= 1 else '❌ 未命中'
-    if got < 1:
+    if want == 0:
+        flag = 'SKIP(上游无此段)'
+    elif got >= 1:
+        flag = 'OK'
+    else:
+        flag = '❌ 未命中'
         bad += 1
     print('       %-26s 替换 %d 处 (上游预期约 %d) %s' % (k, got, want, flag))
 if bad:
