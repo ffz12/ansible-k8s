@@ -177,6 +177,49 @@ if HAS_UPSTREAM_BANDWIDTH:
         lambda m: '%s{%% if calico_enable_bandwidth | default(false) | bool %%},\n%s{%% endif %%}'
                   % (m.group(1), m.group(2)), 'bandwidth')
 
+# ---------------------------------------------------------------------------
+# (f) 注入踩坑注释。
+#
+# 为什么需要: 本脚本是"上游 manifest -> 模板"的纯生成器, 生成结果里【只有上游的注释】。
+# 而某些 RBAC 规则为什么必须存在, 是我们踩坑踩出来的知识(见下面每条的 why), 上游注释
+# 一个字都不会提。历史上这些说明是【手工写在模板里】的, 于是每次 --apply 就被冲掉一次,
+# 下个人重新踩坑或重新怀疑。改成由脚本注入: 生成多少次都在, 且随上游变化自动跟随。
+#
+# 匹配策略: 按 apiGroups 行定位, 把注释插在它【前面】。
+#   · 上游删了对应规则 -> 匹配不到 -> 该条注释不注入(不报错)。这是有意的: 规则都没了,
+#     注释留着只会误导。ANP/BANP 在 3.32.2 就是这个情况。
+#   · 不校验 verbs/resources 细节 —— 上游可能扩权(3.32.2 给 kubevirt 那条加了 get),
+#     注释讲的是"为什么要有这条规则", 与具体 verb 无关。
+# 每条都不计入 expect(不是参数化点), 只在下面单独打印命中情况, 便于发现"上游改结构了"。
+NOTES = [
+    ('note:policy.networking',
+     r'(?m)^(\s*)(- apiGroups: \["policy\.networking\.k8s\.io"\])',
+     '''# ⚠ 这条(尤其 clusternetworkpolicies)曾整条漏掉 —— 与本文件头部提到的
+# 9 个 CRD/2 条 ClusterRole 规则是同一次遗漏。现象:
+#   felix 反复 "cannot list resource clusternetworkpolicies ... forbidden"
+#   -> Connection to datastore has failed -> CalculationGraph 永远 not ready
+#   -> readiness 503, calico-node 一直 NotReady, 整个集群没网络。
+# 即便集群里【没有】该 CRD 也必须授权: felix 无条件 watch 它, 拿不到权限就报
+# forbidden; 而 CRD 不存在只会返回空列表(不报错)。所以不能"没装就不授权"。
+# 注: 3.32.2 起上游删了 adminnetworkpolicies/baselineadminnetworkpolicies 两个 CRD
+#     及其授权(CRD 与 RBAC 一起删, 自洽), 只保留 clusternetworkpolicies。'''),
+    # ⚠ kubevirt.io 在 3.32.2 里出现 3 次(另两处是 VM/VMI 的 IPAM 垃圾回收, 语义不同),
+    #   所以必须用 lookahead 限定"紧跟的 resources 块里含 virtualmachineinstancemigrations",
+    #   否则注释会被插到无关的两处上。resources 顺序不固定, 故扫到 verbs 之前都算。
+    ('note:kubevirt',
+     r'(?m)^(\s*)(- apiGroups: \["kubevirt\.io"\])'
+     r'(?=(?:\n\s*(?:resources:|-\s+\w+))*?\n\s*-\s+virtualmachineinstancemigrations\b)',
+     '''# KubeVirt: 虚拟机热迁移期间 felix 需要感知迁移状态。未装 KubeVirt 时该 CRD 不
+# 存在, 授权后 list 返回空, 不再刷 forbidden 噪音 —— 同上, 不能"没装就不授权"。
+# 这条原本是我们手工补的, 3.32.2 起上游已自带(并多给了 get)。'''),
+]
+for key, pat, note in NOTES:
+    def _ins(m, note=note):
+        indent = m.group(1)
+        body = '\n'.join(indent + ln for ln in note.split('\n'))
+        return body + '\n' + m.group(1) + m.group(2)
+    sub(pat, _ins, key)
+
 HEADER = '''# =============================================================================
 #  calico.yaml.j2 —— 由 Calico 官方 v%s manifest 对齐生成, 仅做以下参数化:
 #    · 3 处镜像 -> calico_images.node/.cni/.kube_controllers(走自建 Harbor, 见 defaults.yaml)
@@ -196,6 +239,11 @@ HEADER = '''# ==================================================================
 #      关闭时行为不变: calico 用 CALICO_IPV4POOL_CIDR/podSubnet 自建单个默认池。
 #      开启时: 加 NO_DEFAULT_POOLS=true, 分池由 calico-ippools.yaml.j2 那两个 IPPool
 #      资源接管(单独 apply, 见 roles/cni/tasks/calico.yaml 的 CRD 竞态说明)。
+#
+#  另外注入两段【踩坑注释】(policy.networking.k8s.io / kubevirt.io 两条 RBAC 规则的
+#  why)。它们讲的是"这条规则为什么必须存在", 上游注释一个字都不提, 而这类知识是踩坑
+#  踩出来的。以前手工写在模板里, 每次重新生成就被冲掉一次; 现在由脚本注入, 生成多少
+#  次都在。上游若删了对应规则, 该段注释自动不注入(规则都没了, 留着只会误导)。
 #
 #  ⚠ 本文件由 scripts/gen-calico-template.sh 生成, 【不要手工改】。
 #    升级 calico 版本: scripts/gen-calico-template.sh <新版本> 先看 diff, 再 --apply。
@@ -230,6 +278,16 @@ for k, want in expect.items():
         flag = '❌ 未命中'
         bad += 1
     print('       %-26s 替换 %d 处 (上游预期约 %d) %s' % (k, got, want, flag))
+
+# 踩坑注释的注入情况: 【不计入 bad】, 也不 sys.exit ——
+# 注释是"锦上添花", 上游删了对应规则时不注入才是正确行为(规则没了, 注释留着会误导)。
+# 但要把命中数打出来, 否则"上游改了 apiGroups 写法导致注释静默丢失"没人会发现。
+print('     踩坑注释注入:')
+for key, _pat, _note in NOTES:
+    got = counts.get(key, 0)
+    print('       %-26s 注入 %d 处 %s' % (
+        key, got, 'OK' if got >= 1 else '未注入(上游已无对应规则, 或写法变了 —— 请核对)'))
+
 if bad:
     print('     ❌ 有 %d 处参数化未命中 —— 上游 manifest 结构可能变了, 需人工核对正则' % bad)
     sys.exit(3)
