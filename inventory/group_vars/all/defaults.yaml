@@ -164,14 +164,27 @@ apt_proxy_url: "http://10.2.0.15:3128"
 #   scripts/offline/versions.env.j2 会引用它们 —— 精简版/老版 env.yaml 少写任一项,
 #   gen-offline-versions.yaml 就会 undefined 渲染失败, 连带 prefetch 拿不到版本。
 #   env.yaml 后加载, 写了就覆盖这里, 不影响现有站点。
-k8s_version: "1.34.3"
-containerd_version: "1.7.32"
-runc_version: "1.1.12"
+#
+# ⚠ 2026-09-14 把下面四项抬到新版本(k8s 1.35.8 / containerd 2.3.5 / calico 3.32.2 /
+#   runc 1.5.1)。这【只影响没在自己 env.yaml 里写这些项的站点】—— 写了的照旧。
+#   但没写的站点下次 pull 后会静默换版本, 三处连带后果先记在这:
+#     · containerd 1.7 -> 2.3.5 跨大版本: containerd_config_version 由它派生
+#       (>=2 则 3), 于是 containerd-setup 换用 config.toml.j2(v3 格式, pause 的键名
+#       是 sandbox 而非 sandbox_image)。重跑 containerd-setup 会重写 config.toml
+#       并 notify restart containerd —— 是重启容器运行时, 不是只改配置。
+#     · calico 3.31.3 -> 3.32.2 需要 templates/calico/3.32.2.yaml.j2(已入库, 见
+#       8384ffd), 且离线物料要有 offline/artifacts/cni/calico/v3.32.2/images/。
+#     · k8s 1.34.3 -> 1.35.8 依赖 k8s_compat 的 "1.35" 行(已补, 见 07c64c2), 否则
+#       crictl_version 兜底成补丁版必然 404。
+#   老站点想留在旧版, 在自己 env.yaml 里显式写死对应版本即可。
+k8s_version: "1.35.8"
+containerd_version: "2.3.5"          # >=2 -> containerd_config_version=3(config.toml.j2)
+runc_version: "1.5.1"
 docker_version: "29.4.2"
 buildx_version: "0.32.1"
 compose_version: "2.32.4"
 cri_dockerd_version: "0.3.16"
-calico_version: "3.31.3"
+calico_version: "3.32.2"             # 需 templates/calico/3.32.2.yaml.j2 + v3.32.2 离线物料
 flannel_version: "0.26.7"
 flannel_cni_version: "1.6.2-flannel1"
 cilium_version: "1.16.5"
