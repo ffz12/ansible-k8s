@@ -8,7 +8,13 @@
 # 用法:
 #   ansible-playbook remove-control-key.yaml                          # 撤控制机 -> 全 cluster
 #   ansible-playbook remove-control-key.yaml -e source_node=gpu-001   # 撤 gpu-001 -> 全 cluster
-#   目标可再缩:  -l cpu-001,cpu-002   或   -e target_hosts=gpu
+#   目标可再缩(推荐 target_hosts, 别用 -l):  -e target_hosts=gpu
+#     ⚠ -l 作用于本文件【每个 play】, 会连带过滤掉第一个 play 的 localhost 源 ——
+#       表现为 "skipping: no hosts matched" 后第二个 play 报
+#         object of type 'HostVarsVars' has no attribute '_source_pubkey'
+#       (第一个 play 没跑, fact 从没被设置)。2026-09-14 现场用 -l cpu206 踩到。
+#       非用 -l 不可时【须带上 localhost】:  -l cpu206,localhost
+#       指定了 source_node 时带那台源:      -l cpu206,gpu-001
 #   默认源公钥路径可覆盖: -e control_pubkey_file=/root/.ssh/id_rsa.pub
 
 - name: 取得"源"的 root 公钥(用于精确移除)
@@ -49,6 +55,23 @@
   vars:
     _src_host: "{{ source_node | default('localhost') }}"
   tasks:
+    # 第一个 play 被 --limit 过滤掉时 _source_pubkey 压根不存在, 下面三处 when 会抛
+    #   object of type 'HostVarsVars' has no attribute '_source_pubkey'
+    # —— 那个报错完全看不出真因(实际是 -l 没带 localhost)。这里先明确拦一次。
+    - name: 预检 —— 源公钥 fact 是否取到(拦 -l 漏带源主机的情况)
+      assert:
+        that:
+          - hostvars[_src_host] is defined
+          - "'_source_pubkey' in hostvars[_src_host]"
+        fail_msg: >-
+          取不到源 [{{ _src_host }}] 的公钥 fact —— 本文件第一个 play 没有执行。
+          几乎总是因为 --limit 把它一起过滤了: -l 作用于每个 play, 而第一个 play 的
+          hosts 是 {{ _src_host }}。改用 -e target_hosts=<目标> , 或在 -l 里带上源主机:
+            ansible-playbook playbook/remove-control-key.yaml -l <目标>,{{ _src_host }}
+          (上面那行 "skipping: no hosts matched" 就是第一个 play 被过滤掉的迹象)
+        success_msg: "源 [{{ _src_host }}] 的公钥 fact 已取到"
+      run_once: true
+
     - name: 源无公钥则跳过(无从精确移除)
       debug:
         msg: "源 [{{ _src_host }}] 无 id_rsa.pub, 跳过移除。"
