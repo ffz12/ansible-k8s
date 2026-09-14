@@ -36,6 +36,22 @@
              or (_pre_i_in_cluster.rc != 0 and _pre_i_kubelet_conf.stat.exists) }}
       tags: always
 
+    # ⚠ 必须放在下面 end_host 【之前】, 原因同 k8s-add-node.yaml / k8s-add-master.yaml
+    #   里的同名任务: 已加入的节点会被整台跳过, 放到 roles 里就永远轮不到执行。
+    #
+    # 本 playbook 原先【完全没有】这个 include —— 只有 add-node / add-master 有。后果
+    # (2026-09-14 现网实测): 用本 playbook 装出来的 cpu201/cpu202 hardware=<none>,
+    # 只有 cpu200 有标签(那是 kube-init-master/tasks/init-first-master.yml 单独打首 master)。
+    # 双池 + NO_DEFAULT_POOLS=true 时无标签 = 两个池都不匹配 = 拿不到任何地址,
+    # 该节点上新建 Pod 卡 ContainerCreating。
+    #
+    # ⚠ 注意本任务只负责【对齐已在集群里的节点】: 全新装机时集群还不存在(或本机尚未
+    #   join), kubectl 查不到该 Node, 对齐会被跳过 —— 那种情况由 kube-add-master 里
+    #   "join 后补 hardware 标签"那条兜底。两者互补, 缺一不可。
+    - name: "[Install] 对齐 hardware 标签(Calico 双池选池; 已加入的节点也会被对齐)"
+      include_tasks: "{{ playbook_dir }}/tasks/ensure-hardware-label.yml"
+      tags: always
+
     - name: "[Install] 已加入则整台跳过(-e force_common=true 可强制重跑 kube-common)"
       meta: end_host
       when:

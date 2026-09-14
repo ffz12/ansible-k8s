@@ -13,18 +13,21 @@ KillMode=process
 User=root
 CPUAccounting=true
 MemoryAccounting=true
-# kubelet 名下挂着本机全部容器进程, 不能吃 systemd 的全局默认。
-# 不声明时用 /etc/systemd/system.conf 的 DefaultTasksMax(Ubuntu 默认 15%,
-# 即 kernel.pid_max 的 15%; 本仓库 sysctl.conf 设 pid_max=1000001 -> 约 15 万)。
-# 与 containerd.service / cri-docker.service 的写法对齐 —— 那两个早就声明了
-# TasksMax=infinity, 只有 kubelet 一直漏着, 于是现场靠手工改 system.conf 的
-# DefaultTasksMax 来兜。改在单元里更精准: 只影响 kubelet, 不动这台机器上其它
-# 单元的默认, 也不需要 systemctl daemon-reexec(那是重新执行 PID 1)。
-# ⚠ infinity 等于放弃这层保护, fork 炸弹可打满整机 pid。单 Pod 那层的上限另有
-#   其人管: kubeadm-config 的 podPidsLimit(见 defaults.yaml 的
-#   kubelet_pod_pids_limit, 默认 50000 / kubelet_unlimited_pids 开关)。
-# ⚠ 仅 systemd 226+ 支持 TasksMax; 更老的版本会因无法识别而拒绝加载该单元。
-TasksMax=infinity
+# ⚠ 别在这里加 TasksMax —— 它管不到 Pod。
+#   CRI 架构下 Pod 容器【不在】kubelet.service 的 cgroup 里: containerd 拉起容器,
+#   cgroup 落在 kubepods.slice 下(本单元还是 KillMode=process)。所以在这儿声明
+#   TasksMax 只抬高 kubelet 自己那个进程的上限, 对 Pod 的 pids.max 零影响。
+#   (2026-09-14 曾据此错误前提加过一次, 已撤回。)
+#
+#   Pod pid 上限的真实链路:
+#     containerd config*.toml.j2  SystemdCgroup = true  -> Pod cgroup 由 systemd 管
+#     kubeadm-config.yaml.j2      podPidsLimit
+#       填具体数字 -> kubelet 直接把 pids.max 写进 pod cgroup, 不看 systemd
+#       填 -1       -> kubelet 【不写】, 继承 kubepods.slice -> 落到 systemd 的
+#                      DefaultTasksMax(/etc/systemd/system.conf)
+#   故 -1 反而比填一个大数字【更受限】; 现场在容器内实测到 pids.max=3000 就是这么来的。
+#   要放开单 Pod 上限, 改 defaults.yaml 的 kubelet_pod_pids_limit(默认 50000),
+#   而不是动这个文件。
 
 [Install]
 WantedBy=multi-user.target

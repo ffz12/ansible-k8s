@@ -55,10 +55,14 @@
     # 判定: inventory 的 accelerator_type(nvidia/dcu/npu -> gpu, 未写/none -> cpu);
     # 某台想覆盖自动判定时, 在该主机的 inventory 行加 calico_pool=gpu 或 calico_pool=cpu 即可
     # (不用自己拼 "hardware=xxx" 这种键值对里套键值对的格式)。
+    # ⚠ default(..., true) 的第二个参数不能省 —— 与 ensure-hardware-label.yml、
+    #   kube-add-node、kube-add-master 三处保持一致。省了它时 calico_pool 被定义成
+    #   【空串】(inventory 里写 calico_pool= 很容易出现)会原样返回空串, 渲染成
+    #   `hardware=` 这种空值标签, 而不是回落到 accelerator_type 自动判定。
     - name: 打 hardware 标签(供 Calico 双 IPPool 选池, 仅双池模式)
       command: >
         kubectl label node {{ inventory_hostname }}
-        hardware={{ calico_pool | default('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu'] else 'cpu') }}
+        hardware={{ calico_pool | default('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu'] else 'cpu', true) }}
         --overwrite
       changed_when: false
       when: calico_dual_ippool_enabled | default(false) | bool

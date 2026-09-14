@@ -54,12 +54,31 @@
   changed_when: false
   when: not kubelet_conf.stat.exists
 
-# hardware 标签(Calico 双 IPPool 选池)已移到 playbook/k8s-add-node.yaml 的 pre_tasks,
+# hardware 标签(Calico 双 IPPool 选池)的【对齐】在 playbook 的 pre_tasks 里做,
 # 走共享任务 playbook/tasks/ensure-hardware-label.yml。原因(2026-09-09):
 #   本文件里的任务带 `when: not kubelet_conf.stat.exists`, 而 playbook 的 pre_tasks 里还有
 #   `meta: end_host`(已加入则整台跳过)—— 两层跳过叠加, 导致 join 中途失败过的机器
 #   (kubelet.conf 已落盘)重跑时标签永远补不上, 且【不报错】。现网漏过一台。
 #   放到 end_host 之前 + 内部比对现值才能真正幂等。
+#
+# ⚠ 但 pre_tasks 那次【对刚 join 的这台无效】—— 它跑在 kubeadm join 之【前】, 那时本机
+#   还不在集群里, kubectl 查不到该 Node, 对齐任务被跳过; 等 join 完 play 就结束了。
+#   于是新节点要等【下一次】跑 playbook 才拿到标签(这就是"加完节点得再跑一遍"的由来)。
+#   双池 + NO_DEFAULT_POOLS=true 时无标签 = 两个池都不匹配 = 拿不到任何地址, 该节点上
+#   新建 Pod 卡 ContainerCreating。故此处在 join 【之后】补一次, 与 kube-add-master 对称。
+#   判定表达式与 ensure-hardware-label.yml / init-first-master.yml 保持一致。--overwrite 幂等。
+- name: "[Add Node] join 后补 hardware 标签(Calico 双池选池; 仅双池模式)"
+  command: >
+    kubectl --kubeconfig /etc/kubernetes/admin.conf
+    label node {{ inventory_hostname }}
+    hardware={{ calico_pool | default('gpu' if (accelerator_type | default('none')) in ['nvidia','dcu','npu'] else 'cpu', true) }}
+    --overwrite
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  become: yes
+  changed_when: false
+  when:
+    - calico_dual_ippool_enabled | default(false) | bool
+    - not kubelet_conf.stat.exists
 
 - name: 设置 kubectl 别名 k(软链接,幂等)
   file:
