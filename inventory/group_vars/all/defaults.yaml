@@ -406,7 +406,26 @@ kubelet_rotate_server_cert_gate: true
 #   它由 kubelet 直接写进 pod cgroup, 与 systemd 的默认值无关。
 kubelet_unlimited_pids: false
 
-# calico 封装: none(纯 BGP) / crosssubnet / ipip / vxlan —— 见 env.yaml.example
+# ---- calico 封装模式 ----
+# 取值: ipip(默认) / crosssubnet / vxlan / none
+#   ipip        全程 IPIP 封装。不要求节点二层互通, 跨网段直接能用。
+#   crosssubnet 同子网走纯 BGP(无封装开销), 跨子网才 IPIP。二层互通时性能接近 none。
+#   vxlan       VXLAN 封装。IPIP 被中间设备/云平台挡掉时用它。
+#   none        纯 BGP, 性能最好, 但【要求所有节点二层互通】。
+#
+# ⚠ 2026-09-14 默认从 none 改为 ipip。原先没有这一行, none 是散在各模板里的
+#   `| default('none')` 内联兜底(calico.yaml.j2 两处 + calico-ippools.yaml.j2 四处 +
+#   gen-calico-template.sh)。改成在这里显式声明, 那些内联兜底就都被盖住 ——
+#   要再改只动这一行, 不用去翻 8 个地方。
+#   为什么改: none 要求二层互通, 跨网段部署时表现为"Pod 跨节点不通", 而且不报错、
+#   只能靠 ping 排查(docs/部署说明.md 八.x 那段就是为此写的)。ipip 无此前提, 装完就通,
+#   代价是每包 20 字节封装开销。默认值应该选"装完能用", 而不是"性能最好但有前提"。
+#
+# ⚠ 改这个值会让 calico-node 重启并重建数据面(IPPool 的 ipipMode/vxlanMode 变更)。
+#   已跑起来且当前模式够用的集群【不要动】—— 在自己 env.yaml 里显式写死当前值即可。
+#   两个池共用本项, 分别渲染成各自的 ipipMode / vxlanMode, 不能按池分别设。
+calico_encapsulation: ipip
+
 # CNI conflist 是否启用 bandwidth 插件(Pod 限速: kubernetes.io/{ingress,egress}-bandwidth 注解)。
 # ⚠ 默认 false —— 与现网生产集群(calico 3.27, conflist 本就无此段)行为一致。
 #   calico-cni 镜像【不含】bandwidth 二进制(镜像里只有 calico/calico-ipam/flannel/host-local/
