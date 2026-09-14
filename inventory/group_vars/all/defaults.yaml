@@ -387,9 +387,23 @@ kubelet_rotate_server_cert_gate: true
 # ⚠ 若你的 env.yaml 里还留着这两行, 删掉即可 —— 它们现在【不被任何代码读取】,
 #   留着会让人误以为改它们能调整 sysctl。改这 13 项请直接改 files/sysctl.conf。
 #
-# kubelet: podPidsLimit: -1(不限) + serializeImagePulls: false(并行拉镜像)
-# ⚠ -1 等于【放弃单 Pod 进程数上限】, fork 炸弹可打满整机 pid。
-#   本仓库默认 kubelet_pod_pids_limit=50000(既够用又留保护); 仅在明确需要不限时打开。
+# kubelet: podPidsLimit: -1 + serializeImagePulls: false(并行拉镜像)
+#
+# ⚠ -1 【不是】"不限" —— 这里原先写"等于放弃单 Pod 进程数上限"是不准确的。
+#   本仓库 containerd 配的是 SystemdCgroup = true(见 containerd-setup 的 config*.toml.j2),
+#   Pod 的 cgroup 由 systemd 管, 于是:
+#     podPidsLimit 填【具体数字】-> kubelet 直接把 pids.max 写进 pod cgroup, 不看 systemd
+#     podPidsLimit 填 -1        -> kubelet 【不写】, 继承 kubepods.slice
+#                                  -> 落到 systemd 的 DefaultTasksMax(/etc/systemd/system.conf)
+#   所以 -1 反而可能【比填一个大数字更受限】。2026-09-14 现网在容器内实测 pids.max=3000
+#   就是这么来的 —— 当时 kubelet 已是 -1, 但 Pod 仍被 systemd 的默认值卡住。
+#
+#   本仓库 init role 现在会把 DefaultTasksMax 设成 infinity(见 roles/init/tasks/common.yaml
+#   的 init_set_default_tasks_max), 所以 -1 在【本仓库装的新节点】上确实接近"不限"。
+#   但那依赖 init 跑过且 kubepods.slice 是在那之后创建的 —— 存量节点/别人装的集群不保证。
+#
+#   要一个【确定】的上限, 用 kubelet_pod_pids_limit(默认 50000)比 -1 更可控:
+#   它由 kubelet 直接写进 pod cgroup, 与 systemd 的默认值无关。
 kubelet_unlimited_pids: false
 
 # calico 封装: none(纯 BGP) / crosssubnet / ipip / vxlan —— 见 env.yaml.example

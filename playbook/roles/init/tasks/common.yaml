@@ -145,6 +145,64 @@
     marker: "# Ansible inventory  {mark}"
   tags: [limits]
 
+# ============================================================================
+#  systemd 全局 TasksMax —— Pod pid 上限的最后一环
+#
+#  为什么要在这儿改: 本仓库 containerd 配的是 SystemdCgroup = true, Pod 的 cgroup 由
+#  systemd 管。kubeadm-config 的 podPidsLimit 填 -1 时 kubelet 【不写】pod cgroup 的
+#  pids.max, 于是继承 kubepods.slice -> 落到 /etc/systemd/system.conf 的 DefaultTasksMax
+#  (Ubuntu 默认注释掉当文档用: #DefaultTasksMax=15%, 即 kernel.pid_max 的 15%)。
+#  2026-09-14 现网在容器内实测 pids.max=3000 就是这么来的 —— kubelet 已经是 -1 了,
+#  但 Pod 仍被 systemd 的默认值卡住。此前只能手工:
+#      sed -i 's/^DefaultTasksMax=.*/DefaultTasksMax=infinity/' /etc/systemd/system.conf
+#      && systemctl daemon-reexec
+#  ⚠ 那条手工命令在 Ubuntu 上其实是【静默空转】的: '^DefaultTasksMax=' 匹配不到被注释
+#    的那行, 而 && 后面的 daemon-reexec 照样成功、shell 模块又总报 changed, 看着像做成了。
+#    cpu200 实测 grep 出来仍是 "#DefaultTasksMax=15%" —— 从未被改过。
+#    用 lineinfile + '^[#\s]*DefaultTasksMax=' 才能同时命中注释行与已生效行, 且幂等。
+#
+#  ⚠ 时机很关键: DefaultTasksMax 只在 systemd 【创建】单元/slice 那一刻被读取, 不会
+#    追溯修改已存在的 slice。所以:
+#      · 在 init 阶段(k8s 还没装, kubepods.slice 尚不存在)改好 -> 之后 slice 首次创建
+#        就直接继承 infinity, 【不需要 daemon-reexec, 也不用重启任何东西】。这是本任务
+#        放在 init role 里的理由。
+#      · 在【已跑起来】的节点上改 -> 必须 daemon-reexec 让 PID 1 重读, 且已存在的
+#        kubepods.slice 与在跑的 Pod 拿不到新值, 只有新建的 Pod 才会用上; 存量 Pod
+#        要生效只能重启节点。故本任务【不自动 daemon-reexec】—— 那是重新执行 PID 1,
+#        影响整台机器所有单元, 不该在一个"顺手改配置"的任务里悄悄做。改到了就打印提示,
+#        由人决定时机。
+#
+#  ⚠ infinity 等于放弃这层保护, fork 炸弹可打满整机 pid(kernel.pid_max=1000001)。
+#    要一个确定的上限, 用 kubelet_pod_pids_limit(默认 50000, 由 kubelet 直接写进 pod
+#    cgroup, 与本项无关)比依赖 podPidsLimit=-1 + 本项更可控。
+#    不想放开本项的站点: env.yaml 里 init_set_default_tasks_max: false。
+# ============================================================================
+- name: 放开 systemd 全局 TasksMax(Pod pid 上限的最后一环; init_set_default_tasks_max 可关)
+  when: init_set_default_tasks_max | default(true) | bool
+  tags: [limits]
+  block:
+    - name: 设置 DefaultTasksMax(同时命中注释行, 幂等)
+      lineinfile:
+        path: /etc/systemd/system.conf
+        # 同时匹配 "#DefaultTasksMax=15%" 与 "DefaultTasksMax=xxx", 故用 [#\s]*
+        regexp: '^[#\s]*DefaultTasksMax='
+        line: "DefaultTasksMax={{ init_default_tasks_max | default('infinity') }}"
+        backup: yes
+      register: init_tasks_max
+
+    - name: 提示 —— 本次改动何时生效
+      debug:
+        msg: >-
+          已把 /etc/systemd/system.conf 的 DefaultTasksMax 设为
+          {{ init_default_tasks_max | default('infinity') }}。
+          该值只在 systemd 【创建】单元/slice 时读取:
+          若本机还没装 k8s(init 阶段的正常情况), 之后 kubepods.slice 首次创建即继承新值,
+          无需任何额外动作;
+          若本机【已在跑 k8s】, 则需 `systemctl daemon-reexec` 让 PID 1 重读, 且已存在的
+          kubepods.slice 与在跑的 Pod 拿不到新值(只有新建 Pod 会用上), 存量 Pod 要生效
+          只能重启节点。核对实际生效值: `systemctl show --property DefaultTasksMax`。
+      when: init_tasks_max is changed
+
 - name: 关闭当前已启用的 swap
   shell: "swapoff -a"
   ignore_errors: true

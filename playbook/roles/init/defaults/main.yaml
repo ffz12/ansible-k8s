@@ -12,3 +12,20 @@ is_offline: false
 # 手工编辑它删不掉(随时被重写), 必须删源头 drop-in。
 init_config_dns: false
 
+# 是否把 /etc/systemd/system.conf 的 DefaultTasksMax 放开(默认 true = 放开成 infinity)。
+#
+# 为什么默认打开: 本仓库 containerd 是 SystemdCgroup = true, Pod 的 cgroup 由 systemd 管。
+# kubeadm-config 的 podPidsLimit 填 -1 时 kubelet 不写 pod cgroup 的 pids.max, 于是继承
+# kubepods.slice -> 落到本项。Ubuntu 默认是注释掉的 #DefaultTasksMax=15%(kernel.pid_max
+# 的 15%), 2026-09-14 现网在容器内实测 pids.max=3000 就是被它卡住的。此前靠手工 sed +
+# daemon-reexec 兜, 且那条 sed 匹配不到注释行、其实一直空转。详见 tasks/common.yaml 里
+# 「systemd 全局 TasksMax」那段。
+#
+# ⚠ infinity 等于放弃这层保护(fork 炸弹可打满整机 pid, kernel.pid_max=1000001)。
+#   不想放开的站点置 false; 想给个确定上限的把 init_default_tasks_max 设成具体数字,
+#   或者干脆别用 podPidsLimit=-1 —— 用 kubelet_pod_pids_limit(默认 50000)由 kubelet
+#   直接写进 pod cgroup, 与本项无关, 更可控。
+init_set_default_tasks_max: true
+# 放开成什么值。infinity = 不限; 也可填具体数字(如 500000)或百分比(如 "80%")。
+init_default_tasks_max: infinity
+
