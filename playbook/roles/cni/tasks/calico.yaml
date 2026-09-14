@@ -76,6 +76,9 @@
   register: _calico_tmpl_avail
   changed_when: false
   failed_when: false
+  # 纯只读(ls/sed/sort), 必须在 --check 下也执行 —— 否则 register 拿不到 stdout,
+  # 下面 fail_msg 里那句"仓库里现有"永远是空的, 报错信息失去大半价值。
+  check_mode: false
   run_once: true
   delegate_to: localhost
   become: false
@@ -114,6 +117,12 @@
   register: _calico_tmpl_ver
   changed_when: false
   failed_when: false
+  # ⚠ check_mode: false 是【必须】的, 不是优化。--check 模式下 shell/command 默认【不执行】
+  #   (ansible 无法判断命令有没有副作用, 一律跳过) -> register 拿不到 stdout ->
+  #   下面 assert 拿 "" 与 calico_version 比 -> 必然失败, 报"模板里的标记是空"。
+  #   于是任何 --check 都在这里死掉, 连后面渲染那步都验不到。2026-09-14 实测踩到。
+  #   本任务是纯只读(grep/sed/tr), 在 check 下照常执行是安全的。
+  check_mode: false
   run_once: true
   delegate_to: localhost
   become: false
