@@ -76,6 +76,12 @@
 [node_to_delete]
 [etcd_to_add]
 [etcd_to_delete]
+# ⚠ [master_to_delete] 只作用于 LB 层(haproxy/keepalived), 与删 k8s master 无关 —— 名字是历史遗留。
+#   用途: lb-haproxy-scale-remove.yaml 用它定位"要卸载 LB 的机器"(停服务/删配置/卸软件包)。
+#   删 k8s 节点走 [node_to_delete] + k8s-del-node.yaml, 两条线互不相干
+#   (playbook/k8s-*.yaml 里没有任何一处引用本组)。
+#   ⚠ 本组未声明时 groups['master_to_delete'] 走 default([]) -> 卸载 play 静默 skip,
+#     playbook 仍退出 0(看着成功, 其实被删节点上服务还在跑)。缩容 LB 前先确认这里有声明。
 [master_to_delete]
 
 # ---- GPU:有算力节点时用。[gpu]=打"有GPU"标签(角色自动判 gpu); [gpu_driver]=装驱动/升内核 ----
