@@ -40,12 +40,14 @@
 # 且 nodelocaldns / conntrack 相关调优的前提也不成立。
 # nf_conntrack: 新内核叫 nf_conntrack, 4.18 之前叫 nf_conntrack_ipv4, 两个都试一下。
 # 本机是 iptables 模式时加载这些也无害(只是多几个模块常驻)。
-- name: modprobe ipvs 相关内核模块(ip_vs* / nf_conntrack)
+# nftables 模式不需要 ip_vs*, 故只加载 nf_conntrack(conntrack 三种模式都要)。
+- name: modprobe 内核模块(nf_conntrack always; ip_vs* 仅非 nftables 模式)
   shell: |
-    for m in ip_vs ip_vs_rr ip_vs_wrr ip_vs_sh nf_conntrack nf_conntrack_ipv4; do
+    for m in {{ 'nf_conntrack nf_conntrack_ipv4' if (kube_proxy_mode | default('iptables')) == 'nftables'
+                else 'ip_vs ip_vs_rr ip_vs_wrr ip_vs_sh nf_conntrack nf_conntrack_ipv4' }}; do
       modprobe "$m" 2>/dev/null || true
     done
-    # 至少 ip_vs 必须在, 否则 ipvs 模式起不来
+    # 至少 ip_vs 必须在, 否则 ipvs 模式起不来(nftables 模式下这行会是 IPVS_MISSING, 但下面的 assert 会跳过)
     lsmod | grep -q '^ip_vs' && echo IPVS_OK || echo IPVS_MISSING
   args:
     executable: /bin/bash

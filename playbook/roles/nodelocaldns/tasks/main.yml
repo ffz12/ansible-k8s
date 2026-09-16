@@ -16,9 +16,9 @@
 - name: "[NodeLocalDNS] 校验 kube-proxy 模式取值合法"
   assert:
     that:
-      - kube_proxy_mode | default('iptables') in ['iptables', 'ipvs']
+      - kube_proxy_mode | default('iptables') in ['iptables', 'ipvs', 'nftables']
     fail_msg: >-
-      kube_proxy_mode 必须是 iptables 或 ipvs, 当前={{ kube_proxy_mode | default('iptables') }}
+      kube_proxy_mode 必须是 iptables / ipvs / nftables, 当前={{ kube_proxy_mode | default('iptables') }}
 
 # dns_domain 进 Corefile 的 <dns_domain>:53 区块, 必须与集群实际域名一致 ——
 # 不一致会导致 Pod 解析 svc.cluster.local 全部失败。它【建完集群不可改】(进了 apiserver

@@ -503,7 +503,15 @@ apiserver_lb_port: 8443
 # env.yaml 后加载, 写了仍然覆盖这里; 这里只保证"不写也不炸"。
 #
 # ⚠ pod_subnet / service_subnet 不在这里兜底(见上方那段说明), 改走 role 内预检 assert。
-kube_proxy_mode: ipvs                    # ipvs(默认,需内核 ip_vs 模块) / iptables(无 ipvs 时退回)
+# kube_proxy_mode 取值: ipvs(当前默认,需内核 ip_vs 模块) / iptables / nftables
+# ⚠ ipvs 上游已弃用(KEP-5495): 1.35 弃用 -> 1.40 默认禁用 -> 1.43 移除。理由是 ipvs 从未真正
+#   摆脱 iptables(内核 IPVS API 实现不了完整 Service 语义, 底下仍在写 iptables 规则)。
+#   此处默认暂留 ipvs 以保证存量站点零影响; 新站点建议 nftables。
+# nftables: 1.33 GA, 要求【内核 5.13+ 且 nft 1.0.1+】。老内核发行版(麒麟/openEuler 等)可能不满足,
+#   上手前逐节点查 uname -r 与 nft --version; 不满足就继续用 ipvs 或 iptables。
+#   ⚠ 非 ipvs 的 drop-in 替换: KEP-3866 记了 NodePort 地址绑定、从 localhost 访问 NodePort 的行为差异,
+#   换之前先在测试环境实测。注: 上游默认仍是 iptables, 既不是 ipvs 也不是 nftables。
+kube_proxy_mode: ipvs
 # kubelet 资源预留 / 驱逐阈值 / 日志与关机宽限。这些是【调优值】, 按机型该调:
 #   AI 大节点常调 kubelet_max_pods 与两组 *_reserved_*; 调之前先看清各项含义。
 kubelet_cpu_manager_policy: "none"       # none(通用) / static(CPU 绑核, 仅 AI 物理机)
