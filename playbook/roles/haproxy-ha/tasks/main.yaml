@@ -2,6 +2,33 @@
 # 离线: haproxy/keepalived 已随基础包(ios-offline)一起下好并进本地源(init 已配好本地 yum/apt 源),
 #       这里直接从该本地源【按名安装】—— 不再单独打 lb-offline 包。nginx-ha 走 bundled 二进制, 与此无关。
 # 前提: LB 节点已先跑过 init(base), /opt/<distro>-pkgs 与本地源就位; 下面对 RPM 会幂等重写 repo 以便独立重跑。
+#
+# 2026-09-16: 支持 lb_proxy=keepalived-only —— 只跑 keepalived, 不装不配 haproxy。
+#   那种形态下 VIP 直接落到某台 master 的 apiserver(kubeadm-config 里 bind-address 0.0.0.0,
+#   VIP 漂到哪台那台就在 VIP:6443 应答), 有故障转移、无负载均衡。
+#   ⚠ 必须【真跳过】haproxy 安装而不是装着不用: keepalived-only 时 endpoint 端口是 6443,
+#     若 haproxy 也配成 bind 6443 会与 apiserver 抢端口起不来。
+#   健康检查随形态自动切换(见 templates/check_entry.sh 与 keepalived.conf.j2 的 _lb_entry_port)。
+
+- name: 校验 lb_proxy 取值
+  assert:
+    that: (lb_proxy | default('haproxy')) in ['haproxy', 'keepalived-only']
+    fail_msg: >-
+      lb_proxy 必须是 haproxy 或 keepalived-only, 当前={{ lb_proxy | default('haproxy') }}
+    success_msg: "LB 形态: {{ lb_proxy | default('haproxy') }}"
+  run_once: true
+
+- name: 设置本次是否需要 haproxy
+  set_fact:
+    _lb_need_haproxy: "{{ (lb_proxy | default('haproxy')) == 'haproxy' }}"
+
+# 入口端口: haproxy 模式探 haproxy 前端(apiserver_lb_port), keepalived-only 探 apiserver 自己。
+# ⚠ 必须在这里 set_fact 而【不能】在模板里 {% set %} —— keepalived.conf.j2 与 check_entry.sh
+#   是两个模板, 后者读不到前者的局部变量, 会渲出 PORT="" 让检查恒失败。而恒失败的症状是
+#   静默的: 三台降权一致 -> 相对优先级不变 -> VIP 照样落首台, 看着正常却永远检测不到故障。
+- name: 设置入口健康检查端口
+  set_fact:
+    _lb_entry_port: "{{ apiserver_lb_port if (_lb_need_haproxy | bool) else apiserver_port }}"
 
 - name: (离线) 计算 LB 本地源 os/arch 标签
   set_fact:
@@ -35,17 +62,18 @@
     - is_offline | bool
     - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
 
-- name: (离线-RPM) 从本地源安装 haproxy+keepalived
-  shell: yum install -y --disablerepo="*" --enablerepo="local-offline" haproxy keepalived
+# 包列表随形态变: keepalived-only 时不装 haproxy。
+- name: (离线-RPM) 从本地源安装 {{ 'haproxy+keepalived' if _lb_need_haproxy | bool else 'keepalived' }}
+  shell: >-
+    yum install -y --disablerepo="*" --enablerepo="local-offline"
+    {{ 'haproxy keepalived' if _lb_need_haproxy | bool else 'keepalived' }}
   when:
     - is_offline | bool
     - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
 
-- name: (离线-DEB) 从本地源安装 haproxy+keepalived(源由 init 写入 file:///opt/ubuntu-offline-pkgs)
+- name: (离线-DEB) 从本地源安装 {{ 'haproxy+keepalived' if _lb_need_haproxy | bool else 'keepalived' }}(源由 init 写入 file:///opt/ubuntu-offline-pkgs)
   apt:
-    name:
-      - haproxy
-      - keepalived
+    name: "{{ ['haproxy', 'keepalived'] if _lb_need_haproxy | bool else ['keepalived'] }}"
     state: present
     update_cache: yes
     allow_unauthenticated: true
@@ -53,11 +81,9 @@
     - is_offline | bool
     - ansible_distribution in ['Debian', 'Ubuntu']
 
-- name: (在线) yum安装haproxy/keepalived
+- name: (在线) yum 安装 {{ 'haproxy/keepalived' if _lb_need_haproxy | bool else 'keepalived' }}
   yum:
-    name:
-      - haproxy
-      - keepalived
+    name: "{{ ['haproxy', 'keepalived'] if _lb_need_haproxy | bool else ['keepalived'] }}"
     state: present
   when:
     - not is_offline | bool
@@ -65,11 +91,9 @@
 
 # 修复: 原来 state/update_cache/allow_unauthenticated 缩进在 task 层级(非法关键字),
 #       现已全部移到 apt: 模块下。
-- name: (在线) apt安装haproxy/keepalived
+- name: (在线) apt 安装 {{ 'haproxy/keepalived' if _lb_need_haproxy | bool else 'keepalived' }}
   apt:
-    name:
-      - haproxy
-      - keepalived
+    name: "{{ ['haproxy', 'keepalived'] if _lb_need_haproxy | bool else ['keepalived'] }}"
     state: present
     update_cache: yes
     allow_unauthenticated: true
@@ -96,15 +120,22 @@
     dest: /etc/keepalived/keepalived.conf
   #notify: restart keepalived
 
-# 学习 nginx-ha: 把健康检查脚本真正部署到节点(原来 keepalived 引用了它却从没拷贝过去)
-- name: 部署 haproxy 健康检查脚本
+# 健康检查脚本: 探本机入口端口的 /livez。端口随 lb_proxy 变(haproxy 前端 8443 / apiserver 6443),
+# 由模板内的 _lb_entry_port 决定 —— 与 keepalived.conf.j2 里 vrrp_script 的口径一致。
+- name: 部署入口健康检查脚本
   template:
-    src: check_haproxy.sh
-    dest: /etc/keepalived/check_haproxy.sh
+    src: check_entry.sh
+    dest: /etc/keepalived/check_entry.sh
     owner: root
     group: root
     mode: "0755"
   #notify: restart keepalived
+
+# 旧脚本(只看 haproxy 进程名, 见 check_entry.sh 头部说明)已被取代, 清掉避免留下误导。
+- name: 清理已废弃的 check_haproxy.sh
+  file:
+    path: /etc/keepalived/check_haproxy.sh
+    state: absent
 
 - name: copy haproxy.cfg
   template:
@@ -112,6 +143,7 @@
     dest: /etc/haproxy/haproxy.cfg
     owner: haproxy
     group: haproxy
+  when: _lb_need_haproxy | bool
   #notify: restart haproxy
 
 # haproxy.cfg 里 stats socket 在 /run/haproxy/admin.sock; /run 是 tmpfs, 重启即空。
@@ -125,6 +157,7 @@
     owner: root
     group: root
     mode: '0644'
+  when: _lb_need_haproxy | bool
 
 - name: 本次立即创建 /run/haproxy(不等下次开机)
   file:
@@ -133,6 +166,7 @@
     owner: haproxy
     group: haproxy
     mode: '0755'
+  when: _lb_need_haproxy | bool
 
 # chroot 目录缺失同样会让 haproxy 起不来(一般随 rpm 建好, 这里兜底保证幂等)
 - name: 确保 chroot 目录 /var/lib/haproxy 存在
@@ -142,6 +176,7 @@
     owner: haproxy
     group: haproxy
     mode: '0755'
+  when: _lb_need_haproxy | bool
 
 - name: daemon-reload
   systemd:
@@ -153,18 +188,18 @@
     state: restarted
     enabled: true
   ignore_errors: true
-  loop:
-    - haproxy
-    - keepalived
+  loop: "{{ ['haproxy', 'keepalived'] if _lb_need_haproxy | bool else ['keepalived'] }}"
 
 - name: 检查haproxy状态
   shell: "systemctl status haproxy |grep 'Active:'"
   register: haproxy_status
   changed_when: false
+  when: _lb_need_haproxy | bool
 
 - name: 输出haproxy状态
   debug:
     msg: "{{ haproxy_status.stdout }}"
+  when: _lb_need_haproxy | bool
 
 # 修复: 原来这里也写的 status haproxy(复制粘贴漏改),应为 keepalived
 - name: 检查keepalived状态
@@ -175,3 +210,13 @@
 - name: 输出keepalived_status状态
   debug:
     msg: "{{ keepalived_status.stdout }}"
+
+# keepalived-only 时给出明确提示: 没有 haproxy 意味着没有负载均衡, 且 endpoint 端口是 6443。
+- name: (keepalived-only) 形态说明
+  debug:
+    msg: >-
+      lb_proxy=keepalived-only: 只装了 keepalived, 未装 haproxy。
+      VIP {{ lbvip | default('(未设)', true) }} 直接落到持有它的那台 master 的 apiserver
+      ({{ apiserver_port }})—— 有故障转移, 【无负载均衡】(全部请求打到持 VIP 的那一台)。
+      健康检查探本机 127.0.0.1:{{ apiserver_port }}/livez。
+  when: not (_lb_need_haproxy | bool)

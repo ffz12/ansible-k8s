@@ -7,8 +7,14 @@ global_defs {
    script_user root             # 指定执行脚本的用户
 }
 
-vrrp_script chk_haproxy {
-    script "/etc/keepalived/check_haproxy.sh"
+{# _lb_entry_port 由 tasks/main.yaml 的 set_fact 提供(不在这里 {% set %} —— check_entry.sh
+   是另一个模板, 读不到本模板的局部变量, 会渲出 PORT="" 让检查恒失败) #}
+vrrp_script chk_entry {
+    # 探【本机】入口端口 {{ _lb_entry_port }} 的 /livez。
+    # 原 check_haproxy.sh 是 `ss -lntp | grep -q haproxy` —— 只看进程名, 8443 前端绑失败但
+    # 1080 stats 起来了也算通过; 且 keepalived-only 形态下没有 haproxy 进程, 那个脚本恒失败
+    # (三台降权一致 -> 相对优先级不变 -> VIP 照样落首台, 看着正常却永远检测不到 apiserver 死掉)。
+    script "/etc/keepalived/check_entry.sh"
     interval 2              # 检测间隔
     timeout 2              # 脚本超时(避免卡死)
     rise 2                 # 连续成功 2 次才认为恢复
@@ -80,7 +86,7 @@ vrrp_instance VI_1 {
 
     # 健康检查绑定
     track_script {
-        chk_haproxy
+        chk_entry
     }
 
     # 附加跟踪接口(网卡故障时触发切换)

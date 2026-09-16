@@ -22,6 +22,8 @@
   loop:
     - /etc/haproxy/haproxy.cfg
     - /etc/keepalived/keepalived.conf
+    - /etc/keepalived/check_entry.sh
+    # 2026-09-16 起健康检查脚本改名为 check_entry.sh; 旧名留在这里以便清理历史遗留。
     - /etc/keepalived/check_haproxy.sh
 
 - name: 卸载 haproxy / keepalived 软件包(RedHat 系)
