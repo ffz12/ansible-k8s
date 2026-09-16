@@ -45,6 +45,41 @@
         - _m_already_joined | bool
         - not (force_common | default(false) | bool)
       tags: always
+
+    # 预检 controlPlaneEndpoint: 放在 end_host 之后(已加入的节点无需再查)、roles 之前。
+    # 集群没这一项时 kubeadm 会在 join 的 preflight 拒绝, 但那已经是 kube-common 跑完之后 ——
+    # 白装一遍二进制、白下发一遍 kubelet 配置才看到一句英文报错(2026-09-16 现网 ok=26 changed=11)。
+    - name: "[Add Master] 预检: 读集群 kubeadm-config 的 controlPlaneEndpoint"
+      shell: >-
+        kubectl --kubeconfig {{ kube_config_dir }}/admin.conf -n kube-system
+        get cm kubeadm-config -o jsonpath='{.data.ClusterConfiguration}'
+        | grep -i controlPlaneEndpoint || true
+      delegate_to: "{{ groups['k8s_master'][0] }}"
+      become: yes
+      register: _pre_m_cp_endpoint
+      changed_when: false
+      failed_when: false
+      tags: always
+
+    # rc!=0 表示 kubectl 本身没跑通(集群还没建等), 判定不了就不拦, 交给后面的流程报错。
+    - name: "[Add Master] 预检: 集群必须有 controlPlaneEndpoint 才能加 master"
+      assert:
+        that:
+          - (_pre_m_cp_endpoint.stdout | default('') | trim | length) > 0
+        fail_msg: >-
+          本集群的 kubeadm-config 里没有 controlPlaneEndpoint, kubeadm 会拒绝加入新 master
+          ("unable to add a new control plane instance to a cluster that doesn't have a stable
+          controlPlaneEndpoint address")。原因: 建集群时是单 master 且未设 lbvip, kubeadm 省略了该项;
+          它写进 ConfigMap 与证书 SAN, 【事后不可改】。
+          出路: (1) 重建集群 —— env.yaml 设 lbvip(有 VIP 能力填真 VIP 并跑 LB; 有外部 LB 填其地址且
+          [k8slb] 留空、注意 apiserver_lb_port 要对上其监听端口; 都没有可先填首 master 的 IP,
+          endpoint 存在即可加 master, 入口仍是单点); 或 (2) 手工补 endpoint —— 改 ConfigMap +
+          重签 apiserver 证书 + 更新每节点四份 kubeconfig + 重启控制面(本仓库无对应工具, 全手工);
+          或 (3) 维持单 master。
+          注: 本预检是 2026-09-16 之后加的; 该日之后新建的集群已无条件写 endpoint, 不会再有此问题。
+        success_msg: "controlPlaneEndpoint 预检通过: {{ _pre_m_cp_endpoint.stdout | trim }}"
+      when: _pre_m_cp_endpoint.rc == 0
+      tags: always
   roles:
     - kubernetes/kube-common
     - kubernetes/kube-add-master

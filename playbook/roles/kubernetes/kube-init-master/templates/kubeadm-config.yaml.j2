@@ -29,9 +29,10 @@ timeouts:
 ---
 # === ClusterConfiguration ===
 apiVersion: kubeadm.k8s.io/v1beta4
-{% if has_lbvip | bool %}
-controlPlaneEndpoint: "{{ lbvip }}:{{ apiserver_lb_port }}"
-{% endif %}
+{# 无条件写: 原先只在 has_lbvip 时写, 单 master 的 ConfigMap 里没这项, 而 kubeadm 拒绝向
+   无 controlPlaneEndpoint 的集群 join 新 master -> 事后加 master 只能重建(2026-09-16 踩到)。
+   有 VIP 时渲染结果与改动前一致; 无 VIP 渲成"首 master:6443"(仍是单点, 但加 master 不必重建)。 #}
+controlPlaneEndpoint: "{{ apiserver_entry_host }}:{{ apiserver_entry_port }}"
 caCertificateValidityPeriod: 876000h
 certificateValidityPeriod: 876000h
 certificatesDir: /etc/kubernetes/pki
