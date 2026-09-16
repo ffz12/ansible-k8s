@@ -1,0 +1,70 @@
+# playbook/tasks/ensure-cp-endpoint-hosts.yml
+# 幂等确保 controlPlaneEndpoint 的域名在本机 /etc/hosts 有解析。
+# 只在 cp_endpoint_domain 非空时做事; 默认空 = 整块跳过, 存量站点零影响。
+#
+# 为什么每个节点都要: controlPlaneEndpoint 写进【每个节点】的 kubelet.conf 与各组件
+# kubeconfig, 所以 master 和 worker 都要能解析这个名字, 不是只有首 master。
+#
+# 为什么做成共享任务(单一写入方 + 命名 marker + 先清旧块):
+#   playbook/tasks/ensure-harbor-hosts.yml 的注释里记了一次真实事故 —— 同一份解析被三处
+#   各写一遍、marker 还不一致, 机器上留着新旧两份块。内容相同时看不出问题, 但改了 IP 时
+#   【旧块不会被更新】, 而它在 /etc/hosts 里可能排在前面 —— 解析取第一条, 于是被旧值带偏。
+#   endpoint 域名会踩同样的坑(以后把域名从首 master 指到 VIP 时), 故照那套做法办。
+#
+# 两个调用点:
+#   · roles/kubernetes/kube-common —— 建集群/加节点时自动覆盖所有会有 kubelet.conf 的节点
+#   · playbook/cp-endpoint-hosts.yaml —— 独立入口, 改解析目标时跑(kube-common 在已建好的
+#     集群上会被"已加入则整台跳过"拦掉, 而 -e force_common=true 会连带重装二进制、重下发
+#     kubelet 配置、逐台重启 kubelet —— 为改一行 hosts 抖动整个控制面不划算)
+# 同一个 marker 从两处调用不违反上面那个教训: blockinfile 幂等, 会收敛到同一份块。
+
+- name: "[CP Endpoint] 校验域名与解析目标都有值"
+  assert:
+    that:
+      - (cp_endpoint_domain | default('') | trim | length) > 0
+      - (cp_endpoint_target | default('') | trim | length) > 0
+    fail_msg: >-
+      cp_endpoint_domain 非空但 cp_endpoint_target 为空(或反之)。
+      两者必须同时有值 —— /etc/hosts 一行要「<IP> <域名>」两截。
+      少了 IP 的话渲出来是一行孤零零的域名, /etc/hosts 会把整行当无效记录【静默忽略】:
+      不报错, 但解析照样不通(harbor 那边踩过, 见 ensure-harbor-hosts.yml)。
+      cp_endpoint_target 默认取 lbvip 或首 master 的 ansible_host, 正常不会为空。
+  run_once: true
+
+# 解析目标必须是 IP: /etc/hosts 左边填域名的话整行无效, 而且是静默的。
+- name: "[CP Endpoint] 校验解析目标是 IP 而非域名"
+  assert:
+    that:
+      - cp_endpoint_target | regex_search('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')
+    fail_msg: >-
+      cp_endpoint_target 必须是 IP, 当前是 "{{ cp_endpoint_target }}"。
+      它是 /etc/hosts 那行的【左边】; 填域名会渲成「<域名> <域名>」, 整行被静默忽略。
+      要改 endpoint 的名字请改 cp_endpoint_domain; 要改它解析到哪请把 cp_endpoint_target
+      设成目标 IP(VIP 或某台 master 的地址)。
+  run_once: true
+
+# .local 是 mDNS(RFC 6762)保留域, systemd-resolved 可能走 mDNS 而不查 hosts。
+# 本仓库既有约定是 .local.clusters(harbor 就是 harbor.local.clusters)。
+# 只告警不拦 —— 实际 /etc/hosts 在 NSS 顺序里通常排在 mdns 前面, 多半还是能通。
+- name: "[CP Endpoint] 提示 —— 域名以 .local 结尾有 mDNS 风险"
+  debug:
+    msg: >-
+      ⚠ cp_endpoint_domain="{{ cp_endpoint_domain }}" 以 .local 结尾。该后缀是 mDNS 保留域,
+      systemd-resolved 可能走 mDNS 解析而不查 /etc/hosts。建议改用 .local.clusters
+      (与 harbor 一致)或 .internal / .home.arpa。
+  when: cp_endpoint_domain is search('\.local$')
+  run_once: true
+
+# 先清旧块再写新块, 顺序要紧: 反过来的话同一次运行里文件中会短暂存在两份。
+# 目前没有历史 marker 需要清(本任务是该解析的首个写入方), 保留此步是为了将来 marker
+# 万一变更时有地方收口 —— 与 ensure-harbor-hosts.yml 的结构保持一致。
+
+- name: "[CP Endpoint] 写入 controlPlaneEndpoint 域名解析到 /etc/hosts"
+  blockinfile:
+    path: /etc/hosts
+    marker: "# Ansible cp-endpoint hosts {mark}"
+    create: no
+    backup: yes
+    block: |
+      {{ cp_endpoint_target }} {{ cp_endpoint_domain }}
+  become: yes

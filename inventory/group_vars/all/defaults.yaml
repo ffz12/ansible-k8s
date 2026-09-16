@@ -467,9 +467,58 @@ multus_cni_components:
 #   故统一走下面两个派生变量, 各处不再各自判断。
 # has_lbvip: 只有【已定义且非空】才算有 VIP
 has_lbvip: "{{ (lbvip is defined) and ((lbvip | default('') | trim | length) > 0) }}"
-# apiserver 入口地址/端口: 有 VIP 走 VIP:lb_port, 否则首 master:apiserver_port
-apiserver_entry_host: "{{ lbvip | default(hostvars[groups['k8s_master'][0]].ansible_host, true) if (has_lbvip | bool) else hostvars[groups['k8s_master'][0]].ansible_host }}"
-apiserver_entry_port: "{{ apiserver_lb_port if (has_lbvip | bool) else apiserver_port }}"
+
+# ---- controlPlaneEndpoint 用域名(可选) ----
+# 默认空 = 保持现状(endpoint 直接用 IP), 存量站点零影响。
+# 填了域名之后 controlPlaneEndpoint 渲成 <域名>:<端口>, 并由 ensure-cp-endpoint-hosts.yml
+# 往每个节点 /etc/hosts 写一行「<cp_endpoint_target> <域名>」。
+#
+# 为什么值得用域名: controlPlaneEndpoint 在 kubeadm init 时写进 kubeadm-config ConfigMap
+# 与 apiserver 证书 SAN, 【事后不可改】。写 IP 的话以后要换入口(补 VIP / 换网段)得改 ConfigMap
+# + 重签 apiserver 证书 + 更新每节点四份 kubeconfig(本仓库无对应工具); 写域名则只需把解析
+# 指到新地址 —— 名字没变, 证书和 kubeconfig 一行不动。
+# 已实测(2026-09-16, cluster C): kubeadm 会把 controlPlaneEndpoint 自动签进 SAN, 不需要
+# certSANs 块 —— cpu201 的证书 SAN 里有 172.171.1.200(那不是它自己的 IP, 只能因为是 endpoint)。
+#
+# ⚠ 端口不在域名的能力范围内: 端口同样在 init 时定死, 域名只能改地址。所以「先不上 VIP、
+#   以后补」这条路要求前后端口一致 —— 见下面 lb_proxy 的说明。
+# ⚠ 别用 .local 后缀: 它是 mDNS(RFC 6762)保留域, systemd-resolved 可能走 mDNS 而不查 hosts。
+#   本仓库既有约定是 .local.clusters(harbor 就是 harbor.local.clusters), 跟着它最省事。
+# ⚠ 改了解析目标之后, 各节点 kubelet 的 long-lived watch 仍钉在旧地址上直到重连 ——
+#   要切干净得滚动重启 kubelet。比重签证书便宜得多, 但不是零操作。
+cp_endpoint_domain: ""
+
+# 域名解析到哪个地址。默认: 有 VIP 用 VIP, 否则首 master。
+# 只在 cp_endpoint_domain 非空时用到(写进 /etc/hosts 那一行的左边, 必须是 IP)。
+cp_endpoint_target: "{{ lbvip | default(hostvars[groups['k8s_master'][0]].ansible_host, true) if (has_lbvip | bool) else hostvars[groups['k8s_master'][0]].ansible_host }}"
+
+# ---- LB 形态: 决定入口端口, 且是 init 时的单向门 ----
+#   haproxy          keepalived + haproxy。VIP -> haproxy(听 apiserver_lb_port=8443)
+#                    -> 轮询各 master 的 apiserver_port(6443)。有【负载均衡】。
+#   keepalived-only  只跑 keepalived, 不装不配 haproxy。VIP 直接落到某台 master 的 apiserver
+#                    (kubeadm-config 里 bind-address 0.0.0.0, VIP 漂到哪台那台就在 VIP:6443
+#                    应答)。有【故障转移】, 无负载均衡。
+#
+# 端口是这两者的真正分水岭, 也是为什么它是单向门:
+# · haproxy 与 master 共机时 haproxy 只能听 8443(6443 被 apiserver 占) -> endpoint 必然 :8443
+# · keepalived-only 没有 haproxy 抢 6443 -> endpoint 是 :6443, 且「无 VIP(首 master:6443)」与
+#   「有 VIP(VIP:6443)」两种状态【端口一致】, 于是配上域名就能自由切换: 先指首 master,
+#   以后上 keepalived 把域名指到 VIP, 证书与 kubeconfig 一行不动。
+# 而 controlPlaneEndpoint 事后不可改, 所以 :8443 去不掉 haproxy、:6443 加不进 haproxy ——
+# 换形态只能重建集群。
+#
+# ⚠ keepalived-only 时健康检查【必须】改为探本机 apiserver(本仓库已按 lb_proxy 自动切换):
+#   否则 VIP 会停在一台 apiserver 已挂的机器上, 而这正是 HA 要防的场景。
+lb_proxy: haproxy
+
+# apiserver 入口地址/端口。
+# host: 设了域名走域名, 否则同 cp_endpoint_target(有 VIP 用 VIP, 否则首 master)。
+# port: 判据是【路径上有没有代理】而不是【有没有 VIP】—— 只有 haproxy 在路径上时才走 8443。
+#       原写法 `apiserver_lb_port if has_lbvip` 把 VIP 与 haproxy 绑死, 表达不出
+#       「有 VIP 但端口 6443」(keepalived-only)这个组合。
+# ⚠ 存量站点(lb_proxy 默认 haproxy + 未设 cp_endpoint_domain)渲染结果与改动前完全一致。
+apiserver_entry_host: "{{ cp_endpoint_domain if ((cp_endpoint_domain | default('') | trim | length) > 0) else cp_endpoint_target }}"
+apiserver_entry_port: "{{ apiserver_lb_port if ((has_lbvip | bool) and (lb_proxy | default('haproxy')) == 'haproxy') else apiserver_port }}"
 # 端口兜底(与 13 个版本变量同理: versions/模板都要用, 精简 env.yaml 不该 undefined)
 apiserver_port: 6443
 apiserver_lb_port: 8443

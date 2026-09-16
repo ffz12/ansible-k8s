@@ -1,0 +1,51 @@
+---
+# 刷新全部节点的 controlPlaneEndpoint 域名解析。
+#
+# 什么时候用: 改了 cp_endpoint_target(比如把域名从首 master 指到新上的 VIP)之后。
+#   这是域名方案的兑现动作 —— 名字不变、只换解析目标, 所以 apiserver 证书与各节点四份
+#   kubeconfig 都【不用动】。
+#
+# 为什么不用 kube-common: 那三个 playbook(k8s-install / k8s-add-master / k8s-add-node)都有
+#   "已加入则整台跳过"的早停, 在已建好的集群上 kube-common 整个被跳过, hosts 写入跟着跳过。
+#   用 -e force_common=true 能绕过, 但那会连带重装二进制、重下发 kubelet 配置, 其 handler
+#   还会把 kubelet 逐台重启 —— 为改一行 hosts 抖动整个控制面, 不划算。
+#   本 playbook 只写 /etc/hosts, 不碰二进制、不碰 kubelet、不重启任何服务。
+#
+# 用法:
+#   ansible-playbook playbook/cp-endpoint-hosts.yaml
+#   ansible-playbook playbook/cp-endpoint-hosts.yaml -e cp_endpoint_target=10.14.73.250
+#
+# ⚠ 改完解析目标后, 各节点 kubelet 的 long-lived watch 仍钉在旧地址上直到重连。要切干净
+#   得滚动重启 kubelet(逐台 systemctl restart kubelet, 确认一台 Ready 再下一台)。
+#   本 playbook 【不】自动重启 —— 那属于控制面操作, 交给使用者按窗口决定。
+
+- name: 刷新 controlPlaneEndpoint 域名解析
+  hosts: k8s_master:k8s_node
+  become: yes
+  gather_facts: yes
+  tasks:
+    - name: 预检 —— 必须配了 cp_endpoint_domain 才有意义
+      assert:
+        that:
+          - (cp_endpoint_domain | default('') | trim | length) > 0
+        fail_msg: >-
+          cp_endpoint_domain 为空 —— 本集群的 controlPlaneEndpoint 用的是 IP 而非域名,
+          没有域名解析需要刷新。
+          注: endpoint 在 kubeadm init 时写进 ConfigMap 与证书 SAN, 【事后不可改】——
+          已建好的 IP 型集群不能靠设这个变量改成域名型, 那需要重建集群。
+        success_msg: "将刷新 {{ cp_endpoint_domain }} -> {{ cp_endpoint_target }}"
+      run_once: true
+
+    - name: 写入解析
+      include_tasks: "{{ playbook_dir }}/tasks/ensure-cp-endpoint-hosts.yml"
+
+    - name: 校验本机能解析该域名
+      shell: "getent hosts {{ cp_endpoint_domain }} || true"
+      register: _cp_getent
+      changed_when: false
+
+    - name: 输出解析结果
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ _cp_getent.stdout | default('(解析不到)') | trim }}
+          {{ '⚠ 解析不到, 检查 /etc/hosts 与 nsswitch' if (_cp_getent.stdout | default('') | trim | length) == 0 else '' }}

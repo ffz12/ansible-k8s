@@ -1,8 +1,14 @@
 # Cilium helm values (最小可用集; 更多特性按需调)
-# apiserver 入口: 有 lbvip 走 VIP:apiserver_lb_port, 否则首 master:apiserver_port。
-# 走 defaults.yaml 的派生变量, 不再各自判断 —— lbvip 写成空串时 `is defined` 会判真、
-# 而 default() 不带 true 又不回退, 两者叠加会渲出 k8sServiceHost:"" + 8443 静默坏掉。
-k8sServiceHost: "{{ apiserver_entry_host }}"
+# apiserver 入口: 有 lbvip 走 VIP, 否则首 master。走 defaults.yaml 的派生变量, 不再各自判断
+# —— lbvip 写成空串时 `is defined` 会判真、而 default() 不带 true 又不回退, 两者叠加会渲出
+# k8sServiceHost:"" + 8443 静默坏掉。
+# ⚠ host 取 cp_endpoint_target(始终是 IP)而【不是】apiserver_entry_host —— 后者在设了
+#   cp_endpoint_domain 时是域名。cilium agent 要在 CNI 还没起来的时候连 apiserver, 那时
+#   集群内 DNS 链路不完整; 且 agent 虽跑 hostNetwork, 用的仍是 kubelet 给 Pod 生成的
+#   /etc/hosts, 宿主机上那行域名解析它看不到 —— 喂域名等于给它一个解析不了的名字。
+#   端口仍用 apiserver_entry_port: 它随 lb_proxy 变(haproxy 8443 / keepalived-only 6443),
+#   与域名无关, 两种形态下 cilium 都该连同一个端口。
+k8sServiceHost: "{{ cp_endpoint_target }}"
 k8sServicePort: {{ apiserver_entry_port }}
 
 # 保留 kube-proxy(稳妥默认); 若要 eBPF 替换 kube-proxy 改 true 并确认内核>=5.10

@@ -79,6 +79,17 @@
     success_msg: "containerd pause 镜像校验通过: {{ sandbox_image }}"
   when: "'containerd' in kube_criSocket"
 
+# controlPlaneEndpoint 用域名时(cp_endpoint_domain 非空)才做事; 默认空则整块跳过。
+# 位置要在【部署 kubelet 配置 / 启用 kubelet 之前】: kubelet.conf 的 server 指向 endpoint,
+# 名字解析不了 kubelet 起不来。放在 kube-common 而非 os-init: 后者不常跑; 也不是
+# k8s-init-master(它 hosts 只有首台 master, 覆盖不到 worker 与其余 master)。
+# kube-common 在 k8s-install / k8s-add-master / k8s-add-node 三处都跑, 范围正好是
+# "所有会有 kubelet.conf 的节点", 且首 master 走的 k8s-install 第一个 role 就是它。
+- name: 写 controlPlaneEndpoint 域名解析到 /etc/hosts
+  include_tasks: "{{ playbook_dir }}/tasks/ensure-cp-endpoint-hosts.yml"
+  when: (cp_endpoint_domain | default('') | trim | length) > 0
+  tags: [config, k8s, cp_endpoint]
+
 - name: 安装 Kubernetes 二进制
   import_tasks: install-binary.yml
   tags: [install, k8s]
