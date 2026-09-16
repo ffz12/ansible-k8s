@@ -13,10 +13,12 @@ vrrp_script chk_haproxy {
     timeout 2              # 脚本超时(避免卡死)
     rise 2                 # 连续成功 2 次才认为恢复
     fall 2                 # 连续失败 2 次才认为宕机
-    # ⚠ |weight| 必须【小于】priority 间距(下面按 10 递减), 否则一台脚本失败就【跨级】切主。
-    #   原值 -30 的后果: .1(100) 掉到 70, 连最低优先级的 .3(80) 都能赢 —— 一次 haproxy
-    #   瞬时抖动就把 VIP 甩到末位节点, 而不是交给次高的 .2(90)。
-    weight {{ lb_vrrp_check_weight | default(-5) }}
+    # ⚠ |weight| 必须【大于】(台数-1) x priority 间距(下面按 10 递减) —— 与 55937c0 那条注释
+    #   写反了。keepalived 把 weight 加到【本节点自己】的 priority 上, VRRP 再选【最高】者:
+    #   weight -5 时首台失败只掉到 95, 仍是最高 -> VIP 不动, 健康检查等于装饰。
+    #   (55937c0 说 -30 会"跨级"甩到末位也是算错: 首台掉到 70 时次高台是 90、末位 80, 选 90。)
+    #   故按台数派生, 保证任意台数都够: N 台 -> -(N x 10)。已模拟 2-8 台的最坏情况(前 k 台连挂)。
+    weight {{ lb_vrrp_check_weight | default(-((groups['k8slb'] | length) * 10)) }}
 }
 
 vrrp_instance VI_1 {
