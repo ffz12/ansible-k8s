@@ -5,16 +5,29 @@
   run_once: true
   delegate_to: localhost
 
-# 预检: 多 master 高可用必须有稳定入口(lbvip), 否则 kubeadm 无法 join 额外 master
-- name: 预检 —— 多 master 必须先配 LB(lbvip)
+# 预检: 多 master 无 LB 时入口是单点。
+# ⚠ 原 fail_msg 说"kubeadm 无法 join 额外 master", 在 10c1ccd 之后已不成立 —— controlPlaneEndpoint
+#   现在无条件写(无 VIP 时取「首 master:apiserver_port」), join 能过。拦的理由从"建不出来"
+#   变成"建出来不是真 HA", 故给显式放行开关而非拦死。
+- name: 预检 —— 多 master 未配 LB(入口为单点)
   assert:
     that:
-      - (final_master_list | length) < 2 or (has_lbvip | bool)
+      - (final_master_list | length) < 2
+        or (has_lbvip | bool)
+        or (allow_multi_master_without_lb | default(false) | bool)
     fail_msg: >-
       检测到 {{ final_master_list | length }} 个 master 但未设置 lbvip。
-      多 master 高可用需要负载均衡 VIP: 请在 inventory/group_vars/all/env.yaml 配 lbvip
-      并先跑 haproxy-ha/nginx-ha; 或改为单 master 部署(只放 1 台 [k8s_master])。
-    success_msg: "master/LB 预检通过 (master={{ final_master_list | length }}, lbvip={{ lbvip | default('未设置', true) }})"
+      集群能建起来、额外 master 也能 join(controlPlaneEndpoint 无条件写, 无 VIP 时取
+      「首 master:{{ apiserver_port }}」), 但【入口是单点】: 首 master 挂了其余 master 就联系不上,
+      不是真 HA。
+      要真 HA: env.yaml 配 lbvip 并跑 LB(playbook/lb-haproxy-install.yaml);
+      无 VIP 能力但想先建起来: lbvip 填首 master 的 IP, 并把 apiserver_lb_port 一并设为
+      {{ apiserver_port }}(否则入口端口跳到 {{ apiserver_lb_port }}, 那里没人听), 以后 VIP 顶上来即真 HA;
+      明知单点仍要继续: -e allow_multi_master_without_lb=true。
+    success_msg: >-
+      master/LB 预检通过 (master={{ final_master_list | length }},
+      lbvip={{ lbvip | default('未设置', true) }},
+      入口={{ apiserver_entry_host }}:{{ apiserver_entry_port }})
   run_once: true
   delegate_to: localhost
 
