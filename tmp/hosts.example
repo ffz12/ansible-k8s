@@ -30,7 +30,7 @@
 [k8s_node]
 # worker 节点
 #cpu-005
-#cpu-008
+
 
 [etcd]
 # 外置 etcd(建议 3/5 台奇数; 可与 master 共机)
@@ -43,7 +43,7 @@
 #cpu-001
 
 [harbor]
-# Harbor 节点(在线从公共 mirror 拉镜像时可不部署)
+# Harbor 节点(在线从公共 mirror 拉镜像时可不部署)，走的ip配置部署写ip
 #172.171.1.217
 
 [docker]
@@ -55,7 +55,7 @@
 #cpu-008
 #a800-node30 accelerator_type=nvidia
 [cri_docker_nodes]
-# cri-dockerd 已弃用,留空
+# cri-dockerd 特殊场景需要
 
 # ---- 挂盘方式分组(只列主机名; 挂盘 playbook 靠 --limit 认这两个组) ----
 # 按【盘的形态】分, 不按有没有 GPU 卡 —— 两者没必然关系(CPU 机也可能 4 盘、
