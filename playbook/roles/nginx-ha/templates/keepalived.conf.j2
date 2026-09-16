@@ -7,7 +7,7 @@ global_defs {
    
 } 
 vrrp_script check_nginx {
-    script  "{{ keepalived_conf_dir }}/check_nginx"  #执行nginx检测脚本
+    script  "/etc/keepalived/check_nginx"  #执行nginx检测脚本(发行版默认路径)
     interval 3              # 检测间隔缩短至3秒（更快故障转移）
     timeout 2               # 脚本超时时间（避免卡死）
     rise 2                  # 连续成功2次才认为服务恢复

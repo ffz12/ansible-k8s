@@ -129,12 +129,9 @@ lb_vrrp_preempt_mode: delay
 # keepalived 允许 0-1000; 5-30 秒是常见区间。
 lb_vrrp_preempt_delay: 10
 
-# ================= Nginx / Keepalived 派生路径(nginx_dir/keepalived_dir 在 env.yaml) =================
-nginx_conf_dir: "{{ nginx_dir }}/conf"
-nginx_logs_dir: "{{ nginx_dir }}/logs"
-nginx_sbin_dir: "{{ nginx_dir }}/sbin"
-keepalived_conf_dir: "{{ keepalived_dir }}/etc"
-keepalived_sbin_dir: "{{ keepalived_dir }}/sbin"
+# 2026-09-16: 删掉 nginx_conf_dir/nginx_logs_dir/nginx_sbin_dir/keepalived_conf_dir/keepalived_sbin_dir
+#   这 5 个派生路径, 以及 env.yaml 的 nginx_dir/keepalived_dir。nginx-ha 改为按发行版包安装后
+#   路径固定用默认(/etc/nginx、/var/log/nginx、/etc/keepalived), 不再需要可配的安装目录。
 
 # ================= 派生: 离线路径 / Harbor 地址 =================
 offline_artifacts: "{{ playbook_dir | dirname }}/offline/artifacts"

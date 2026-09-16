@@ -21,7 +21,7 @@
       run_once: yes
 
 - name: 停止LB删除节点服务
-  hosts: "{{ groups['master_to_delete'] | default([]) }}" 
+  hosts: "{{ groups['master_to_delete'] | default([]) }}"
   tasks:
   - name: 停止并禁用 nginx 和 keepalived 服务
     systemd:
@@ -34,14 +34,8 @@
     - keepalived
     ignore_errors: yes
 
-  - name: 删除 systemd 服务文件
-    file:
-      path: "{{ item }}"
-      state: absent
-    loop:
-    - /etc/systemd/system/nginx.service
-    - /etc/systemd/system/keepalived.service
-
+  # 2026-09-16: 改为按发行版包安装后 systemd unit 归包管理器所有, 不再手删
+  # (原先删的是自建的 /etc/systemd/system/{nginx,keepalived}.service, 现在没有了)。
   - name: 重新加载 systemd 配置
     systemd:
       daemon_reload: yes
@@ -72,26 +66,18 @@
 - name: 清理已删除的 LB 节点
   hosts: "{{ groups['master_to_delete'] | default([]) }}"
   tasks:
-  - name: 删除 nginx用户
-    user:
-      name: nginx
-      state: absent
-    ignore_errors: yes
-  - name: 删除 nginx 组（如果用户删除后组仍存在）
-    group:
-      name: nginx
-      state: absent
-    ignore_errors: yes
-
-  - name: 删除 nginx 相关目录
+  # 2026-09-16: nginx 用户/组由包管理器负责, 手删会让包处于半残状态, 故不再删。
+  # 目录也不再是 /data/{nginx,keepalived}, 改为清理发行版默认路径下本 role 写的配置。
+  - name: 删除 nginx / keepalived 配置文件
     file:
       path: "{{ item }}"
       state: absent
     loop:
-    - "{{ nginx_dir }}"
-    - "{{ keepalived_dir }}"
+    - /etc/nginx/nginx.conf
+    - /etc/keepalived/keepalived.conf
+    - /etc/keepalived/check_nginx
 
-  - name: 清理可能残留的日志或临时文件（可选）
+  - name: 清理可能残留的 pid 文件
     file:
       path: /run/nginx.pid
       state: absent

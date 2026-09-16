@@ -1,4 +1,7 @@
 ---
+# 2026-09-16: nginx-ha 改为按发行版包安装后, 卸载口径对齐 remove-haproxy-ha ——
+#   systemd unit、nginx 用户/组都由包管理器负责, 这里不再手工删(手删会让包处于半残状态);
+#   配置目录也改成发行版默认路径。
 - name: 停止并禁用 nginx 和 keepalived 服务
   systemd:
     name: "{{ item }}"
@@ -10,45 +13,40 @@
     - keepalived
   ignore_errors: yes
 
-- name: 删除 systemd 服务文件
+- name: 删除 nginx / keepalived 配置文件
   file:
     path: "{{ item }}"
     state: absent
   loop:
-    - /etc/systemd/system/nginx.service
-    - /etc/systemd/system/keepalived.service
+    - /etc/nginx/nginx.conf
+    - /etc/keepalived/keepalived.conf
+    - /etc/keepalived/check_nginx
+
+- name: 卸载 nginx / keepalived 软件包(RedHat 系)
+  yum:
+    name:
+      - nginx
+      - keepalived
+    state: absent
+  ignore_errors: yes
+  when: ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
+
+- name: 卸载 nginx / keepalived 软件包(Debian 系)
+  apt:
+    name:
+      - nginx
+      - libnginx-mod-stream
+      - keepalived
+    state: absent
+    purge: yes
+  ignore_errors: yes
+  when: ansible_distribution in ['Debian', 'Ubuntu']
 
 - name: 重新加载 systemd 配置
   systemd:
     daemon_reload: yes
 
-- name: 删除 nginx 用户和组
-  user:
-    name: nginx
-    state: absent
-    remove: yes  # 同时删除家目录（虽然 create_home=no，但保险起见）
-  ignore_errors: yes
-
-- name: 删除 nginx 组（如果用户删除后组仍存在）
-  group:
-    name: nginx
-    state: absent
-  ignore_errors: yes
-
-- name: 删除 nginx 相关目录
-  # 修复: 原来用 nginx_dir/keepalived_dir,但安装(install-binary.yml)从未定义这两个变量,
-  #       会因未定义而失败或删不干净。改为安装时实际创建的目录变量。
-  file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - "{{ nginx_conf_dir }}"
-    - "{{ nginx_logs_dir }}"
-    - "{{ nginx_sbin_dir }}"
-    - "{{ keepalived_conf_dir }}"
-    - "{{ keepalived_sbin_dir }}"
-
-- name: 清理可能残留的日志或临时文件（可选）
+- name: 清理可能残留的 pid 文件
   file:
     path: /run/nginx.pid
     state: absent
@@ -56,4 +54,4 @@
 
 - name: 输出卸载完成信息
   debug:
-    msg: "✅ Nginx-HA 卸载完成：服务、用户、配置、二进制均已清除"
+    msg: "✅ Nginx-HA 卸载完成：服务已停、配置已删、软件包已卸载"

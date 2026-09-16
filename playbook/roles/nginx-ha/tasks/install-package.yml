@@ -1,0 +1,152 @@
+---
+# roles/nginx-ha/tasks/install-package.yml
+# 按名安装 nginx + keepalived(替代原先的自建二进制 install-binary.yml)。
+# 口径与 haproxy-ha/tasks/main.yaml 一致: 离线从 init 配好的本地源按名装, 在线走发行版源。
+# 离线前提: LB 节点已跑过 init(base), /opt/<distro>-pkgs 与本地源就位, 且源里有 nginx/keepalived 包。
+
+- name: (离线) 计算 LB 本地源 os/arch 标签
+  set_fact:
+    _lb_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}"
+    _lb_os: >-
+      {{ 'kylin' if ansible_distribution in ['Kylin Linux Advanced Server', 'Kylin']
+         else 'openEuler' + ansible_distribution_major_version if ansible_distribution == 'openEuler'
+         else 'ubuntu' + ansible_distribution_major_version if ansible_distribution in ['Ubuntu', 'Debian']
+         else 'unsupported' }}
+  when: is_offline | bool
+
+- name: (离线) 校验发行版是否受支持
+  assert:
+    that: _lb_os != 'unsupported'
+    fail_msg: "nginx-ha 离线暂不支持: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+  when: is_offline | bool
+
+- name: (离线-RPM) 幂等重写本地 yum 源(指向 init 解压的基础包目录)
+  copy:
+    dest: /etc/yum.repos.d/local-offline.repo
+    content: |
+      [local-offline]
+      name=Local Offline Repo
+      baseurl=file:///opt/{{ 'kylin-pkgs' if ansible_distribution in ['Kylin Linux Advanced Server', 'Kylin'] else 'openEuler-pkgs' }}
+      enabled=1
+      gpgcheck=0
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - is_offline | bool
+    - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
+
+# ============ 核心包(必装) ============
+- name: (离线-RPM) 从本地源安装 nginx+keepalived
+  shell: yum install -y --disablerepo="*" --enablerepo="local-offline" nginx keepalived
+  when:
+    - is_offline | bool
+    - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
+
+- name: (离线-DEB) 从本地源安装 nginx+keepalived
+  apt:
+    name:
+      - nginx
+      - keepalived
+    state: present
+    update_cache: yes
+    allow_unauthenticated: true
+  when:
+    - is_offline | bool
+    - ansible_distribution in ['Debian', 'Ubuntu']
+
+- name: (在线) yum 安装 nginx/keepalived
+  yum:
+    name:
+      - nginx
+      - keepalived
+    state: present
+  when:
+    - not is_offline | bool
+    - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
+
+- name: (在线) apt 安装 nginx/keepalived
+  apt:
+    name:
+      - nginx
+      - keepalived
+    state: present
+    update_cache: yes
+    allow_unauthenticated: true
+  when:
+    - not is_offline | bool
+    - ansible_distribution in ['Debian', 'Ubuntu']
+
+# ============ stream 模块子包(尽力而为) ============
+# nginx.conf 用 stream {} 做 apiserver 的 TCP 转发, 模块缺失时报 unknown directive "stream"。
+# 各发行版把它放在哪不统一, 且【不一定存在同名包】:
+#   · RHEL/Fedora/openEuler: nginx spec 把动态模块拆成 nginx-mod-* 子包 -> nginx-mod-stream,
+#     装 .so 到 /usr/lib64/nginx/modules/ 并往 /usr/share/nginx/modules/ 放 load_module 片段。
+#   · Debian/Ubuntu: 多数构建把 stream 【静态编进】主 nginx 二进制, 不需要额外包
+#     (libnginx-mod-stream 未必存在; 写成必装项会让 apt 直接失败)。
+# 故这两步都 failed_when: false —— 装上更好, 装不上由下面的预检定生死, 不在这里判死。
+- name: (RPM) 尝试安装 stream 模块子包 nginx-mod-stream(不存在则跳过)
+  shell: >-
+    {% if is_offline | bool %}
+    yum install -y --disablerepo="*" --enablerepo="local-offline" nginx-mod-stream
+    {% else %}
+    yum install -y nginx-mod-stream
+    {% endif %}
+  register: _rpm_stream_mod
+  failed_when: false
+  when: ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
+
+- name: (DEB) 尝试安装 stream 模块子包 libnginx-mod-stream(多数构建已静态编入, 不存在则跳过)
+  apt:
+    name: libnginx-mod-stream
+    state: present
+    update_cache: no
+    allow_unauthenticated: true
+  register: _deb_stream_mod
+  failed_when: false
+  when: ansible_distribution in ['Debian', 'Ubuntu']
+
+# 预检 stream 模块: nginx.conf.j2 用 stream {} 做 TCP 转发, 模块缺失时 nginx 会报
+# "unknown directive \"stream\"" 起不来。与其等到 enable-service 阶段才失败, 这里先拦。
+# --with-stream(编入本体) 或 modules 目录里有 ngx_stream_module.so(动态加载) 均可。
+- name: 检测 nginx 是否支持 stream 模块
+  shell: |
+    nginx -V 2>&1 | grep -q -- '--with-stream' && { echo STREAM_BUILTIN; exit 0; }
+    for d in /usr/lib/nginx/modules /usr/lib64/nginx/modules /usr/share/nginx/modules; do
+      [ -f "$d/ngx_stream_module.so" ] && { echo STREAM_MODULE; exit 0; }
+    done
+    echo STREAM_MISSING
+  args:
+    executable: /bin/bash
+  register: _nginx_stream
+  changed_when: false
+
+- name: 校验 stream 模块可用
+  assert:
+    that: "'STREAM_MISSING' not in _nginx_stream.stdout"
+    fail_msg: >-
+      本机 nginx 不支持 stream 模块, 而 nginx.conf 用 stream {} 做 apiserver 的 TCP 转发 ——
+      配置下发了也起不来(unknown directive "stream")。
+      RHEL/openEuler/麒麟: 需要 nginx-mod-stream 子包(离线源里请一并备好),
+      或用 nginx-all-modules 元包一次性拉全部 nginx-mod-*;
+      Debian/Ubuntu: 主包多数已静态编入, 若确实没有则找对应的 libnginx-mod-stream;
+      也可以直接改用 haproxy-ha(playbook/lb-haproxy-install.yaml), 它无此依赖。
+      当前探测结果: {{ _nginx_stream.stdout | default('(未取到)') | trim }}
+    success_msg: "stream 模块可用({{ _nginx_stream.stdout | trim }})"
+
+# Debian 系 nginx 包的运行用户是 www-data, RHEL 系是 nginx —— nginx.conf 的 user 指令要对上,
+# 否则报 "getpwnam(\"nginx\") failed"。这里探测包实际创建的用户, 供 nginx.conf.j2 使用。
+- name: 探测 nginx 运行用户(Debian 系 www-data / RHEL 系 nginx)
+  shell: |
+    for u in nginx www-data; do
+      id -u "$u" >/dev/null 2>&1 && { echo "$u"; exit 0; }
+    done
+    echo nginx
+  args:
+    executable: /bin/bash
+  register: _nginx_user
+  changed_when: false
+
+- name: 设置 nginx 运行用户变量
+  set_fact:
+    nginx_run_user: "{{ _nginx_user.stdout | trim }}"

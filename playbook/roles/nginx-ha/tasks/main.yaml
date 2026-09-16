@@ -1,16 +1,13 @@
 ---
 # roles/nginx-ha/tasks/main.yml
-- name: 安装 Nginx 和 Keepalived 二进制
-  import_tasks: install-binary.yml
+# 2026-09-16: 从自建二进制改为按发行版包安装(对齐 haproxy-ha)。
+#   原 install-binary.yml 拷 offline/artifacts/nginx-ha/bin/<os>/<arch>/ 下的预编译二进制,
+#   那批二进制要先用 6 组 Dockerfile 在容器里构建且不入库(bin/ 下只有 .gitkeep),
+#   每个站点都得自己先跑一遍构建; 还自带 systemd unit、装到 /data/{nginx,keepalived}。
+#   现按名装包, unit 与路径都用发行版默认, deploy-*-service.yml 两步随之删除。
+- name: 安装 Nginx 和 Keepalived(发行版包)
+  import_tasks: install-package.yml
   tags: [install, lb]
-
-- name: 部署 systemd service 文件
-  import_tasks: deploy-nginx-service.yml
-  tags: [service, nginx]
-
-- name: 部署 keepalived systemd service 文件
-  import_tasks: deploy-keepalived-service.yml
-  tags: [service, keepalived] 
 
 - name: 配置 Nginx
   import_tasks: config-nginx.yml
@@ -22,7 +19,7 @@
 
 - name: 启动并启用服务
   import_tasks: enable-service.yml
-  tags: [service, lb]  
+  tags: [service, lb]
 
 - name: 服务状态检查
   import_tasks: status-check.yml

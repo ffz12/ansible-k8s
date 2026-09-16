@@ -1,10 +1,13 @@
 ---
 # roles/nginx-ha/tasks/config-nginx.yml
+# 路径用发行版默认 /etc/nginx(原先是 {{ nginx_conf_dir }} = /data/nginx/conf)。
+# owner 不再写死 nginx: Debian 系包的用户是 www-data, 写死会报 chown 失败 ——
+# 用 install-package.yml 探测出的 nginx_run_user。
 - name: 渲染 nginx.conf
   template:
     src: nginx.conf.j2
-    dest: "{{ nginx_conf_dir }}/nginx.conf"
-    owner: nginx
-    group: nginx
-  notify: reload nginx 
-
+    dest: /etc/nginx/nginx.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
