@@ -35,7 +35,13 @@
 - name: "[CP Endpoint] 校验解析目标是 IP 而非域名"
   assert:
     that:
-      - cp_endpoint_target | regex_search('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')
+      # ⚠ 用 `is match` 而非 `| regex_search(...)`: 后者返回【匹配到的字符串或 None】,
+      #   不是布尔。新版 ansible-core(>=2.19)对条件表达式要求严格布尔, 会直接报
+      #   "Conditional result (True) was derived from value of type 'str'" 而拦下 ——
+      #   2026-09-16 现网 cpu200 上实测踩到。`is match` 返回真布尔。
+      #   注: 同文件下面的 `is search('\.local$')` 与 kube-add-node 里
+      #   `not (... | regex_search(...))` 都没这个问题(前者是测试, 后者被 not 强转了布尔)。
+      - cp_endpoint_target is match('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')
     fail_msg: >-
       cp_endpoint_target 必须是 IP, 当前是 "{{ cp_endpoint_target }}"。
       它是 /etc/hosts 那行的【左边】; 填域名会渲成「<域名> <域名>」, 整行被静默忽略。

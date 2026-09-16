@@ -38,6 +38,12 @@
     - not kubelet_conf.stat.exists
     - _cp_endpoint_host is defined and (_cp_endpoint_host | length > 0)
     - not (_cp_endpoint_host | regex_search('^[0-9]{1,3}(\.[0-9]{1,3}){3}$'))
+    # 本仓库建的域名集群走 kube-common 里的 ensure-cp-endpoint-hosts.yml(blockinfile + 命名
+    # marker, 且 cp-endpoint-hosts.yaml 能整体刷新)。此处不再重复写, 否则同一个名字有两个
+    # 写入方、两种机制, 改解析目标时只有带 marker 那份会更新 —— 正是 ensure-harbor-hosts.yml
+    # 注释里记的那次事故的形状。本路径只留给【别人建的】域名集群(如 kk 的 lb.kubesphere.local),
+    # 那种情况 cp_endpoint_domain 为空。
+    - (cp_endpoint_domain | default('') | trim | length) == 0
 
 - name: "[Add Node] 执行 kubeadm join (Worker)"
   command: "{{ _join_cmd_result.stdout }} --cri-socket {{ kube_criSocket }} --ignore-preflight-errors=SystemVerification"
