@@ -15,6 +15,16 @@ name: Sync from Codeup
 #      后果: docs/版本说明.md 被同步过去, 而它写着 `git checkout v1.0.0`、
 #      `git log --oneline v1.0.0..main`, 还引用约 20 个裸 SHA —— 在 GitHub 侧全都解析不了。
 #      镜像里带着一份只在源仓库成立的文档, 比丢 tag 本身更容易误导人。
+#
+# ✔ 2026-09-17 首次实跑通过(GitHub Actions run #19, 13s):
+#     ✅ 自检通过: workflow 文件在源仓库里
+#     + 3868669...6eada65 main -> main (forced update)   <- 旧的合成历史被真实历史取代
+#     * [new branch]      release/v1.0 -> release/v1.0
+#     * [new tag]         v1.0.0 -> v1.0.0
+#   同步后两侧引用逐个一致(main 6eada65 / release/v1.0 09cf972 / tags/v1.0.0 5eebf9d)。
+#   其中 refs/tags/v1.0.0^{} -> 09cf972 这个 peeled ref 也出现了, 说明 annotated tag 对象
+#   完整传过去了(没被降级成 lightweight tag)—— 即 tag 里那份说明在 GitHub 上也能 git show 看到。
+#   3868669 是 GitHub 旧的合成 head, 此后无引用指向, 由 GitHub 自行 GC。
 
 on:
   schedule:
