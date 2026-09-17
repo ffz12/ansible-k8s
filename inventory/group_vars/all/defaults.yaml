@@ -486,13 +486,25 @@ has_lbvip: "{{ (lbvip is defined) and ((lbvip | default('') | trim | length) > 0
 # 已实测(2026-09-16, cluster C): kubeadm 会把 controlPlaneEndpoint 自动签进 SAN, 不需要
 # certSANs 块 —— cpu201 的证书 SAN 里有 172.171.1.200(那不是它自己的 IP, 只能因为是 endpoint)。
 #
-# ⚠ 端口不在域名的能力范围内: 端口同样在 init 时定死, 域名只能改地址。所以「先不上 VIP、
-#   以后补」这条路要求前后端口一致 —— 见下面 lb_proxy 的说明。
+# 2026-09-17 默认从空改为 lb.local.clusters —— 域名【默认开】。理由: endpoint 事后不可改,
+#   而"建集群时用不用域名"这个决定的代价完全不对称:
+#     用了域名: 以后单 master 想加 VIP, 改 hosts 解析 + 滚动重启 kubelet 就行
+#     没用域名: 同样的事要改 ConfigMap + 重签 apiserver 证书 + 改每节点四份 kubeconfig(无工具)
+#   而域名的代价只是"每节点要有一行 hosts 解析", 由 kube-common 自动下发。
+#   置空则回到旧行为(endpoint 直接用 IP), 已建好的集群不受影响(endpoint 已定死)。
+#
+# ⚠ 每个节点都必须能解析这个名字, 否则 kubelet 起不来 —— 它由 kube-common 里的
+#   ensure-cp-endpoint-hosts.yml 自动写进 /etc/hosts, 覆盖所有会有 kubelet.conf 的节点。
+#   有内网 DNS 的站点也可以在 DNS 里配, 那样 hosts 那行只是冗余。
+# ⚠ 端口不在域名的能力范围内: 端口同样在 init 时定死, 域名只能改地址。所以
+#     单 master(:apiserver_port) -> 加 keepalived VIP(:apiserver_port)   端口不变, 域名重指即可
+#     单 master(:apiserver_port) -> 3 master + haproxy(:apiserver_lb_port) 端口变, 仍需重建
+#   见下面 lb_proxy 的说明。
 # ⚠ 别用 .local 后缀: 它是 mDNS(RFC 6762)保留域, systemd-resolved 可能走 mDNS 而不查 hosts。
-#   本仓库既有约定是 .local.clusters(harbor 就是 harbor.local.clusters), 跟着它最省事。
+#   本仓库既有约定是 .local.clusters(harbor 就是 harbor.local.clusters), 故默认值跟着它。
 # ⚠ 改了解析目标之后, 各节点 kubelet 的 long-lived watch 仍钉在旧地址上直到重连 ——
 #   要切干净得滚动重启 kubelet。比重签证书便宜得多, 但不是零操作。
-cp_endpoint_domain: ""
+cp_endpoint_domain: lb.local.clusters
 
 # 域名解析到哪个地址。默认: 有 VIP 用 VIP, 否则首 master。
 # 只在 cp_endpoint_domain 非空时用到(写进 /etc/hosts 那一行的左边, 必须是 IP)。
@@ -515,6 +527,12 @@ cp_endpoint_target: "{{ lbvip | default(hostvars[groups['k8s_master'][0]].ansibl
 #
 # ⚠ keepalived-only 时健康检查【必须】改为探本机 apiserver(本仓库已按 lb_proxy 自动切换):
 #   否则 VIP 会停在一台 apiserver 已挂的机器上, 而这正是 HA 要防的场景。
+#
+# ⚠ 给【已建成的 :apiserver_port 集群】补 VIP 时, 必须同时设 lb_proxy: keepalived-only。
+#   只填 lbvip 而漏了它的话, 本项仍是 haproxy -> 入口端口推导成 apiserver_lb_port, 与集群
+#   已定死的 endpoint(:apiserver_port)不一致: haproxy 听在 8443 没人用, 而域名指向的 VIP:6443
+#   靠"VIP 恰好在某台 master 上、那台 apiserver 自己听 6443"侥幸能通 —— 健康检查也探错了端口。
+#   症状是"看着能用但 HA 是假的"。见 env.yaml.example 里那两种目标形态的配置样例。
 lb_proxy: haproxy
 
 # apiserver 入口地址/端口。
