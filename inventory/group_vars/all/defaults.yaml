@@ -124,8 +124,12 @@ lb_vrrp_unicast: true
 #
 # ⚠ nopreempt 的取舍: 它保证不回切, 但也意味着【VIP 可能长期停在低优先级节点上】。
 #   若各 LB 节点性能不对等(比如首台配置更好), 或希望 VIP 有确定的归属, 用 delay 更合适。
-#   另: nopreempt 走 FAULT 机制(不配 weight, 见 keepalived.conf.j2), 两台同时故障时期间
-#   【无人持 VIP】; delay 走 weight 降权, 总有一台持有。要不回切的站点在 env.yaml 自己设。
+#   另: nopreempt 走 FAULT 机制(不配 weight, 见 keepalived.conf.j2), 多台同时故障时期间
+#   【无人持 VIP】; delay 走 weight 降权, 总有一台持有(哪怕它自己也坏了)。
+#   ⚠ 但这条代价在【LB 与 master 共机】时是伪的: 3 master 挂 2 台 etcd 就没 quorum、
+#     apiserver 也全死了, VIP 在谁手上都没意义。只有独立 LB 节点(LB 故障 ≠ apiserver 故障)
+#     才需要权衡它。共机站点选 nopreempt 基本没有实质缺点。
+#   要不回切的站点在 env.yaml 设 lb_vrrp_preempt_mode: nopreempt。
 lb_vrrp_preempt_mode: delay
 # delay 模式下等待多少秒再抢回。太短起不到防抖作用, 太长则故障恢复后 VIP 归位慢。
 # keepalived 允许 0-1000; 5-30 秒是常见区间。
