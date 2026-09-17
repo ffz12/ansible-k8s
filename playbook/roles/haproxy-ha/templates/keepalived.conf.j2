@@ -19,12 +19,28 @@ vrrp_script chk_entry {
     timeout 2              # 脚本超时(避免卡死)
     rise 2                 # 连续成功 2 次才认为恢复
     fall 2                 # 连续失败 2 次才认为宕机
+{% if (lb_vrrp_preempt_mode | default('nopreempt')) == 'nopreempt' %}
+    # ⚠ nopreempt 模式【故意不配 weight】—— 这两者不能同时用, 否则故障转移直接失效。
+    #   机制: 配了 weight 时, 检查失败只把【本机】priority 降低, instance 仍在发 advert;
+    #   VIP 易手靠对端【抢占】。而 nopreempt 的语义正是"不抢占活着的 MASTER"(不看优先级) ——
+    #   于是 MASTER 掉到 80、对端 90 也不动, VIP 卡在已坏的节点上。
+    #   2026-09-17 现网实测(cluster C cpu200): apiserver 停 -> "Changing effective priority
+    #   from 100 to 80" -> 【没有】Entering BACKUP -> VIP 一直留在 cpu200。
+    #   不配 weight 时, 检查失败让 instance 进 FAULT: 停发 advert -> 对端按"MASTER 消失"接管
+    #   (master-down 检测, 不是抢占, nopreempt 拦不住) -> 恢复后本机以 BACKUP 回来、被
+    #   nopreempt 按住不抢回。故障能切、恢复不回切, 两头都满足。
+    #   (同一机制的旁证: 使用者重启首台时 VIP 正常漂移 —— 重启同样是"停发 advert"。)
+    # ⚠ 代价: 两台检查同时失败时都进 FAULT, 期间【没有任何节点持 VIP】。weight 式则总有一台
+    #   持有(哪怕它自己也坏了)。前者更诚实, 但形态 B 冷启动需要 check_entry.sh 里的兜底
+    #   (kubelet.conf 不存在时直接 exit 0), 否则集群建不出来 —— 见该脚本头部说明。
+{% else %}
     # ⚠ |weight| 必须【大于】(台数-1) x priority 间距(下面按 10 递减) —— 与 55937c0 那条注释
     #   写反了。keepalived 把 weight 加到【本节点自己】的 priority 上, VRRP 再选【最高】者:
     #   weight -5 时首台失败只掉到 95, 仍是最高 -> VIP 不动, 健康检查等于装饰。
     #   (55937c0 说 -30 会"跨级"甩到末位也是算错: 首台掉到 70 时次高台是 90、末位 80, 选 90。)
     #   故按台数派生, 保证任意台数都够: N 台 -> -(N x 10)。已模拟 2-8 台的最坏情况(前 k 台连挂)。
     weight {{ lb_vrrp_check_weight | default(-((groups['k8slb'] | length) * 10)) }}
+{% endif %}
 }
 
 vrrp_instance VI_1 {

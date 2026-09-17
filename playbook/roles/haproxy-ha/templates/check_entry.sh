@@ -24,6 +24,21 @@
 set -u
 PORT="{{ _lb_entry_port }}"
 
+{% if (lb_vrrp_preempt_mode | default('nopreempt')) == 'nopreempt' and not (_lb_need_haproxy | bool) %}
+# ---- 冷启动兜底(仅 nopreempt + keepalived-only 组合需要) ----
+# nopreempt 模式下 vrrp_script 不配 weight, 检查失败会让 instance 进 FAULT(停发 advert)。
+# 而形态 B 的 endpoint 就是 VIP:{{ apiserver_port }} —— 建集群时 apiserver 还不存在:
+#   要 VIP 才能建集群(admin.conf 指向 endpoint, init 之后的 task 全靠 kubectl)
+#   要 apiserver 检查才过, 要检查过 VIP 才起来, 要集群才有 apiserver —— 死锁。
+# 故: kubelet.conf 不存在 = 本节点还没 join 过集群 = 处在建集群阶段, 直接放行让 VIP 起来。
+# 一旦 join 过(kubelet.conf 落盘, kubeadm init/join 会写), 之后永远走真实探测。
+# ⚠ 独立 LB 节点(不在 k8s_master/k8s_node 里)永远没有 kubelet.conf, 会永久放行 —— 但那种
+#   节点跑的是 haproxy 形态(_lb_need_haproxy=true), 本兜底不会渲进去。
+if [ ! -f /etc/kubernetes/kubelet.conf ]; then
+    exit 0
+fi
+{% endif %}
+
 if command -v curl >/dev/null 2>&1; then
     # ⚠ 不要写 `|| echo 000`: curl 连不上时 -w '%{http_code}' 【自己就输出 000】, 再叠一个
     #   echo 000 会拼成 "000000"。配上原先反向的判断 `[ "$code" != "000" ]`, 000000 != 000
