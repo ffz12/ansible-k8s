@@ -32,7 +32,20 @@ vrrp_script chk_entry {
     #   不配 weight 时, 检查失败让 instance 进 FAULT: 停发 advert -> 对端按"MASTER 消失"接管
     #   (master-down 检测, 不是抢占, nopreempt 拦不住) -> 恢复后本机以 BACKUP 回来、被
     #   nopreempt 按住不抢回。故障能切、恢复不回切, 两头都满足。
-    #   (同一机制的旁证: 使用者重启首台时 VIP 正常漂移 —— 重启同样是"停发 advert"。)
+    #
+    #   ✔ 2026-09-17 现网实测通过(cluster C, 3 台 cpu200/201/202, keepalived-only + nopreempt)。
+    #     停 cpu201 的 apiserver, keepalived 日志:
+    #       17:42:16  Script `chk_entry` now returning 1
+    #       17:42:18  VRRP_Script(chk_entry) failed (exited with status 1)
+    #       17:42:18  (VI_1) Entering FAULT STATE          <- 停发 advert
+    #       17:43:20  chk_entry now returning 0            <- apiserver 恢复
+    #       17:43:22  VRRP_Script(chk_entry) succeeded
+    #       17:43:22  (VI_1) Entering BACKUP STATE         <- 回来是 BACKUP 而非 MASTER
+    #     同时 cpu200 拿到 VIP(priority 100, 不是末位的 cpu202/80 —— 选主顺序正确);
+    #     cpu201 恢复后 check_entry.sh exit=0 但 VIP 仍在 cpu200, 确认【不回切】。
+    #   ✔ 防抖也实测到了: 同一段日志里 17:40:38 returning 1 -> 17:40:40 returning 0 的瞬时抖动
+    #     【没有】触发 FAULT —— fall 2 要求连续两次失败, 一轮就恢复的不算。
+    #   (旁证: 重启节点时 VIP 同样正常漂移 —— 重启也是"停发 advert", 走同一条 master-down 路径。)
     # ⚠ 代价: 两台检查同时失败时都进 FAULT, 期间【没有任何节点持 VIP】。weight 式则总有一台
     #   持有(哪怕它自己也坏了)。前者更诚实, 但形态 B 冷启动需要 check_entry.sh 里的兜底
     #   (kubelet.conf 不存在时直接 exit 0), 否则集群建不出来 —— 见该脚本头部说明。
