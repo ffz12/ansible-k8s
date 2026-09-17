@@ -24,16 +24,27 @@
 set -u
 PORT="{{ _lb_entry_port }}"
 
-{% if (lb_vrrp_preempt_mode | default('nopreempt')) == 'nopreempt' and not (_lb_need_haproxy | bool) %}
-# ---- 冷启动兜底(仅 nopreempt + keepalived-only 组合需要) ----
+{% if (lb_vrrp_preempt_mode | default('delay')) == 'nopreempt' and ('k8s_master' in group_names or 'k8s_node' in group_names) %}
+# ---- 冷启动兜底(nopreempt 模式需要, 两种形态都要) ----
 # nopreempt 模式下 vrrp_script 不配 weight, 检查失败会让 instance 进 FAULT(停发 advert)。
-# 而形态 B 的 endpoint 就是 VIP:{{ apiserver_port }} —— 建集群时 apiserver 还不存在:
+# 而建集群时 apiserver 还不存在, 于是:
 #   要 VIP 才能建集群(admin.conf 指向 endpoint, init 之后的 task 全靠 kubectl)
 #   要 apiserver 检查才过, 要检查过 VIP 才起来, 要集群才有 apiserver —— 死锁。
 # 故: kubelet.conf 不存在 = 本节点还没 join 过集群 = 处在建集群阶段, 直接放行让 VIP 起来。
 # 一旦 join 过(kubelet.conf 落盘, kubeadm init/join 会写), 之后永远走真实探测。
-# ⚠ 独立 LB 节点(不在 k8s_master/k8s_node 里)永远没有 kubelet.conf, 会永久放行 —— 但那种
-#   节点跑的是 haproxy 形态(_lb_need_haproxy=true), 本兜底不会渲进去。
+#
+# ⚠ 两种形态【都】需要这个兜底 —— 8a1eadc 里我把渲染条件写成了 `not _lb_need_haproxy`
+#   (只给 keepalived-only 渲), 依据是"haproxy 后端全 down 时返回 503, 检查照样过"。
+#   那句是错的: haproxy.cfg 的 frontend/backend 都是 `mode tcp`(503 是 HTTP 模式的行为),
+#   TCP 模式下后端全 down 是【拒绝连接】-> curl 拿到 000 -> 本脚本 exit 1。
+#   所以 haproxy 形态冷启动时检查同样失败, 配 nopreempt 会一样死锁。
+#
+# ⚠ 判据换成 group_names 而不是 _lb_need_haproxy: 真正决定"有没有这个信号"的是本机是不是
+#   master/worker, 与跑不跑 haproxy 无关。
+#     keepalived-only  VIP 必须落在某台 master 的 apiserver 上 -> 必然共机 -> 有 kubelet.conf
+#     haproxy + 共机    有 kubelet.conf
+#     haproxy + 独立 LB 节点  永远没有 kubelet.conf -> 兜底会【永久放行】, 检查形同虚设
+#   故第三种组合不渲染本段, 并由 tasks/main.yaml 的 assert 直接拦下(它得用 delay)。
 if [ ! -f /etc/kubernetes/kubelet.conf ]; then
     exit 0
 fi

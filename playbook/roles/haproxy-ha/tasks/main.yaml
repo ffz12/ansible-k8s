@@ -22,6 +22,29 @@
   set_fact:
     _lb_need_haproxy: "{{ (lb_proxy | default('haproxy')) == 'haproxy' }}"
 
+# nopreempt 走 FAULT 机制(不配 weight), 检查失败即停发 advert。建集群时 apiserver 还不存在,
+# 所以需要"本节点还没 join 过"这个信号来放行, 否则全节点 FAULT -> 无人持 VIP -> 建不出集群。
+# 那个信号是 /etc/kubernetes/kubelet.conf —— 只有 master/worker 才会有它。
+# 独立 LB 节点(不在 k8s_master/k8s_node 里)永远没有, 兜底会【永久放行】让检查形同虚设,
+# 故这种组合直接拦下: 它该用 delay(weight 式, 三台同样降权、相对优先级不变, 冷启动天然可用)。
+- name: 校验 nopreempt 与节点角色的组合
+  assert:
+    that:
+      - (lb_vrrp_preempt_mode | default('delay')) != 'nopreempt'
+        or ('k8s_master' in group_names or 'k8s_node' in group_names)
+    fail_msg: >-
+      本机 {{ inventory_hostname }} 不在 [k8s_master] / [k8s_node] 里(独立 LB 节点),
+      不能用 lb_vrrp_preempt_mode: nopreempt。
+      原因: nopreempt 走 FAULT 机制, 建集群阶段需要靠 /etc/kubernetes/kubelet.conf 是否存在
+      来判断"还没 join、先放行让 VIP 起来"; 独立 LB 节点永远没有那个文件, 兜底会永久放行 ——
+      检查从此形同虚设, apiserver 全挂了 VIP 也不会漂走。
+      改用 lb_vrrp_preempt_mode: delay(默认)。它走 weight 降权: 各节点同样降权、相对优先级
+      不变, 冷启动天然可用, 不需要任何兜底。代价只是故障恢复后 VIP 会回切一次。
+    success_msg: >-
+      nopreempt 组合检查通过({{ inventory_hostname }} 在
+      {{ 'k8s_master' if 'k8s_master' in group_names else 'k8s_node' }} 里, 有 kubelet.conf 信号)
+  when: (lb_vrrp_preempt_mode | default('delay')) == 'nopreempt'
+
 # 入口端口: haproxy 模式探 haproxy 前端(apiserver_lb_port), keepalived-only 探 apiserver 自己。
 # ⚠ 必须在这里 set_fact 而【不能】在模板里 {% set %} —— keepalived.conf.j2 与 check_entry.sh
 #   是两个模板, 后者读不到前者的局部变量, 会渲出 PORT="" 让检查恒失败。而恒失败的症状是
