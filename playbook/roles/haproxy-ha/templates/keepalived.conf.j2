@@ -2,8 +2,11 @@ global_defs {
    # 性能优化参数(学习 nginx-ha)
    vrrp_garp_master_refresh 60  # 主节点定期发送 GARP 包刷新 ARP 缓存
    vrrp_garp_master_repeat 2    # 每次发送的 GARP 包数量
-   script_security              # 允许执行脚本
-   enable_script_security       # 显式启用脚本安全(某些版本需要)
+   # ⚠ 这里原先还有一行 `script_security` —— keepalived 【没有这个指令】, 每次启动都报
+   #   (Line 5) Unknown keyword 'script_security'。2026-09-17 现网 cpu200 日志确认, 且
+   #   Sep 06 的旧日志里同样有, 不是新引入的。真正生效的是下面这行 enable_script_security。
+   #   留着的害处: 每次启动一条警告, 且让人以为"脚本安全"是靠那行开的。已删。
+   enable_script_security       # 脚本路径若被非 root 可写则拒绝以 root 执行
    script_user root             # 指定执行脚本的用户
 }
 

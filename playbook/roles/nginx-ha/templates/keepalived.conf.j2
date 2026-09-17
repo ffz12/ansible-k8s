@@ -2,9 +2,11 @@ global_defs {
    # 性能优化参数
    vrrp_garp_master_refresh 60  # 主节点定期发送GARP包刷新ARP缓存
    vrrp_garp_master_repeat 2    # 每次发送的GARP包数量
-   script_security script       #只允许执行脚本文件
-   enable_script_security       #显式启用（某些版本需要）
-   
+   # ⚠ 原先这里有一行 `script_security script` —— keepalived 没有该指令, 启动会报
+   #   Unknown keyword 'script_security'(haproxy-ha 侧同一行已由现网日志确认)。已删。
+   #   真正生效的是下面这行。
+   enable_script_security       # 脚本路径若被非 root 可写则拒绝以 root 执行
+
 } 
 vrrp_script check_nginx {
     script  "/etc/keepalived/check_nginx"  #执行nginx检测脚本(发行版默认路径)
