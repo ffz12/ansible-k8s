@@ -124,7 +124,14 @@ lb_vrrp_unicast: true
 #
 # ⚠ nopreempt 的取舍: 它保证不回切, 但也意味着【VIP 可能长期停在低优先级节点上】。
 #   若各 LB 节点性能不对等(比如首台配置更好), 或希望 VIP 有确定的归属, 用 delay 更合适。
-lb_vrrp_preempt_mode: delay
+#
+# 2026-09-17 默认从 delay 改为 nopreempt。理由: 每次抢占都是一次入口中断, 而各 LB 节点
+#   通常配置对等(使用者确认现网如此), "VIP 必须回到首台"没有实际收益 —— 白付一次中断。
+#   现网实测(cluster C, cpu200/cpu201)delay 的行为: apiserver 挂 -> 13 秒后 VIP 漂到 cpu201
+#   -> apiserver 恢复 -> 13 秒后又漂回 cpu200。故障一次、中断两次。
+#   ⚠ 冷启动时若首台的健康检查恰好失败, VIP 会落在次台并【一直留在那里】—— 这是 nopreempt
+#     的设计行为不是故障。想要 VIP 有确定归属就改回 delay。
+lb_vrrp_preempt_mode: nopreempt
 # delay 模式下等待多少秒再抢回。太短起不到防抖作用, 太长则故障恢复后 VIP 归位慢。
 # keepalived 允许 0-1000; 5-30 秒是常见区间。
 lb_vrrp_preempt_delay: 10
