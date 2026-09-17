@@ -25,11 +25,19 @@ set -u
 PORT="{{ _lb_entry_port }}"
 
 if command -v curl >/dev/null 2>&1; then
-    # -o /dev/null 丢弃 body; -w 只取状态码; 拿到任何码即视为在应答
+    # ⚠ 不要写 `|| echo 000`: curl 连不上时 -w '%{http_code}' 【自己就输出 000】, 再叠一个
+    #   echo 000 会拼成 "000000"。配上原先反向的判断 `[ "$code" != "000" ]`, 000000 != 000
+    #   为真 -> apiserver 已死却报告健康。2026-09-16 现网 cpu200 上实测踩到(apiserver 停了,
+    #   脚本仍 exit=0, VIP 不漂)。
+    # ⚠ 判断改为【正向匹配三位 HTTP 状态码】而非反向排除某个值: 反向排除只挡得住你想到的
+    #   那一种坏值(000), 挡不住 000000 / 空串 / curl 的错误文本; 正向匹配则只有真拿到状态码
+    #   才算通过。
     code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 2 \
-            "https://127.0.0.1:${PORT}/livez" 2>/dev/null || echo 000)"
-    [ "$code" != "000" ] && exit 0
-    exit 1
+            "https://127.0.0.1:${PORT}/livez" 2>/dev/null)"
+    case "$code" in
+        [1-5][0-9][0-9]) exit 0 ;;   # 200/401/403/500... 都算在应答
+        *)               exit 1 ;;   # 000(连不上) / 空 / 任何非状态码
+    esac
 fi
 
 # curl 缺失时的退化路径
