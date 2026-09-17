@@ -1,0 +1,80 @@
+name: Sync from Codeup
+
+# Codeup(git@codeup.aliyun.com:.../ansible-k8s) 是唯一的写入源, GitHub 侧只做镜像。
+#
+# ⚠ 本文件现在【存在于 Codeup 仓库里】(2026-09-17 起)。这是从旧版"rsync 文件内容"改成
+#   "真镜像"的前提 —— 旧版必须 --exclude '.github/' 才不会把自己删掉, 而排除 .git/ 又导致
+#   tag 与非默认分支从来没有同步过(rsync 复制的是工作树, 不是引用)。
+#   把本文件纳入 Codeup 版本控制后, 镜像就不会删掉它, 于是可以推全部引用。
+#
+# 旧版的两个具体缺陷(2026-09-17 由使用者发现):
+#   1. --depth=1 只取默认分支 tip。v1.0.0 指向 47 个 commit 之前的 09cf972, 不在 depth 1
+#      范围内; release/v1.0 是另一条分支, 压根没 fetch。
+#   2. 更根本: rsync --exclude '.git/' 意味着历史/tag/分支从未传输。GitHub 侧只有一串
+#      "sync: from Codeup <date>" 的合成提交, SHA 与 Codeup 毫无关系。
+#      后果: docs/版本说明.md 被同步过去, 而它写着 `git checkout v1.0.0`、
+#      `git log --oneline v1.0.0..main`, 还引用约 20 个裸 SHA —— 在 GitHub 侧全都解析不了。
+#      镜像里带着一份只在源仓库成立的文档, 比丢 tag 本身更容易误导人。
+
+on:
+  schedule:
+    # 每 6 小时。分钟取 37 而非 0 —— 整点是所有人的默认值, GitHub 那一刻排队最长。
+    - cron: '37 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 同一时刻只跑一个, 避免两次调度撞在一起互相 force push。
+concurrency:
+  group: sync-codeup
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 镜像同步 Codeup 的全部分支与 tag
+        env:
+          CODEUP_USER: ${{ secrets.ALIYUN_USER }}
+          CODEUP_PASS: ${{ secrets.ALIYUN_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # --mirror: 拿全部引用与完整历史。不能用 --depth=1 —— tag 指向的 commit 通常在
+          # 浅克隆范围之外(v1.0.0 就落在 47 个 commit 前)。
+          # sed 兜底: 万一 git 把带凭据的 URL 打进日志也不会泄漏(GitHub 的 secret 掩码只认
+          # secret 原文, 拼进 URL 后的形态未必被识别)。
+          git clone --mirror \
+            "https://${CODEUP_USER}:${CODEUP_PASS}@codeup.aliyun.com/68e89ecdf9c52e7d8c269ad7/ansible-k8s.git" \
+            /tmp/mirror 2>&1 | sed -E 's#//[^@]*@#//***:***@#g'
+          cd /tmp/mirror
+
+          echo "=== 源侧引用 ==="
+          git show-ref | sed 's/^/  /'
+          echo "=== 源侧 HEAD ==="
+          git log --oneline -1 --no-decorate
+
+          # 自检: 本文件必须在源仓库里。不在的话说明有人从 Codeup 删了它 ——
+          # 此时若继续 mirror push, GitHub 侧的 workflow 会被一起删掉, schedule 再也不触发
+          # (旧版就是这么自杀的, 只是原因不同)。宁可失败, 不要静默自毁。
+          if ! git cat-file -e "HEAD:.github/workflows/sync-codeup.yml" 2>/dev/null; then
+            echo "❌ 源仓库 HEAD 里没有 .github/workflows/sync-codeup.yml"
+            echo "   继续 mirror push 会删掉 GitHub 侧的 workflow 文件, 之后再也不会自动同步。"
+            echo "   请先把该文件提交回 Codeup, 或改用只推 tag/分支的方式。"
+            exit 1
+          fi
+          echo "✅ 自检通过: workflow 文件在源仓库里"
+
+          git remote add gh "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # 只推 heads 与 tags, 【不】用 git push --mirror ——
+          # 后者会尝试删除 GitHub 自己管理的 refs/pull/*(只读), 导致整次推送报错。
+          # --prune: Codeup 上删掉的分支/tag 这边也删, 保持真镜像语义。
+          # --force: main 会被改写成 Codeup 的历史(旧版留下的合成 sync 提交就此消失), 必须带。
+          git push --force --prune gh 'refs/heads/*:refs/heads/*'
+          git push --force --prune gh 'refs/tags/*:refs/tags/*'
+
+          echo "=== 同步完成 ==="
+          git ls-remote gh 2>&1 | sed -E 's#//[^@]*@#//***:***@#g' | sed 's/^/  /'
