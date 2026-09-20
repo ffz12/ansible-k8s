@@ -152,7 +152,7 @@ if [ -n "$IMG_LIST" ]; then
     else
       echo "ETCD=$ETCD" >> "$VF"
     fi
-    say "已回写 versions.env: ETCD=$ETCD(部署侧请确保 etcd_version 由 k8s_compat 派生, 勿在 env.yaml 手写)"
+    say "已回写 versions.env: ETCD=$ETCD(部署侧会扫 offline/artifacts/etcd/ 用实际版本, 勿在 env.yaml 手写 etcd_version)"
   fi
 else
   say "⚠ kubeadm 未给出镜像清单, 沿用默认 coredns=v$COREDNS pause=$PAUSE etcd=v$ETCD"

@@ -1,6 +1,5 @@
 # inventory 主机清单模板 —— 复制为 inventory/hosts 按实际填写(去行首 #)
 # 约定: 机器只写一次(ansible_host 等), 别的组只列主机名; 同名=同一台。
-# 详见 docs/主机初始化-os-init.md
 # ============================================================================
 
 # 全部机器写在这。⚠ policy=inventory 时, 这里写的名字就是机器最终主机名
@@ -21,42 +20,6 @@
 # 加新节点时把新机名填这, init.yaml 只初始化它, 不动已交付的老机器。
 #cpu-005
 
-[containerd]
-# 用 containerd 的节点(只列主机名); GPU/加速器节点的 accelerator_type 写在上面 [cluster] 的机器行上
-#cpu-001
-[k8s_master]
-# 控制平面(建议奇数台); 多 master 需配 lbvip + 跑 LB(见 [k8slb])
-#cpu-001
-[k8s_node]
-# worker 节点
-#cpu-005
-
-
-[etcd]
-# 外置 etcd(建议 3/5 台奇数; 可与 master 共机)
-#cpu-001
-
-
-[k8slb]
-# haproxy+keepalived LB(多 master 才需要; 常与 master 共机)
-# 只列主机名; VIP 网卡自动按 ansible_host 探测, 无需 host_ip
-#cpu-001
-
-[harbor]
-# Harbor 节点(在线从公共 mirror 拉镜像时可不部署)，走的ip配置部署写ip
-#172.171.1.217
-
-[docker]
-# 装 docker 的节点(本项目里 docker 仅给 Harbor 用; k8s 节点跑 containerd 直连,不用 docker)。
-# 按行内 accelerator_type 区分:
-#   accelerator_type=nvidia -> docker + nvidia-container-toolkit(daemon 默认 runtime=nvidia)
-#   不设                     -> 普通 docker
-# ⚠️ docker 侧【只支持 nvidia】; dcu/npu(华为昇腾)只在 containerd 生效,别往这组写 dcu/npu。
-#cpu-008
-#a800-node30 accelerator_type=nvidia
-[cri_docker_nodes]
-# cri-dockerd 特殊场景需要
-
 # ---- 挂盘方式分组(只列主机名; 挂盘 playbook 靠 --limit 认这两个组) ----
 # 按【盘的形态】分, 不按有没有 GPU 卡 —— 两者没必然关系(CPU 机也可能 4 盘、
 # GPU 机也可能只 1 块盘), 用 accelerator_type 推断挂盘方式换个机型就错。
@@ -70,6 +33,45 @@
 [nvme_single]
 # 单盘机器(盘符不一致时在 [cluster] 的机器行上写 device_path=/dev/nvmeXn1)
 #cn-10-14-72-1
+
+
+[containerd]
+# 用 containerd 的节点(只列主机名); GPU/加速器节点的 accelerator_type 写在上面 [cluster] 的机器行上
+#cpu-001
+
+[docker]
+# 装 docker 的节点(本项目里 docker 仅给 Harbor 用)
+# 按行内 accelerator_type 区分:
+#   accelerator_type=nvidia -> docker + nvidia-container-toolkit(daemon 默认 runtime=nvidia)
+#   不设                     -> 普通 docker
+# ⚠️ docker 侧【只支持 nvidia】; dcu/npu(华为昇腾)只在 containerd 生效,别往这组写 dcu/npu。
+#cpu-008
+#a800-node30 accelerator_type=nvidia
+
+[harbor]
+# Harbor 节点(在线从公共 mirror 拉镜像时可不部署)，走的ip配置部署写ip
+#172.171.1.217
+
+
+[cri_docker_nodes]
+# cri-dockerd 特殊场景需要
+
+[k8slb]
+# haproxy+keepalived LB(多 master 才需要; 常与 master 共机)
+# 只列主机名; VIP 网卡自动按 ansible_host 探测, 无需 host_ip
+#cpu-001
+
+[k8s_master]
+# 控制平面(建议奇数台); 多 master 需配 lbvip + 跑 LB(见 [k8slb])
+#cpu-001
+
+[k8s_node]
+# worker 节点
+#cpu-005
+
+[etcd]
+# 外置 etcd(建议 3/5 台奇数; 可与 master 共机)
+#cpu-001
 
 # ---- 扩缩容临时组(平时留空; 加/删时才填,只列主机名) ----
 # 注: 加 master/worker 直接进 [k8s_master]/[k8s_node] + --limit 即可, 无需 master_to_add
