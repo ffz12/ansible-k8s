@@ -98,30 +98,28 @@
         mode: '0755'
       loop: [absent, directory]
 
-    # ⚠ 【不要】在这里加 mode: —— unarchive 的 mode 会一并作用到解出来的【目录】上。
-    #   曾写成 mode: '0644', 于是目录也变 0644、没有执行位:
-    #     N: Download is performed unsandboxed as root as file
-    #        '/opt/ubuntu-offline-pkgs/./InRelease' couldn't be accessed by user '_apt'.
-    #        - pkgAcquire::Run (13: Permission denied)
-    #   而 ansible 的 apt 模块只会转述成一句没有信息量的
-    #     "Failed to update apt cache: unknown reason"
-    #   —— 真因得去目标机手工跑 apt-get update 才看得到。2026-09-15 现网踩过。
-    #   不指定 mode 时 tar 保留归档里的原始权限(目录 0755 / 文件 0644), 正是想要的结果。
+    # ⚠ mode 用【符号形式】, 别用八进制。unarchive 的 mode 会递归作用到解出来的每一项:
+    #   · 大写 X = "仅在目录、或本来就有执行位的文件上加执行位" —— 于是目录 0755、文件 0644,
+    #     正是 apt 对本地 file:// 源的要求。
+    #   · 写八进制 '0644' 会让目录也变 0644、丢执行位, apt 的非特权用户 _apt 进不去:
+    #       N: Download is performed unsandboxed as root as file
+    #          '/opt/ubuntu-offline-pkgs/./InRelease' couldn't be accessed by user '_apt'.
+    #          - pkgAcquire::Run (13: Permission denied)
+    #     而 ansible 的 apt 模块只转述成一句没有信息量的
+    #       "Failed to update apt cache: unknown reason"
+    #     —— 真因得去目标机手工跑 apt-get update 才看得到。2026-09-15 现网踩过。
+    #   · 写八进制 '0755' 能修好, 但会把 .deb 全标成可执行, 不干净。
+    #   · 完全【不写】mode 也不行: tar 保留打包机的原始权限, umask 异常的归档解出来
+    #     目录/文件权限双双不对, 同样是上面那个 _apt 报错。2026-09-17 现网踩过。
+    #     (曾用 `find -type d -not -perm 755 -exec chmod 755` 兜底, 只修目录不修文件,
+    #      文件权限异常时照样失败 —— 已删除, 由本任务的 mode 一次覆盖两者。)
     - name: 动态拷贝对应版本和架构的 DEB 离线包到目标机
       unarchive:
         src: "{{ offline_artifacts }}/ios-offline/ubuntu{{ ansible_distribution_version.split('.')[0] }}_{{ 'arm64' if ansible_architecture == 'aarch64' else 'x86_64' }}.tar.gz"
         dest: /opt/ubuntu-offline-pkgs/
         owner: root
         group: root
-
-    # 兜底: 归档里若本来就有权限异常的目录(打包机 umask 怪异等), 上面 unarchive 保留原样
-    # 也照样进不去。这里统一把目录补成 0755、文件保持 0644, 与 apt 对本地源的要求对齐。
-    # 幂等: 权限已正确时不产生 changed。
-    - name: 校正离线源目录权限(apt 的 _apt 用户需要目录可进入)
-      command: >-
-        find /opt/ubuntu-offline-pkgs -type d -not -perm 755 -exec chmod 755 {} +
-      register: _offline_perm_fix
-      changed_when: false          # find -exec 无输出, 无法据此判断; 权限本身幂等
+        mode: u=rwX,go=rX
 
     - name: 【Ubuntu 22.04 离线】覆写传统 sources.list(留时间戳备份)
       copy:

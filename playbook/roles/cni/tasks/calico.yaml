@@ -4,12 +4,8 @@
 
 # 双池模式下两个 pool CIDR 必填: 默认是空串, 开了开关但没填会渲染出 `cidr: ""` 的非法
 # IPPool —— kubectl apply 未必立刻报错, 但 Pod 永远拿不到 IP, 排查成本高。
-# ⚠ 本 assert 只校验【非空 + 形如 a.b.c.d/n】。做不到的部分(需 netaddr/ipaddr 滤镜, 本仓库
-#   无该依赖, Kylin 离线环境额外装 python 包很麻烦, 故不引入):
-#     · 掩码取值是否合法(/33 这种也会被判通过);
-#     · 两池之间、池与 service_subnet 之间是否重叠;
-#     · pod_subnet 是否覆盖两个池段。
-#   这三项请实跑前用 docs/部署说明.md 十三.1 里的 python 片段自行验算。
+# ⚠ 本 assert 只校验【非空 + 形如 a.b.c.d/n】。掩码取值、重叠、覆盖关系由【下一个任务】
+#   (调 localhost 的 python3 stdlib ipaddress)校验 —— 不需要 netaddr/ipaddr 滤镜。
 - name: 校验双池 CIDR 已填且形如 CIDR(仅双池模式)
   assert:
     that:
@@ -22,14 +18,104 @@
       calico_gpu_pool_cidr={{ calico_gpu_pool_cidr | default('') | trim | default('<空>', true) }},
       calico_cpu_pool_cidr={{ calico_cpu_pool_cidr | default('') | trim | default('<空>', true) }}。
       两者默认是空串且模板不校验, 空着会渲染出 cidr: "" 的非法 IPPool ——
-      apply 未必报错, 但 Pod 永远拿不到 IP。请在 inventory/group_vars/all/env.yaml 填,
-      并确认: ①两池互不重叠 ②两池都不与 service_subnet 重叠
-      ③pod_subnet 是能覆盖两池的超网(不连续网段的超网算法与验算脚本见
-      docs/部署说明.md 十三.1 "pod_subnet 超网怎么算")。
+      apply 未必报错, 但 Pod 永远拿不到 IP。请在 inventory/group_vars/all/env.yaml 填。
+      ⚠ 顺便把 pod_subnet 改成能覆盖两池的超网 —— 它在 env.yaml 里位于双池块【上方】,
+      最容易漏(漏了集群能跑但所有 Pod 访问 ClusterIP 都被 SNAT)。覆盖/重叠/掩码关系由
+      【下一个任务】自动校验, 不用手工验算; 超网算法见 docs/部署说明.md 十三.1。
     success_msg: >-
       双池 CIDR 已填: gpu={{ calico_gpu_pool_cidr }}, cpu={{ calico_cpu_pool_cidr }}
-      (重叠/覆盖关系本 assert 不校验, 需自行验算)
+      (掩码/重叠/覆盖关系见下一个任务)
   when: calico_dual_ippool_enabled | default(false) | bool
+  run_once: true
+  delegate_to: localhost
+
+# ============================================================================
+#  预检: pod_subnet 必须覆盖两个池段, 且四段互不重叠
+#
+#  为什么需要这个: 开双池时只取消 calico_dual_ippool_enabled/两池 CIDR 的注释、忘了回头
+#  改 pod_subnet(env.yaml 里它在双池块【上方】十几行), 装出来的集群【能跑但是错的】——
+#  Pod 从池段取地址, 而 kube-proxy 的 clusterCIDR 来自 kubeadm 的 podSubnet(= pod_subnet),
+#  于是 nft/iptables 里那句 `saddr != <clusterCIDR> jump mark-for-masquerade` 对所有 Pod
+#  成立, Pod 访问任何 ClusterIP 都被 SNAT 成节点 IP:
+#      · 后端拿不到真实源 Pod IP;
+#      · 按源 Pod/命名空间选择器写的 NetworkPolicy 对经 Service 的流量失效;
+#      · 多一层 SNAT + conntrack, 高并发下有端口耗尽风险。
+#  连通性完全正常, 功能测试全过也发现不了。2026-09-17 现网踩过(pod_subnet 留着默认的
+#  10.240.0.0/12, 两池是 10.14.32.0/19 + 10.14.96.0/20)。且 pod_subnet 建完集群不可改,
+#  只能改 kube-proxy 的 cm 兜, 所以必须在装机【之前】拦住。
+#
+#  为什么用 python3 而不是 assert + netaddr 滤镜: netaddr/ipaddr 滤镜要额外装 python 包
+#  (Kylin 离线环境很麻烦), 而 ipaddress 是 python3 标准库、控制节点必然有(ansible 自己就要)。
+#  delegate_to: localhost + run_once —— 纯配置校验, 不碰任何目标机。
+# ============================================================================
+- name: "预检 —— pod_subnet 覆盖两池且四段不重叠(仅双池模式)"
+  command:
+    argv:
+      - python3
+      - -c
+      - |
+        import ipaddress as ip, sys
+        names = ['pod_subnet', 'gpu_pool', 'cpu_pool', 'service_subnet']
+        nets, errs, warns = {}, [], []
+        for n, s in zip(names, sys.argv[1:5]):
+            try:
+                net = ip.ip_network(s.strip(), strict=False)
+            except ValueError as e:
+                errs.append('%s=%r 不是合法 CIDR: %s' % (n, s, e))
+                continue
+            if str(net) != s.strip():
+                warns.append('%s 写的是 %s, 实际生效 %s (主机位非零, 被掩码归一)'
+                             % (n, s.strip(), net))
+            nets[n] = net
+        if errs:
+            print('网段取值非法:')
+            print('\n'.join('  * ' + e for e in errs))
+            sys.exit(1)
+        if len(set(n.version for n in nets.values())) > 1:
+            print('四段 IP 版本不一致(v4/v6 混用): '
+                  + ', '.join('%s=%s' % (k, v) for k, v in nets.items()))
+            sys.exit(1)
+        pod, gpu, cpu, svc = (nets[n] for n in names)
+        def covers(a, b):
+            return (a.network_address <= b.network_address
+                    and a.broadcast_address >= b.broadcast_address)
+        for nm, pool in (('gpu_pool', gpu), ('cpu_pool', cpu)):
+            if not covers(pod, pool):
+                errs.append('pod_subnet %s 覆盖不到 %s %s' % (pod, nm, pool))
+        if gpu.overlaps(cpu):
+            errs.append('两池互相重叠: gpu_pool %s / cpu_pool %s' % (gpu, cpu))
+        for nm, n_ in (('gpu_pool', gpu), ('cpu_pool', cpu), ('pod_subnet', pod)):
+            if n_.overlaps(svc):
+                errs.append('%s %s 与 service_subnet %s 重叠' % (nm, n_, svc))
+        for w in warns:
+            print('警告: ' + w)
+        if errs:
+            print('网段规划有问题:')
+            print('\n'.join('  * ' + e for e in errs))
+            print('算法与验算脚本见 docs/部署说明.md 十三.1 "pod_subnet 超网怎么算"。')
+            print('注意 pod_subnet 建完集群不可改, 请在装机前改对 env.yaml。')
+            sys.exit(1)
+        print('网段关系 OK: pod_subnet %s 覆盖 gpu %s 与 cpu %s; 三段均不与 service %s 重叠'
+              % (pod, gpu, cpu, svc))
+      - "{{ pod_subnet }}"
+      - "{{ calico_gpu_pool_cidr }}"
+      - "{{ calico_cpu_pool_cidr }}"
+      - "{{ service_subnet }}"
+  register: _dual_pool_net_check
+  changed_when: false
+  failed_when: _dual_pool_net_check.rc != 0
+  when: calico_dual_ippool_enabled | default(false) | bool
+  run_once: true
+  delegate_to: localhost
+
+# 单独 debug 是为了让"主机位非零"这类【警告】在成功路径上也可见
+# (失败时 command 模块自己会把 stdout 打出来)。
+- name: "预检结论 —— 网段关系"
+  debug:
+    msg: "{{ _dual_pool_net_check.stdout_lines }}"
+  when:
+    - calico_dual_ippool_enabled | default(false) | bool
+    - _dual_pool_net_check.stdout_lines | default([]) | length > 0
   run_once: true
   delegate_to: localhost
 

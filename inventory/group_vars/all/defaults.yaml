@@ -302,10 +302,14 @@ calico_cpu_pool_blockSize: 26    # 每块 64 个地址; 若 CPU 节点真按 kub
 calico_gpu_pool_name: gpu-pool
 calico_cpu_pool_name: cpu-pool
 # 两池 CIDR 必填(calico_dual_ippool_enabled=true 时), 由使用者自己规划。
-# roles/cni/tasks/calico.yaml 开头有 assert 校验【非空 + 形如 a.b.c.d/n】; 但做不到:
-#   掩码取值合法性(/33 也通过) / 两池是否重叠 / 池与 service_subnet 是否重叠 /
-#   pod_subnet 是否覆盖两池 —— 这些要 netaddr 滤镜(本仓库无该依赖), 需自行验算,
-#   算法与 python 片段见 docs/部署说明.md 十三.1。
+# roles/cni/tasks/calico.yaml 开头两个任务会全量校验(都在 localhost 上跑, 不碰目标机):
+#   ①assert: 非空 + 形如 a.b.c.d/n;
+#   ②python3 预检(标准库 ipaddress, 不需要 netaddr 滤镜): 掩码取值合法性(/33 会被拦) /
+#     pod_subnet 是否覆盖两池 / 两池是否重叠 / 三段是否与 service_subnet 重叠 / v4v6 混用。
+# ⚠ 开双池必须回头改 pod_subnet 成覆盖两池的超网。只开双池不改它, 集群【能跑但是错的】:
+#   kube-proxy 的 clusterCIDR 取自 podSubnet(=pod_subnet), 覆盖不到池段时所有 Pod 访问
+#   ClusterIP 都被 SNAT 成节点 IP(丢真实源 IP、NetworkPolicy 失效)。功能测试全过也看不出来。
+#   2026-09-17 现网踩过。算法与 python 片段见 docs/部署说明.md 十三.1。
 calico_gpu_pool_cidr: ""
 calico_cpu_pool_cidr: ""
 cilium_image_repo: "{{ registry if (is_offline | default(false) | bool) else cilium_registry_online }}"
@@ -581,6 +585,68 @@ apiserver_lb_port: 8443
 #   上手前逐节点查 uname -r 与 nft --version; 不满足就继续用 ipvs 或 iptables。
 #   ⚠ 非 ipvs 的 drop-in 替换: KEP-3866 记了 NodePort 地址绑定、从 localhost 访问 NodePort 的行为差异,
 #   换之前先在测试环境实测。注: 上游默认仍是 iptables, 既不是 ipvs 也不是 nftables。
+#   换过来会变的两件事(都【不是】故障, 但会让人以为是):
+#     · NodePort 只在【节点主 IP】上接受, 不再是 iptables 模式的"任何本机地址"。
+#       所以 keepalived VIP:<nodePort> 会连不上(立刻 RST)。规则里那个 set `nodeport-ips`
+#       就是白名单, kube-proxy 只往里放节点 IP。要 VIP 也能进, 在 kube-proxy 的 cm 配
+#       nodePortAddresses(填能同时覆盖节点网与 VIP 的 CIDR); 但 VIP 漂移后新持有者的
+#       kube-proxy 何时把 VIP 纳进集合未实测, 切换期间可能有空窗 —— 别把入口押在这上面。
+#     · 从节点上 curl 127.0.0.1:<nodePort> 不再通(刻意变更)。监控脚本/健康检查若这么写会静默失败。
+#   ⚠ 宿主机 nft 工具可能读不了 kube-proxy 建的表(2026-09-17 现网实测, Ubuntu 24.04 + 内核 6.8):
+#     发行版原配 nft v1.0.9 dump kube-proxy 的 set/map 时段错误(ip 0000000000000000 = 调用了
+#     NULL 函数指针), 四台一致; chains 正常, 所以 `nft list table ip kube-proxy` /
+#     `nft list tables`(会先拉全表 cache 再按 family 过滤)全崩, 连没有表的 netdev/bridge 也崩。
+#     gdb backtrace: 崩在 libnftables 内部, 由 libnftnl 的 nftnl_set_list_foreach() 回调进去
+#     —— 即"逐个 set 处理"时按某属性做函数指针分发, 取到 NULL。
+#     以下是排查途中逐条实测排除的猜测。根因见下方 ⭐, 这几条留着是为了【别再重猜】:
+#       · 不是坏包/坏库: 空 netns 里 `nft list tables` 返回 0; ldd 干净; 同源重装无效。
+#       · 不是 set 本身、不是拼接类型、不是 comment、不是带元素: 在 test netns 里自建
+#         `type ipv4_addr`(+comment/+elements 四种组合)与 `ipv4_addr . inet_proto .
+#         inet_service : verdict` 都读得出来。
+#       · 不是"有 set 的表就崩": 同机 `nft list table ip calico` 正常, 而它有 7 个 set/map,
+#         含 flags interval、含 `type ifname : verdict` 且元素是引号字符串的 map。
+#       · 不是 JSON 意义上的表内容: 用容器的 nft dump 出 kube-proxy 整表 JSON(119 个对象),
+#         在 netns 里用【宿主机这个 1.0.9】加载再读回, 完全正常(对象数 119 进 119 出,
+#         未丢失) —— 连带斜杠的链名也渲染得出来。
+#       · 不是"宿主机环境/多表共存": 逐张表实测, 11 张里只有 ip kube-proxy 与 ip6 kube-proxy
+#         崩, 其余 9 张(ip nat/filter/mangle/raw、ip6 mangle/nat/filter、ip calico、
+#         arp calico-arp)全部正常。
+#     范围收敛到: kube-proxy 建的对象里有某个东西 1.0.9 的读取路径吃不下, 而它【在 nft 的
+#     JSON 表示里不可见】(否则上面那个 JSON 往返会一起崩)。
+#     注意 kube-proxy 是 hostNetwork, 容器里那个 1.0.6.1 读的就是【宿主机同一个 netns】
+#     —— 所以变量是二进制/库栈, 不是 netns 环境。JSON 往返永远复现不了它。
+#     ⭐ 根因: nft 各版本之间的【规则格式读写兼容性】, 不是坏包、也不是 1.0.9 单独有缺陷。
+#       三个 nft 构建读【同一份内核规则】的实测(同机同 netns —— kube-proxy 与 calico-node
+#       都是 hostNetwork, 容器里读到的就是宿主机规则):
+#         · 宿主机        nft v1.0.9   (Ubuntu 24.04 原配) → SEGV
+#         · kube-proxy 容器 nft v1.0.6.1                   → OK
+#         · calico-node 容器 nft v1.1.1                    → OK
+#       ⭐ 关键: 这张表是【谁写的】决定的。kube-proxy 的 knftables 是 shell 出【自己容器里那个
+#       nft】去写规则, 所以 ip/ip6 kube-proxy 两张表的写者 = v1.0.6.1。
+#       而 v1.0.6.1 是个【backport 构建】(1.0.6 + 新格式处理), 在 aojea 的兼容矩阵里地位特殊:
+#         · 它作为【读者】那一行全 ✅ —— 能读所有版本写的规则, 包括 v1.1.2~v1.1.6。
+#           这正是上游给 kube-proxy 选它的原因: 需要一个"什么都读得懂"的读者。
+#         · 它作为【写者】那一列, 除自己外全 ❌ —— 它写出来的东西, 老读者解析不了。
+#       本案就是后者的直接后果: 写者 v1.0.6.1 + 读者 v1.0.9 → 段错误。
+#       (矩阵只测了"读者版本 <= 写者版本"的升级方向, 本案 1.0.9 读 1.0.6.1 写落在未测的
+#        对角线另一侧, 但那一整列的 ❌ 已经说明问题。实测 1.1.1 能读, 说明 1.0.9~1.1.1 之间
+#        读取侧补上了对这种格式的处理。)
+#       ⭐ 所以升级目标: 读者需要是 v1.0.6.1 或 >= v1.1.1。本机 v1.1.1 已实测可读, 是确切目标。
+#     ⚠ 另一个方向的同类故障(本站点目前没踩, 但升级时要避开): 写者 >= v1.1.2 会让所有
+#       <= v1.1.1 的读者崩(矩阵右上角那片 ❌, 即 RHEL-152438 描述的 set udata 情形 ——
+#       新版往 set 写 udata, 老版列举时不能正确跳过未知 TLV 键而坏解引用)。同一个家族的问题,
+#       只是写者/读者的版本组合不同。本案的具体载荷未验证到字段级, 但对运维没有价值。
+#       参考: RHEL-152438(https://redhat.atlassian.net/browse/RHEL-152438);
+#             同症状的 istio 案例 istio/istio#58492;
+#             aojea 的 nft 读写版本兼容矩阵 gist c17a8bbf40d98c3f59c8ed2712ec43a0(读者 ×
+#             写者 全矩阵, 判断"某个 nft 能不能读某个组件写的规则"直接查它)。
+#       (另: `nft --debug=netlink list set ...` 验不了这个 —— 它只打印【发出的请求】,
+#        而相关属性在内核【响应】里, 那条验证法无效, 别再试。)
+#     包版本自洽(libnftnl11 1.2.6 / libmnl0 1.0.5, ldd 干净), 同源重装无效(离线仓里没有
+#     nftables/iptables 包, nft 二进制来自基础镜像 —— 重装只动了两个库, 等于空操作)。
+#     内核侧健康, 数据面不受影响, 集群照常跑 —— 损失的只是"在宿主机直接看规则"这个窗口。
+#     绕法: kubectl -n kube-system exec <该节点的 kube-proxy Pod> -- nft ...(见 docs/部署说明.md 十七)。
+#     所以上面那句"查 nft --version"不够: nft --version 正常也可能崩, 要实跑 `nft list tables`。
 kube_proxy_mode: ipvs
 # kubelet 资源预留 / 驱逐阈值 / 日志与关机宽限。这些是【调优值】, 按机型该调:
 #   AI 大节点常调 kubelet_max_pods 与两组 *_reserved_*; 调之前先看清各项含义。
