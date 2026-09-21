@@ -1,4 +1,18 @@
 {#- ==========================================================================
+    本模板是 init 与 os-init 两个角色【共用】的唯一 chrony.conf 来源 —— os-init 的
+    tasks/time.yaml 用 role_path 相对路径指到这里渲染, 不再维护自己的一份副本。
+    见 os-init/tasks/time.yaml 里那条 template 任务的注释。
+    两个角色写的是【同一个目标文件】(/etc/chrony/chrony.conf), os-init 排在 init 之后
+    跑, 曾经出现过"两份模板各改各的, 后者把前者覆盖掉、且不报错"的隐蔽故障 ——
+    统一成一份之后, 这类分叉在结构上不可能再发生。
+
+    下面几个变量【只有 os-init 会传非默认值】, init 角色不传, 保持原有渲染结果:
+      chrony_client_sources  —— 客户端兜底源列表, 默认 [chrony_ip]
+      chrony_driftfile       —— driftfile 路径, 默认 /var/lib/chrony/drift
+      chrony_maxupdateskew   —— 步进修正的最大偏移量(秒), 默认不渲染该行
+    ========================================================================== -#}
+{%- set chrony_client_sources = chrony_client_sources | default([chrony_ip]) -%}
+{#- ==========================================================================
     自建内网 NTP server 特性(可选)
     开关 = inventory 的 [chronyserver] 组。该组【为空时下面所有条件块都不生效】,
     渲染结果与本特性引入前逐字节一致 —— 现有站点不受影响。
@@ -21,15 +35,22 @@
 server {{ hostvars[h].ansible_host | default(h) }} iburst
 {% endfor %}
 {% else %}
-server {{ chrony_ip }}  iburst
+{% for s in chrony_client_sources %}
+server {{ s }}  iburst
+{% endfor %}
 {% endif %}
 
 # Record the rate at which the system clock gains/losses time.
-driftfile /var/lib/chrony/drift
+driftfile {{ chrony_driftfile | default('/var/lib/chrony/drift') }}
 
 # Allow the system clock to be stepped in the first three updates
 # if its offset is larger than 1 second.
 makestep 1.0 3
+{% if chrony_maxupdateskew | default('') | trim | length > 0 %}
+
+# Allow the largest step correction (chrony_maxupdateskew, 交付初期机器时间可能差很多)。
+maxupdateskew {{ chrony_maxupdateskew }}
+{% endif %}
 
 # Enable kernel synchronization of the real-time clock (RTC).
 rtcsync

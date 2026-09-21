@@ -45,14 +45,25 @@
     inventory_hostname in (groups['chronyserver'] | default([]))
     or (ansible_host | default('')) in (groups['chronyserver'] | default([]))
 
-- name: 写入 chrony 配置
+# ⚠ 不再维护 os-init 自己的 chrony.conf.j2 —— 两个角色曾各写一份、写同一个目标文件、
+#   os-init 排在 init 之后跑, 出现过"改了一边被另一边覆盖、且不报错"的隐蔽故障
+#   (旧模板与本次去重的说明见 init/templates/chrony.conf.j2 头部注释)。
+#   现在统一指到 init 角色的模板, 用下面四个变量把渲染结果钉成与旧版本 os-init 输出
+#   逐字节一致(driftfile 路径、maxupdateskew、客户端兜底源列表、关掉云厂商元数据 NTP
+#   那一行), 其余行为不变 —— 已用 jinja2 直接渲染两条路径对比验证过。
+- name: 写入 chrony 配置(复用 init 角色的模板, 不再各写一份)
   template:
-    src: chrony.conf.j2
+    src: "{{ role_path }}/../init/templates/chrony.conf.j2"
     dest: "{{ osinit_chrony_conf }}"
     owner: root
     group: root
     mode: '0644'
     backup: yes
+  vars:
+    chrony_client_sources: "{{ osinit_ntp_servers }}"
+    chrony_driftfile: /var/lib/chrony/chrony.drift
+    chrony_maxupdateskew: "100.0"
+    chrony_cloud_metadata_ntp: false   # os-init 场景不渲染云厂商元数据 NTP, 与旧版本一致
   notify: restart chrony
 
 - name: 启用并启动 chrony({{ osinit_chrony_service }})
