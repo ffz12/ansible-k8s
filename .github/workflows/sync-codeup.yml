@@ -25,6 +25,21 @@ name: Sync from Codeup
 #   其中 refs/tags/v1.0.0^{} -> 09cf972 这个 peeled ref 也出现了, 说明 annotated tag 对象
 #   完整传过去了(没被降级成 lightweight tag)—— 即 tag 里那份说明在 GitHub 上也能 git show 看到。
 #   3868669 是 GitHub 旧的合成 head, 此后无引用指向, 由 GitHub 自行 GC。
+#
+# ⚠⚠ 第三种自毁方式(2026-09-18 踩到): 【改动本文件的内容】会被 GitHub 拒推。
+#   报错: ! [remote rejected] main -> main (refusing to allow a GitHub App to create or
+#         update workflow `.github/workflows/sync-codeup.yml` without `workflows` permission)
+#   机制: 推 workflow 文件需要 `workflows: write`, 而 Actions 自动注入的 secrets.GITHUB_TOKEN
+#     以 github-actions[bot] 这个 App 身份推送, 【结构上永远拿不到】该权限(GitHub 的硬限制,
+#     防止 workflow 改自己提权), 没有任何配置项能打开 —— 所以必须用带 workflow scope 的 PAT。
+#   为什么 run #19 反而成功: 那次推上去的本文件内容与 GitHub 侧已有的一致(旧版 rsync
+#     --exclude '.github/', GitHub 那份是独立存在的), 不构成实质变更, 未触发权限检查。
+#     是紧接着的 c01e462 往本文件加了上面那段 run #19 注释, 才带上真实的 workflow 变更 ——
+#     【宣布同步成功的那个提交, 正是弄坏同步的提交】。
+#   ⚠ 下面第 72 行那个自检只验本文件【存在】(git cat-file -e), 不验内容与 GitHub 侧一致,
+#     拦不住这个失败模式。改动本文件后务必去 Actions 看一次运行结果。
+#   修复(2026-09-18): GH_TOKEN 改用 secrets.GH_PAT(classic PAT, 勾 repo + workflow)。
+#     ⚠ PAT 有有效期, 到期后同步会以同样的报错失败 —— 届时换新值, secret 名字不用改。
 
 on:
   schedule:
@@ -48,7 +63,10 @@ jobs:
         env:
           CODEUP_USER: ${{ secrets.ALIYUN_USER }}
           CODEUP_PASS: ${{ secrets.ALIYUN_PASSWORD }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ⚠ 必须是带 workflow scope 的 PAT, 不能用 secrets.GITHUB_TOKEN ——
+          #   后者以 github-actions[bot] 身份推, 拿不到 workflows: write, 一改本文件就被拒推。
+          #   详见文件头"第三种自毁方式"。PAT 到期后在此 secret 里换新值即可。
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
 
