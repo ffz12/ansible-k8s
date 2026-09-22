@@ -5,9 +5,9 @@
 #
 # ⚠️ 跑完对应免密即失效, 之后再连需密码。作为交付/清理的【最后一步】执行(其余 playbook 先跑完)。
 #
-# 用法:
-#   ansible-playbook remove-control-key.yaml                          # 撤控制机 -> 全 cluster
-#   ansible-playbook remove-control-key.yaml -e source_node=gpu-001   # 撤 gpu-001 -> 全 cluster
+# 用法(从仓库根目录跑):
+#   ansible-playbook playbook/remove-control-key.yaml                          # 撤控制机 -> 全 cluster
+#   ansible-playbook playbook/remove-control-key.yaml -e source_node=gpu-001   # 撤 gpu-001 -> 全 cluster
 #   目标可再缩(推荐 target_hosts, 别用 -l):  -e target_hosts=gpu
 #     ⚠ -l 作用于本文件【每个 play】, 会连带过滤掉第一个 play 的 localhost 源 ——
 #       表现为 "skipping: no hosts matched" 后第二个 play 报

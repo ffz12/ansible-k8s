@@ -4,9 +4,9 @@
 #   -e source_node=<主机> 源 = 该节点       → 该节点(如 MPI launcher)免密登其他机器(一台 -> 多台)
 # 与 remove-control-key.yaml(删)成对。始终单向, 不是节点间 N×N 互信。
 #
-# 用法:
-#   ansible-playbook add-control-key.yaml                          # 控制机 -> 全 cluster
-#   ansible-playbook add-control-key.yaml -e source_node=gpu-001   # gpu-001 -> 全 cluster(含自己, MPI 用)
+# 用法(从仓库根目录跑):
+#   ansible-playbook playbook/add-control-key.yaml                          # 控制机 -> 全 cluster
+#   ansible-playbook playbook/add-control-key.yaml -e source_node=gpu-001   # gpu-001 -> 全 cluster(含自己, MPI 用)
 #   目标可再缩(推荐 target_hosts, 别用 -l):  -e target_hosts=gpu
 #     ⚠ -l 会连带过滤掉第一个 play 的 localhost 源, 导致公钥读不到(报 _source_pubkey 未定义);
 #       非用 -l 不可时须带上 localhost:  -l gpu-002,gpu-003,localhost
