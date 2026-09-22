@@ -82,6 +82,18 @@ networking:
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
 kind: KubeProxyConfiguration
 mode: {{ kube_proxy_mode }}
+{% if kube_proxy_mode == 'nftables' %}
+# ⚠ nftables 模式下 NodePort 默认只绑【节点主 IP】, 不像 iptables/ipvs 那样默认监听
+#   0.0.0.0/0(等价于"任何本机地址")—— 这里如果留空, keepalived VIP:<nodePort> 会
+#   连不上(立刻 RST), 因为 VIP 没被纳入 kube-proxy 那个 nodeport-ips 白名单集合。
+#   见 defaults.yaml 里 kube_proxy_mode 那段注释与 2026-09 现网实测(cpu200~203 那次)。
+#   nodeport_addresses 在 env.yaml 按需覆盖(默认 0.0.0.0/0, 与 iptables/ipvs 的默认行为
+#   对齐; 网段策略要收紧就填具体 CIDR 列表, 如只放业务网、排除管理网/存储网)。
+nodePortAddresses:
+{% for cidr in nodeport_addresses | default(['0.0.0.0/0']) %}
+  - {{ cidr }}
+{% endfor %}
+{% endif %}
 ---
 # === KubeletConfiguration ===
 apiVersion: kubelet.config.k8s.io/v1beta1

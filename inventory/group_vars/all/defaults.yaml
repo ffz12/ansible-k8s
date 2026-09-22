@@ -648,6 +648,13 @@ apiserver_lb_port: 8443
 #     绕法: kubectl -n kube-system exec <该节点的 kube-proxy Pod> -- nft ...(见 docs/部署说明.md 十七)。
 #     所以上面那句"查 nft --version"不够: nft --version 正常也可能崩, 要实跑 `nft list tables`。
 kube_proxy_mode: ipvs
+# kube_proxy_mode=nftables 时才生效(见 kubeadm-config.yaml.j2 里的条件渲染)。
+# 默认 0.0.0.0/0 = 对齐 iptables/ipvs 模式"监听所有本机地址"的行为, 保证 keepalived VIP
+# 也能走 NodePort(不然会连不上, 见上面 kube_proxy_mode 那段注释)。网络要分区隔离
+# (如不想让管理网/存储网碰到 NodePort)才收紧成具体 CIDR 列表:
+#   nodeport_addresses: ["172.171.1.0/24"]   # 只放业务网段
+nodeport_addresses:
+  - 0.0.0.0/0
 # kubelet 资源预留 / 驱逐阈值 / 日志与关机宽限。这些是【调优值】, 按机型该调:
 #   AI 大节点常调 kubelet_max_pods 与两组 *_reserved_*; 调之前先看清各项含义。
 kubelet_cpu_manager_policy: "none"       # none(通用) / static(CPU 绑核, 仅 AI 物理机)
