@@ -122,6 +122,7 @@
       - device-mapper-persistent-data
       - lvm2
       - python3
+      - sshpass        # synchronize 走密码认证时无条件调 sshpass, 缺了加 master 会失败(2026-09 现网踩过)
   when: is_offline | bool
 
 - name: 【在线模式】联网批量安装必要基础软件包
@@ -169,6 +170,7 @@
       - oddjob-mkhomedir
       - chrony
       - python3
+      - sshpass        # synchronize 走密码认证时无条件调 sshpass, 缺了加 master 会失败(2026-09 现网踩过)
     state: present
     update_cache: yes
   when: not is_offline | bool

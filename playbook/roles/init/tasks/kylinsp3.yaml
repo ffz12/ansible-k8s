@@ -115,6 +115,7 @@
       - ebtables
       - "nfs*"
       - rsync          # kube-add-master 的证书分发用 synchronize(底层 rsync), 缺了加 master 会失败
+      - sshpass        # synchronize 走密码认证时无条件调 sshpass, 缺了同样加 master 会失败(2026-09 现网踩过)
       - vim
   when: is_offline | bool
 
@@ -129,6 +130,7 @@
       - ebtables
       - chrony
       - rsync
+      - sshpass
       - tar
       - unzip
       - vim

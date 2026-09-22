@@ -125,6 +125,7 @@
       - oddjob-mkhomedir
       - chrony
       - python3
+      - sshpass        # synchronize 走密码认证时无条件调 sshpass, 缺了加 master 会失败(2026-09 现网踩过)
     state: present
     update_cache: yes
   when: not is_offline | bool

@@ -4,7 +4,7 @@
 # 注: haproxy keepalived 只有 LB 节点用 —— 放进同一次 yum 解析(下面 --downloadonly)不会重复(公共依赖去重),
 #     与基础包合成一个 tar; init 只装显式列表(kylin_offline_pkgs, 不含 LB), 故非 LB 节点只存不装;
 #     haproxy-ha 在 LB 节点从同一本地源按名安装。改这里需同步 roles/init/tasks/kylinsp3.yaml 的 kylin_offline_pkgs。
-OFFLINE_PKGS="openssl-libs pcre zlib socat chrony ipvsadm conntrack ipset ebtables nfs* rsync vim haproxy keepalived"
+OFFLINE_PKGS="openssl-libs pcre zlib socat chrony ipvsadm conntrack ipset ebtables nfs* rsync sshpass vim haproxy keepalived"
 KYLIN_IMAGE="hxsoong/kylin:v10-sp3"
 
 # 架构过滤(prefetch 按 env.yaml 的 offline_arch export ARCH; 直接跑不设=all=双架构, 与旧行为一致)
