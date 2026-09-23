@@ -1,0 +1,22 @@
+- name: 配置 Ceph 存储网主机解析 (去重版)
+  hosts: ceph
+  become: yes
+  vars:
+    # 1. 去重 + 排序, 与 host-set.yaml 的写法保持一致
+    unique_ceph_hosts: "{{ groups['ceph'] | unique | sort }}"
+
+    # 2. 动态生成需要写入的完整文本块, 读 ceph_host(存储网 IP), 不是 ansible_host
+    ceph_hosts_block_content: |
+      {% for item in unique_ceph_hosts %}
+      {{ hostvars[item]['ceph_host'] }} {{ item }}
+      {% endfor %}
+  tasks:
+    - name: 更新 /etc/hosts 中的 Ceph 存储网节点信息
+      blockinfile:
+        path: /etc/hosts
+        block: "{{ ceph_hosts_block_content }}"
+        state: present
+        backup: yes
+        # 与 host-set.yaml 的 "# Ansible k8s hosts {mark}" 区分, 避免两块互相覆盖
+        marker: "# Ansible ceph hosts {mark}"
+        create: yes
