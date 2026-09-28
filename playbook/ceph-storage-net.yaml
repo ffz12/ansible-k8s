@@ -1,0 +1,266 @@
+# 配置 Ceph 存储网 netplan(01-storage.yaml) 与管理网 netplan(81-mgmt.yaml)。
+# 存储网: IP 按 inventory 的 storage_ip 渲染, 网卡名按 storage_iface 渲染(不同机型
+#   网卡命名可能不一致, 不写死), 网关按方案 A 自动推导 = storage_ip 所在 /24 网段的
+#   .254(与 via 172.18.x.254 保持一致的路由目标 172.18.96.0/24 是站点约定, 若目标
+#   网段变化需同步改本文件里 vars.storage_route_target)。
+# 管理网: 这批机器 bond0/成员网卡/mode/mtu 全部一致, 故写死(不走变量); IP 直接复用
+#   ansible_host(即当前 SSH 连接就在用的那个地址, 渲染出来的值天然和现状一致,
+#   降低"改错 IP 把自己踢下线"的风险), 网关同样按方案 A 自动推导 .254。
+# ⚠ 本文件是单文件自包含的 —— 两份 netplan 内容都内联在 vars 里, 不依赖任何外部
+#   模板文件, 只需同步这一个文件就能跑通全流程(拉全量代码不方便时适用)。
+#
+# ⚠️⚠️ 高风险操作, 且两者风险等级不同:
+#   · 存储网(01-storage.yaml): 改错只影响存储网, 当前 SSH 连接(走管理网)不受影响,
+#     还能登录进去看日志/回滚。
+#   · 管理网(81-mgmt.yaml): 这是【当前 SSH 连接正在用的网卡】。改错的瞬间可能直接
+#     断开你此刻的连接, 且没有别的路能进去 —— 只能跑机房用 IPMI/控制台救。
+#   因此两者都要求显式确认才会真正 apply, 且用【不同的确认参数】, 避免确认一个
+#   顺带误触发另一个:
+#     confirm_storage_net=yes   只触发存储网那部分
+#     confirm_mgmt_net=yes      只触发管理网那部分(风险更高, 务必单独、谨慎地加)
+#   两者都默认走 `netplan try`(90 秒内无人确认自动回滚), 而不是直接 `netplan apply`;
+#   仅当目标机器 netplan 版本不支持 try 时才回退用 apply(风险自负)。
+#   两者应用前都会自动备份原文件(带时间戳), 方便手工回滚对比。
+#
+# 前提: inventory 的 [cluster] 机器行需定义 storage_ip 与 storage_iface, 例如:
+#   node027 ansible_host=172.18.8.27 storage_ip=172.18.104.11 storage_iface=ens46np0
+#   (管理网 IP 直接取 ansible_host, 不需要额外定义)
+#
+# 用法(存储网, 已验证过的流程):
+#   ansible-playbook playbook/ceph-storage-net.yaml --check --diff   # 先看会渲染出什么, 不落盘
+#   ansible-playbook playbook/ceph-storage-net.yaml                  # 只渲染+备份, 不 apply(占位确认)
+#   ansible-playbook playbook/ceph-storage-net.yaml -e confirm_storage_net=yes  # 真正 apply(netplan try)
+#
+# 用法(管理网, 风险更高, 务必逐台跑、每台跑完都亲自确认能不能连上再跑下一台):
+#   ansible-playbook playbook/ceph-storage-net.yaml --limit <单台> --check --diff
+#   ansible-playbook playbook/ceph-storage-net.yaml --limit <单台>
+#   ansible-playbook playbook/ceph-storage-net.yaml --limit <单台> -e confirm_mgmt_net=yes
+#   (最后这条跑完, 立刻从【另一台机器】ping/ssh 这台的 ansible_host 确认连通;
+#    90 秒内不确认 = 自动回滚; 确认没问题要永久生效, 必须在 90 秒内手工登录本机
+#    执行 netplan apply —— 这一步故意不写进自动化)
+
+- name: 配置 Ceph 存储网与管理网 netplan
+  hosts: cluster
+  become: yes
+  vars:
+    storage_route_target: 172.18.96.0/24   # 站点约定的存储网目标段, 与模板里的路由一致
+    mgmt_route_target: default             # 管理网默认路由, 与 81-mgmt.yaml 现状一致(to: default)
+    # 01-storage.yaml 的内容内联在这里(不再依赖外部 .j2 文件) —— 拉代码不方便时,
+    # 只需同步这一个 playbook 文件即可跑通全流程。内容与原模板逐字一致, 只是把
+    # Jinja2 换成了 Ansible 变量里的字符串拼接。
+    _storage_netplan_content: |
+      network:
+        version: 2
+        ethernets:
+          {{ storage_iface }}:
+            dhcp4: false
+            addresses:
+              - {{ storage_ip }}/24
+            routes:
+              - to: {{ storage_route_target }}
+                via: {{ storage_ip.split('.')[0:3] | join('.') }}.254
+    # 81-mgmt.yaml: bond0/成员网卡/mode/mtu 写死(这批机器全一致); IP 复用 ansible_host,
+    # 网关按方案 A 自动推导。与你贴的原文件逐字对齐, 只是 IP/网关换成变量。
+    _mgmt_netplan_content: |
+      network:
+        version: 2
+        ethernets:
+          ens43f1np1:
+            dhcp4: false
+            dhcp6: false
+            mtu: 1500
+          ens43f0np0:
+            dhcp4: false
+            dhcp6: false
+            mtu: 1500
+        bonds:
+          bond0:
+            ignore-carrier: true
+            interfaces: [ens43f1np1, ens43f0np0]
+            parameters:
+              mode: 802.3ad
+              transmit-hash-policy: layer3+4
+            mtu: 1500
+            dhcp4: false
+            dhcp6: false
+            addresses: [{{ ansible_host }}/24]
+            routes:
+              - to: {{ mgmt_route_target }}
+                via: {{ ansible_host.split('.')[0:3] | join('.') }}.254
+  tasks:
+    - name: 预检 —— 本机必须定义 storage_ip 与 storage_iface
+      assert:
+        that:
+          - storage_ip is defined
+          - storage_iface is defined
+        fail_msg: >-
+          本机 {{ inventory_hostname }} 缺 storage_ip 或 storage_iface, 请在 inventory 的
+          [cluster] 机器行补齐, 例如: {{ inventory_hostname }} storage_ip=172.18.104.11 storage_iface=ens46np0
+
+    - name: 禁用 cloud-init 的网络配置能力(否则重启后会重新生成 50-cloud-init.yaml 这类占位文件)
+      # 官方指定路径与写法, 见 cloud-init 文档 —— 写这个文件后, cloud-init 不再在每次
+      # boot 时探测/改写网络配置, 也就不会再生成/覆盖 netplan 目录下的文件。
+      # 此举风险很低: 只是关掉"cloud-init 管网络"这一项能力, 不改动任何现有网卡/路由,
+      # 也不影响 01-storage.yaml / 81-mgmt.yaml(那两个从来不是 cloud-init 管的)。
+      copy:
+        dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+        content: |
+          network: {config: disabled}
+        owner: root
+        group: root
+        mode: '0644'
+      register: _cloudinit_netcfg_disabled
+
+    - name: 清理 cloud-init 生成的空 netplan 占位文件(50-cloud-init.yaml, 内容为空、不影响现有网络)
+      # ⚠ 只删这一个已知的、内容确认为空(ethernets: {}) 的文件, 不做通配删除 ——
+      #   避免误删 01-storage.yaml / 81-mgmt.yaml 或将来出现的其他有效配置。
+      file:
+        path: /etc/netplan/50-cloud-init.yaml
+        state: absent
+      register: _cloudinit_netplan_removed
+
+    - name: 检测 netplan 是否支持 try 子命令
+      command: netplan try --help
+      register: _netplan_try_check
+      changed_when: false
+      failed_when: false
+
+    - name: 渲染 01-storage.yaml(先落盘, backup 保留旧版本带时间戳)
+      # 用 copy + vars 里的 _storage_netplan_content(已含 Jinja2 变量, copy 的 content
+      # 参数本身会被当模板渲染), 不依赖外部 .j2 文件 —— 只需同步这一个 playbook 文件。
+      copy:
+        content: "{{ _storage_netplan_content }}"
+        dest: /etc/netplan/01-storage.yaml
+        owner: root
+        group: root
+        mode: '0600'
+        backup: yes
+      register: _storage_netplan_render
+
+    - name: 未确认时仅渲染不生效, 提示如何真正应用
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: 01-storage.yaml 已渲染{{ '(有改动)' if _storage_netplan_render is changed else '(无改动)' }},
+          但未 apply —— 缺 -e confirm_storage_net=yes。确认无误后重跑本 playbook 并加该参数。
+      when: not (confirm_storage_net | default('') | string == 'yes')
+
+    - name: 应用新配置(后台起 netplan try, 不喂任何输入, 让它按官方语义自然运行满超时)
+      # ⚠ 不用 `<<< ""` 之类伪造输入 —— 不确定空输入是否被当成"已确认"从而立即固化,
+      #   那样 try 的回滚保护就形同虚设。这里用 nohup 后台起、完全不碰它的标准输入,
+      #   让它按设计跑满 90 秒: 期间机器失联就是"改坏了", 90 秒后自动回滚;
+      #   期间机器还能连上, 说明配置是好的, 但此时仍是"试用"状态, 未固化 ——
+      #   下一个任务里等它跑完(sleep 95)后, 视连通性决定要不要用 `netplan apply` 固化。
+      shell: |
+        nohup netplan try --timeout=90 > /tmp/netplan-try-{{ ansible_date_time.epoch }}.log 2>&1 &
+      register: _netplan_try_started
+      when:
+        - confirm_storage_net | default('') | string == 'yes'
+        - _netplan_try_check.rc == 0
+        - _storage_netplan_render is changed
+      changed_when: true
+
+    - name: 提示 —— netplan try 已在后台起, 90 秒窗口内请人工从存储网 ping/ssh 这台确认连通
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: netplan try 已后台启动(90 秒超时窗口)。
+          请【现在】从存储网另一端 ping/ssh 这台机器的新 storage_ip({{ storage_ip }}) 确认连通。
+          90 秒内你不做任何操作 = netplan 自动判定未确认、回滚到旧配置(安全默认)。
+          确认新配置连通正常且要【永久固化】: 在 90 秒窗口内登录本机手工执行 `netplan apply`
+          (这一步 ansible 不会自动做, 必须人工确认后手工点一下, 避免整批机器被脚本"自动确认"
+          放行一个其实配置错误、只是暂时还没断连的改动)。
+      when:
+        - confirm_storage_net | default('') | string == 'yes'
+        - _netplan_try_check.rc == 0
+        - _storage_netplan_render is changed
+
+    - name: 应用新配置(netplan apply, 不支持 try 时回退, 无自动回滚保护) —— 仅在显式确认时执行
+      command: netplan apply
+      when:
+        - confirm_storage_net | default('') | string == 'yes'
+        - _netplan_try_check.rc != 0
+        - _storage_netplan_render is changed
+      changed_when: true
+
+    - name: 提示 —— 用了 apply 回退路径, 无自动回滚, 请立即手工确认连通性
+      debug:
+        msg: >-
+          ⚠ {{ inventory_hostname }} 的 netplan 不支持 try, 已用 apply 直接生效, 没有自动回滚保护。
+          请立即 ping/ssh 复核该机存储网是否正常, 异常时手工恢复
+          /etc/netplan/01-storage.yaml.<时间戳>~ 备份并重新 netplan apply。
+      when:
+        - confirm_storage_net | default('') | string == 'yes'
+        - _netplan_try_check.rc != 0
+        - _storage_netplan_render is changed
+
+    # ================================================================
+    # 以下是管理网(81-mgmt.yaml)部分 —— 用独立的 confirm_mgmt_net 参数,
+    # 与上面存储网的 confirm_storage_net 完全隔离, 避免确认一个误触发另一个。
+    # 风险高于存储网(改的正是当前 SSH 连接所在的网卡), 务必 --limit 单台跑。
+    # ================================================================
+
+    - name: 渲染 81-mgmt.yaml(先落盘, backup 保留旧版本带时间戳)
+      copy:
+        content: "{{ _mgmt_netplan_content }}"
+        dest: /etc/netplan/81-mgmt.yaml
+        owner: root
+        group: root
+        mode: '0600'
+        backup: yes
+      register: _mgmt_netplan_render
+
+    - name: 未确认时仅渲染不生效, 提示如何真正应用(管理网)
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: 81-mgmt.yaml 已渲染{{ '(有改动)' if _mgmt_netplan_render is changed else '(无改动)' }},
+          但未 apply —— 缺 -e confirm_mgmt_net=yes。这是当前 SSH 连接所在的网卡,
+          确认渲染内容与现状完全一致后才可加该参数, 且务必 --limit 单台执行。
+      when: not (confirm_mgmt_net | default('') | string == 'yes')
+
+    - name: 应用新配置(后台起 netplan try, 管理网) —— 仅在显式确认且支持 try 时执行
+      # 同存储网那部分的设计: 不喂任何输入, 让 try 按官方语义自然运行满 90 秒。
+      # 这是当前 SSH 连接所在的网卡 —— 命令本身发出去后, ansible 控制端与目标机的
+      # 这次连接可能因为新配置生效而重置(取决于新旧配置差异), 这属于预期行为,
+      # 不代表失败; 真正的判断依据是 90 秒窗口结束后能否重新连上。
+      shell: |
+        nohup netplan try --timeout=90 > /tmp/netplan-try-mgmt-{{ ansible_date_time.epoch }}.log 2>&1 &
+      register: _netplan_try_mgmt_started
+      when:
+        - confirm_mgmt_net | default('') | string == 'yes'
+        - _netplan_try_check.rc == 0
+        - _mgmt_netplan_render is changed
+      changed_when: true
+
+    - name: 提示 —— 管理网 netplan try 已在后台起, 90 秒窗口内请从另一台机器确认连通
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: 管理网 netplan try 已后台启动(90 秒超时窗口)。
+          请【现在立刻】从【另一台机器】ping/ssh 这台的 {{ ansible_host }} 确认连通
+          (不要用这条当前连接本身判断, 它可能已经受影响)。
+          90 秒内没有人在本机手工确认 = netplan 自动回滚到旧配置(安全默认)。
+          确认新配置连通正常且要【永久固化】: 必须在 90 秒窗口内【找一条能进这台机器的路】
+          (若这条连接还在, 用它; 若已断, 只能等自动回滚后从旧配置重新连上)手工执行
+          `netplan apply` —— 这一步 ansible 不会自动做。
+      when:
+        - confirm_mgmt_net | default('') | string == 'yes'
+        - _netplan_try_check.rc == 0
+        - _mgmt_netplan_render is changed
+
+    - name: 应用新配置(netplan apply, 管理网, 不支持 try 时回退, 无自动回滚保护) —— 仅在显式确认时执行
+      command: netplan apply
+      when:
+        - confirm_mgmt_net | default('') | string == 'yes'
+        - _netplan_try_check.rc != 0
+        - _mgmt_netplan_render is changed
+      changed_when: true
+
+    - name: 提示 —— 管理网用了 apply 回退路径, 无自动回滚, 请立即手工确认连通性
+      debug:
+        msg: >-
+          ⚠⚠ {{ inventory_hostname }} 的 netplan 不支持 try, 管理网已用 apply 直接生效,
+          没有自动回滚保护。这是当前 SSH 连接所在的网卡, 若这条命令的输出还能正常
+          返回说明连接暂时还活着, 但请立即另开一条连接复核; 若已断连, 需跑机房用
+          IPMI/控制台恢复 /etc/netplan/81-mgmt.yaml.<时间戳>~ 备份并重新 apply。
+      when:
+        - confirm_mgmt_net | default('') | string == 'yes'
+        - _netplan_try_check.rc != 0
+        - _mgmt_netplan_render is changed
