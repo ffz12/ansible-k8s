@@ -100,6 +100,15 @@
 [chronyserver]
 #cpu-001
 
+# ---- Ceph 存储网(可选; 只列主机名, 机器本体仍写在上面 [cluster]) ----
+# 存储网变量写在 [cluster] 的机器行上:
+#   #node027 ansible_host=172.18.8.27 storage_ip=172.18.104.11 storage_iface=ens46np0
+#   storage_ip   : host-ceph-set.yaml 写 /etc/hosts、ceph-storage-net.yaml 配存储网 IP 都读它
+#   storage_iface: 只有 ceph-storage-net.yaml 用(存储网网卡名, 各机型可能不同)
+# ceph-storage-net.yaml 跑的是 [cluster], 不是本组; 要限定范围请用 --limit ceph。
+[ceph]
+#node027
+
 # os-init / os-check 直接跑 [cluster] 组(= 全部机器), 不再用单独的别名组。
 
 [cluster:vars]

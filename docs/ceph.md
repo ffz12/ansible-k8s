@@ -4,6 +4,7 @@
 
 - [环境准备](#环境准备)
   - [配置主机名](#配置主机名)
+  - [存储网配置（ansible）](#存储网配置ansible)
   - [BIOS 调优](#bios-调优)
   - [服务器初始化及内核升级](#服务器初始化及内核升级)
   - [硬盘调优](#硬盘调优)
@@ -32,6 +33,30 @@
 192.168.1.215 ceph215
 192.168.1.216 ceph216
 ```
+
+### 存储网配置（ansible）
+
+inventory 的 `[cluster]` 机器行写 `storage_ip` / `storage_iface`，Ceph 节点列入 `[ceph]` 组（示例见 `tmp/hosts.example`）：
+
+```ini
+node027 ansible_host=172.18.8.27 storage_ip=172.18.104.11 storage_iface=ens46np0
+```
+
+```bash
+# /etc/hosts 写入存储网解析(独立 marker "# Ansible ceph hosts", 不碰 host-set.yaml 那块)
+ansible-playbook playbook/host-ceph-set.yaml
+
+# 存储网 netplan(01-storage.yaml): 先预览, 再落盘 + netplan try
+ansible-playbook playbook/ceph-storage-net.yaml --limit ceph --check --diff -e confirm_storage_net=yes
+ansible-playbook playbook/ceph-storage-net.yaml --limit ceph -e confirm_storage_net=yes
+```
+
+注意：
+
+- 不加 `confirm_storage_net=yes` / `confirm_mgmt_net=yes` 时什么都不写。netplan try/apply 会让 `/etc/netplan/` 下的全部文件一起生效，所以没确认的那份不能落盘。
+- 网关按 IP 所在 /24 段自动推成 `.254`，存储网路由目标段 `172.18.96.0/24` 写死在 playbook 的 `storage_route_target` 里，换站点要改。
+- 管理网（81-mgmt.yaml，bond0）是当前 SSH 走的网卡，成员网卡名写死，只能 `--limit <单台>` 逐台跑。详见 playbook 头部注释。
+- netplan try 在后台跑，有 90 秒窗口：窗口内确认连通后执行 `kill -USR1 <try 的 pid>` 接受新配置，不操作就自动回滚。别拿 `netplan apply` 代替接受。后台（非 TTY）运行和 USR1 接受这两点还没在现场实测，第一次请先在单台存储网上验证。
 
 ### BIOS 调优
 

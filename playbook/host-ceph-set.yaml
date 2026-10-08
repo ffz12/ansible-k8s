@@ -1,6 +1,7 @@
 - name: 配置 Ceph 存储网主机解析 (去重版)
   hosts: ceph
   become: yes
+  any_errors_fatal: true
   vars:
     # 1. 去重 + 排序, 与 host-set.yaml 的写法保持一致
     unique_ceph_hosts: "{{ groups['ceph'] | unique | sort }}"
@@ -11,6 +12,16 @@
       {{ hostvars[item]['storage_ip'] }} {{ item }}
       {% endfor %}
   tasks:
+    - name: 预检 —— [ceph] 组每台都要定义 storage_ip(存储网 IP)
+      # 每台写的 hosts 块都引用全组的 storage_ip, 一台缺就全组渲染失败,
+      # 所以配合 play 级 any_errors_fatal 在写文件前整体拦住。
+      assert:
+        that:
+          - storage_ip is defined
+        fail_msg: >-
+          {{ inventory_hostname }} 缺 storage_ip, 在 inventory 的 [cluster] 机器行补齐,
+          如 node027 ansible_host=172.18.8.27 storage_ip=172.18.104.11
+
     - name: 更新 /etc/hosts 中的 Ceph 存储网节点信息
       blockinfile:
         path: /etc/hosts
