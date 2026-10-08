@@ -12,6 +12,8 @@
 # accelerator_type=nvidia/dcu/npu: 决定装哪种运行时, 同时决定 calico 双池分池
 #   (nvidia/dcu/npu -> hardware=gpu 标签, 不写 -> cpu)。GPU 机器漏写会被当 CPU 节点。
 # calico_pool=gpu|cpu: 只覆盖分池, 不影响运行时。如 #cpu-009 ... calico_pool=gpu
+# accelerator_type 同时决定 k8s 业务标签(nvidia -> nvidia=true, 不写 -> cpu_node=true);
+#   额外标签: #gpu-su1-001 ... node_labels="{'gpu.model': 'b300'}"
 # ⚠ hardware 标签只在节点【首次加入】时打; 存量节点事后开双池要手工补:
 #   kubectl label node <名> hardware=gpu --overwrite
 

@@ -1,0 +1,36 @@
+# 按 inventory 给 k8s 节点打业务标签(nvidia=true / cpu_node=true 等)。
+# 已在 k8s-install / k8s-add-node / k8s-add-master 末尾 import, 部署和加节点时自动打;
+# 也可单独跑, 给存量节点补标签或改完映射后重刷:
+#   ansible-playbook playbook/k8s-node-labels.yaml
+#   ansible-playbook playbook/k8s-node-labels.yaml --limit gn-10-14-64-1
+#
+# 标签来源(defaults.yaml 的 node_labels_by_accelerator, 可在 env.yaml 覆盖):
+#   accelerator_type=nvidia -> nvidia=true;  未写/none -> cpu_node=true;  dcu / npu 同理
+#   某台要额外标签: inventory 行写 node_labels="{'gpu.model': 'b300'}", 与上面合并, 同名以它为准
+#
+# ⚠ 与 Calico 双池用的 hardware=gpu|cpu 标签是两回事, 那个由 ensure-hardware-label.yml 管, 这里不碰。
+# 只加/改标签, 不删: 从映射里去掉的标签不会从节点上自动摘掉, 要手工 kubectl label node <名> <key>-。
+
+- name: 按 inventory 打 k8s 业务标签
+  hosts: k8s_master:k8s_node
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: 计算本机标签
+      set_fact:
+        _node_labels: >-
+          {{ (node_labels_by_accelerator | default({}))[accelerator_type | default('none', true)] | default({})
+             | combine(node_labels | default({})) }}
+
+    - name: 打标签(--overwrite 幂等; 节点还没进集群则跳过不报错)
+      command: >
+        kubectl --kubeconfig {{ kube_config_dir }}/admin.conf
+        label node {{ inventory_hostname }} --overwrite
+        {% for k, v in _node_labels.items() %}{{ k }}={{ v }} {% endfor %}
+      delegate_to: "{{ groups['k8s_master'][0] }}"
+      register: _node_label_result
+      changed_when: "'not labeled' not in _node_label_result.stdout"
+      failed_when:
+        - _node_label_result.rc != 0
+        - "'NotFound' not in _node_label_result.stderr"
+      when: _node_labels | length > 0

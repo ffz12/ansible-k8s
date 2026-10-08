@@ -84,3 +84,6 @@
     - kubernetes/kube-common
     - kubernetes/kube-add-master
 
+
+# 部署/加节点结束后按 inventory 打业务标签(nvidia=true / cpu_node=true 等), 见该文件头部
+- import_playbook: k8s-node-labels.yaml

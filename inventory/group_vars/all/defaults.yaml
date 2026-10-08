@@ -283,6 +283,14 @@ flannel_images:
 # 也可在某台机器的 inventory 行显式写 calico_pool=cpu(或 calico_pool=gpu)覆盖自动判定
 # (不用自己拼 "hardware=xxx" 这种键值对里套键值对的格式)。
 calico_dual_ippool_enabled: false
+
+# k8s 业务标签: 部署/加节点结束时按 accelerator_type 自动打(playbook/k8s-node-labels.yaml)。
+# 与上面 Calico 选池的 hardware 标签无关。某台额外标签写 inventory 行 node_labels="{'k': 'v'}"。
+node_labels_by_accelerator:
+  nvidia: {nvidia: "true"}
+  dcu: {dcu: "true"}
+  npu: {npu: "true"}
+  none: {cpu_node: "true"}
 # blockSize 决定"每节点一次拿多少地址"。calico 按块分配, 节点上 Pod 数超过一块容量就再要一块,
 # 所以【池内块数不等于可容纳节点数】—— 可容纳节点数 = 块数 / ceil(每节点Pod数 / 每块地址数)。
 # 规划时按"实际每节点 Pod 数"算, 别只看块数。注意 kubelet_max_pods 默认 110:
