@@ -56,6 +56,7 @@ ansible-playbook playbook/ceph-storage-net.yaml --limit ceph -e confirm_storage_
 - 不加 `confirm_storage_net=yes` / `confirm_mgmt_net=yes` 时什么都不写。netplan try/apply 会让 `/etc/netplan/` 下的全部文件一起生效，所以没确认的那份不能落盘。
 - 网关按 IP 所在 /24 段自动推成 `.254`，存储网路由目标段 `172.18.96.0/24` 写死在 playbook 的 `storage_route_target` 里，换站点要改。
 - 管理网（81-mgmt.yaml，bond0）是当前 SSH 走的网卡，成员网卡名写死，只能 `--limit <单台>` 逐台跑。详见 playbook 头部注释。
+- 客户端挂 CephFS：`playbook/cephfs-client.yaml` 固化 mlx5/RDMA 内核模块（`/etc/modules-load.d/mlx5.conf`），下发 `mount-remote-cephfs.service` 开机用 ceph-fuse 挂 `/customer-fs`，最后检查挂载。keyring 要事先放好（不进仓库）。重启后验收用 `--tags check`。
 - netplan try 在后台跑，有 90 秒窗口：窗口内确认连通后执行 `kill -USR1 <try 的 pid>` 接受新配置，不操作就自动回滚。别拿 `netplan apply` 代替接受。后台（非 TTY）运行和 USR1 接受这两点还没在现场实测，第一次请先在单台存储网上验证。
 
 ### BIOS 调优

@@ -1,0 +1,124 @@
+# Ceph 客户端节点: 固化 mlx5/RDMA 内核模块 + 开机用 ceph-fuse 挂 CephFS(默认 /customer-fs)。
+#
+# 前提(本 playbook 只检查, 不负责安装/下发):
+#   · 已装 ceph-fuse(ceph-fuse 包)
+#   · keyring 已放到 cephfs_keyring(默认 /etc/ceph/ceph.client.customer.keyring)——密钥不进仓库
+#   · 存储网已通(mon 在 172.18.96.0/24, 见 ceph-storage-net.yaml)
+#
+# 用法:
+#   ansible-playbook playbook/cephfs-client.yaml                    # 模块 + 挂载 + 检查
+#   ansible-playbook playbook/cephfs-client.yaml --tags rdma        # 只固化内核模块
+#   ansible-playbook playbook/cephfs-client.yaml --tags check       # 只检查(重启后验收用)
+#   换挂载点/文件系统/mon 只能用 -e(如 -e cephfs_mount_point=/xxx -e cephfs_name=xxx):
+#   play vars 优先级高于 group_vars, 写进 env.yaml 不生效
+#
+# 重启验收(不自动化, 手工逐批跑):
+#   ansible cluster -m reboot --limit <一批>
+#   ansible-playbook playbook/cephfs-client.yaml --tags check --limit <一批>
+#
+# 与原手工步骤的差异:
+#   · /etc/modules-load.d/*.conf 一行一个模块; 写成一行空格分隔时 systemd-modules-load
+#     会把整行当成一个模块名, 开机全部加载失败
+#   · `modprobe a b c` 会把 b c 当成 a 的模块参数, 多个模块要 `modprobe -a`
+#   · 不再用 rc.local: modules-load.d 已负责开机加载, rc.local 是重复的; Ubuntu 的
+#     rc-local.service 没有 [Install] 段, enable 本身也不可靠
+
+- name: Ceph 客户端 —— RDMA 内核模块与 CephFS 挂载
+  hosts: cluster
+  become: yes
+  vars:
+    rdma_modules: [mlx5_core, rdma_ucm, rdma_cm, ib_umad]
+    cephfs_mount_point: /customer-fs
+    cephfs_name: customer-fs
+    cephfs_client: customer                       # ceph-fuse -n client.<这个>
+    cephfs_keyring: /etc/ceph/ceph.client.{{ cephfs_client }}.keyring
+    cephfs_mons: [172.18.96.1:6789, 172.18.96.2:6789, 172.18.96.3:6789]
+    cephfs_unit: mount-remote-cephfs.service
+  tasks:
+    # ---------------- RDMA 内核模块 ----------------
+    - name: 立即加载 RDMA 内核模块
+      command: modprobe -a {{ rdma_modules | join(' ') }}
+      changed_when: false
+      tags: [rdma]
+
+    - name: 固化开机加载(/etc/modules-load.d/mlx5.conf, 一行一个)
+      copy:
+        dest: /etc/modules-load.d/mlx5.conf
+        content: "{{ rdma_modules | join('\n') }}\n"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [rdma]
+
+    # ---------------- CephFS 挂载 ----------------
+    - name: 预检 —— ceph-fuse 与 keyring 必须已就位
+      shell: |
+        command -v ceph-fuse >/dev/null || echo "缺 ceph-fuse"
+        test -s {{ cephfs_keyring }} || echo "缺 keyring {{ cephfs_keyring }}"
+      register: _cephfs_pre
+      changed_when: false
+      failed_when: _cephfs_pre.stdout | length > 0
+      tags: [cephfs]
+
+    - name: 下发挂载 unit
+      # 相对原手工版的改动:
+      #   · After/Wants=network-online.target: 原版只有 Description 写了"等网络", 实际没有依赖,
+      #     开机时存储网没起来就会挂载失败
+      #   · ExecCondition: 已挂载时跳过(重跑 playbook / 手工 start 不会因"已挂载"报错)
+      #   · ExecStartPre 建挂载点, ExecStop 卸载(systemctl stop 能干净卸掉)
+      #   · 直接调 ceph-fuse, 不用 sh -c 包一层; ceph-fuse 默认挂好后转后台, 配 oneshot + RemainAfterExit
+      copy:
+        dest: /etc/systemd/system/{{ cephfs_unit }}
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Mount CephFS {{ cephfs_name }} on {{ cephfs_mount_point }} via ceph-fuse
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecCondition=/bin/sh -c '! mountpoint -q {{ cephfs_mount_point }}'
+          ExecStartPre=/bin/mkdir -p {{ cephfs_mount_point }}
+          ExecStart=/usr/bin/ceph-fuse {{ cephfs_mount_point }} -n client.{{ cephfs_client }} -k {{ cephfs_keyring }} -m {{ cephfs_mons | join(',') }} --client_fs {{ cephfs_name }}
+          ExecStop=/bin/umount {{ cephfs_mount_point }}
+
+          [Install]
+          WantedBy=multi-user.target
+      register: _cephfs_unit_file
+      tags: [cephfs]
+
+    - name: 开机自启并立即挂载
+      systemd:
+        name: "{{ cephfs_unit }}"
+        enabled: yes
+        state: started
+        daemon_reload: "{{ _cephfs_unit_file is changed }}"
+      tags: [cephfs]
+
+    # ---------------- 检查 ----------------
+    - name: 检查 RDMA 模块已加载、CephFS 已挂载
+      shell: |
+        for m in {{ rdma_modules | join(' ') }}; do
+          lsmod | awk '{print $1}' | grep -qx "$m" || echo "模块未加载: $m"
+        done
+        grep -qx ib_umad /etc/modules-load.d/mlx5.conf || echo "modules-load 未固化"
+        findmnt -n {{ cephfs_mount_point }} >/dev/null || echo "{{ cephfs_mount_point }} 未挂载"
+      register: _cephfs_check
+      changed_when: false
+      failed_when: _cephfs_check.stdout | length > 0
+      tags: [check]
+
+    - name: 挂载详情
+      command: df -Th {{ cephfs_mount_point }}
+      register: _cephfs_df
+      changed_when: false
+      tags: [check]
+
+    - name: 输出挂载详情
+      debug:
+        msg: "{{ _cephfs_df.stdout_lines }}"
+      tags: [check]
