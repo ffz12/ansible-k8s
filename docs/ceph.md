@@ -14,6 +14,7 @@
   - [部署 OSD](#部署-osd)
 - [集群管理](#集群管理)
   - [添加节点](#添加节点)
+  - [用 OSD spec 给新节点加 OSD（cephadm，推荐）](#用-osd-spec-给新节点加-osdcephadm推荐)
 - [性能测试](#性能测试)
   - [单盘性能测试](#单盘性能测试)
   - [Ceph 性能测试](#ceph-性能测试)
@@ -301,6 +302,83 @@ ceph osd pool set ceph_data pgp_num 8192
 for i in {144..179}; do ceph config set osd.$i bluestore_ioring true; done
 for i in {144..179}; do ceph config show osd.$i | grep ioring; done
 ```
+
+### 用 OSD spec 给新节点加 OSD（cephadm，推荐）
+
+适用于集群已有 OSD spec 管理盘的情况（例：`osd.nvme_only_osds`，`osd.all-available-devices` 已设为 unmanaged）。以 ceph05 加 24 块 NVMe 为例。
+
+1. 清掉旧盘的 GPT 头，限定主机，先预览再清（不可逆）：
+
+```bash
+HOST=ceph05
+# 只列要清的盘, 核对数量和盘符; 系统盘(此例 sdb, 状态是 Has a FileSystem)不会被筛进来
+ceph orch device ls "$HOST" | awk '/nvme/ && /Has GPT headers/ {print $1, $2}'
+
+ceph orch device ls "$HOST" | awk '/nvme/ && /Has GPT headers/ {print $1, $2}' |
+while read -r host path; do
+  echo "Zapping ${host}:${path}..."
+  ceph orch device zap "${host}" "${path}" --force
+done
+
+ceph orch device ls "$HOST" --refresh      # 全部 Available=Yes 再往下
+```
+
+> ⚠ 不加主机名会清掉全集群所有带 GPT 头的 NVMe，包括别的节点的 NVMe 系统盘。
+
+2. 导出 spec，在 placement 里加新节点：
+
+```bash
+ceph orch ls osd --service_name osd.nvme_only_osds --export > nvme_osd_spec.yaml
+```
+
+```yaml
+service_type: osd
+service_id: nvme_only_osds
+placement:
+  hosts:
+    - ceph01
+    - ceph02
+    - ceph03
+    - ceph04
+    - ceph05      # 新加
+    - ceph06
+spec:
+  data_devices:
+    model: S2000E   # 子串匹配, 不支持 * 通配
+```
+
+> ⚠ `model` / `vendor` 是**子串匹配**，`*` 会被当成普通字符。写成 `'S2000E*'` 不报错，但一块盘也匹配不上（spec 的 RUNNING 一直是 0）。写之前先核对型号：
+> `ceph orch device ls ceph05 --format json-pretty | grep -m3 '"model"'`
+
+3. dry-run 预览，确认只在新节点上建、盘数对：
+
+```bash
+ceph orch apply -i nvme_osd_spec.yaml --dry-run
+```
+
+第一次通常只显示 `Preview data is being generated`，等 1 到 2 分钟重跑才会出表。表里应只有 ceph05 的 24 块 NVMe：没有系统盘，也没有其它节点。
+
+4. 正式应用。想减少对业务 IO 的影响，可以先暂停重平衡：
+
+```bash
+ceph osd set norebalance          # 可选
+ceph orch apply -i nvme_osd_spec.yaml
+```
+
+5. 观察进度：
+
+```bash
+ceph -W cephadm                         # 实时日志, Ctrl+C 退出
+ceph -s                                 # osd 数先涨(in), up 随后跟上
+ceph orch ls osd                        # spec 的 RUNNING 涨到 24
+ceph osd tree | grep -A25 ceph05        # 24 个 OSD 都是 up
+ceph osd stat                           # 本例最终 144 osds: 144 up, 144 in
+```
+
+cephadm 是逐块建的，几分钟内会先看到 `134 osds: 120 up, 134 in` 这种中间状态，属于正常。第一个 OSD 建好之前，`ceph osd tree` 里不会出现新主机。全部 up 之后再 `ceph osd unset norebalance`。
+
+> 查 cephadm 日志的写法是 `ceph log last 50 debug cephadm`（条数 级别 通道），写成 `ceph log last cephadm 30` 会报 EINVAL。
+> 新 OSD 照旧要开 io_uring、按新 OSD 总数重算 PG，见上一节。
 
 ## 性能测试
 
