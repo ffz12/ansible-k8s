@@ -743,3 +743,9 @@ etcd_metrics_listen_urls: "http://{{ ansible_host }}:2381"
 
 # ================= 动态成员列表 =================
 final_master_list: "{{ groups.k8s_master | default([]) }}"
+
+# ================= 内网 NTP server(chrony) =================
+# [chronyserver] 组里的机器对哪些客户端放行。默认 all(不限网段), 加机器、加网段都不用改。
+# server 有网卡暴露在外网/他租户网络时, 在 env.yaml 收紧成具体网段, 如 ["172.171.0.0/16"]。
+chrony_allow_networks:
+  - all
