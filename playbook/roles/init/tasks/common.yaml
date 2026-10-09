@@ -250,6 +250,30 @@
   changed_when: true
   tags: [swap]
 
+# 本机现在是对下服务的 NTP server(配置里有生效的 allow / local stratum), 但不在 [chronyserver]
+# 里 —— 多半是 inventory 漏填或组被清空。照常渲染会把它打回纯客户端, 依赖它的节点全部失去时间源。
+# 确实要撤掉这台 server 时加 -e chrony_allow_demote=true。
+- name: 预检 —— 读取本机当前 chrony 是否在对下服务
+  shell: grep -E '^\s*(allow|local\s+stratum)\b' {{ '/etc/chrony/chrony.conf' if ansible_os_family == 'Debian' else '/etc/chrony.conf' }} 2>/dev/null || true
+  register: _chrony_cur_server
+  changed_when: false
+  check_mode: false
+  when: not (inventory_hostname in (groups['chronyserver'] | default([]))
+             or (ansible_host | default('')) in (groups['chronyserver'] | default([])))
+  tags: [chrony]
+
+- name: 预检 —— 不在 [chronyserver] 的 NTP server 不允许被打回客户端
+  assert:
+    that:
+      - (_chrony_cur_server.stdout | default('') | trim | length == 0) or (chrony_allow_demote | default(false) | bool)
+    fail_msg: |
+      ❌ {{ inventory_hostname }} 当前 chrony 在对下服务(配置里有: {{ _chrony_cur_server.stdout_lines | default([]) | join(' / ') }}),
+         但它不在 inventory 的 [chronyserver] 里。继续会把它改成纯客户端, 指向它的节点全部失去时间源。
+      · 它应继续当 server: 把它填进 [chronyserver](写名字或 ansible_host 的 IP 都行)
+      · 确实要撤掉: 加 -e chrony_allow_demote=true
+  when: _chrony_cur_server is not skipped
+  tags: [chrony]
+
 # ⚠ 本任务【不加 ignore_errors】—— 下面两个 chrony 任务都带 ignore_errors, 配置写歪了
 #   不会报错; 而 allow 漏配的症状(客户端全 ^? 不可达)要到部署后才发现。故在这里硬拦,
 #   别让它变成静默失败。

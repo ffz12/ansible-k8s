@@ -27,16 +27,36 @@
     同一判据, 所以 chrony_allow_networks 漏没漏也一起被静默跳过)。 -#}
 {%- set is_chrony_server = (inventory_hostname in chrony_servers)
                            or ((ansible_host | default('')) in chrony_servers) -%}
+{#- 主备([chronyserver] >= 2 台): 组里第一台为主, 客户端对它加 prefer; 各 server 互相
+    列为源 + local orphan。外网断开时 orphan 模式让几台 server 推选同一个基准, 不各走各的;
+    主挂了客户端自动切备。只有 1 台或组为空时, 下面这些都不渲染, 与原行为一致。 -#}
+{%- set chrony_ha = chrony_servers | length > 1 -%}
+{%- set chrony_peers = [] -%}
+{%- if is_chrony_server and chrony_ha -%}
+{%-   for h in chrony_servers -%}
+{%-     set h_ip = hostvars[h].ansible_host | default(h) if h in hostvars else h -%}
+{%-     if h != inventory_hostname and h_ip != (ansible_host | default('')) -%}
+{%-       set _ = chrony_peers.append(h_ip) -%}
+{%-     endif -%}
+{%-   endfor -%}
+{%- endif -%}
 # Use public servers from the pool.ntp.org project.
 # Please consider joining the pool (http://www.pool.ntp.org/join.html).
 {% if chrony_servers | length > 0 and not is_chrony_server %}
-# 集群内有自建 NTP server([chronyserver] 组), 本机作为客户端指向它
+# 集群内有自建 NTP server([chronyserver] 组), 本机作为客户端指向它{{ '(第一台为主, prefer)' if chrony_ha else '' }}
 {% for h in chrony_servers %}
-server {{ hostvars[h].ansible_host | default(h) }} iburst
+server {{ hostvars[h].ansible_host | default(h) if h in hostvars else h }} iburst{{ ' prefer' if chrony_ha and loop.first else '' }}
 {% endfor %}
 {% else %}
 {% for s in chrony_client_sources %}
 server {{ s }}  iburst
+{% endfor %}
+{% endif %}
+{% if chrony_peers | length > 0 %}
+
+# 主备: 其它内网 NTP server 也作为源(配合下面 local ... orphan)
+{% for p in chrony_peers %}
+server {{ p }} iburst
 {% endfor %}
 {% endif %}
 
@@ -69,6 +89,9 @@ rtcsync
 {% for net in chrony_allow_networks | default([]) %}
 allow {{ net }}
 {% endfor %}
+{% for p in chrony_peers %}
+allow {{ p }}
+{% endfor %}
 {% else %}
 #allow 192.168.0.0/16
 {% endif %}
@@ -77,7 +100,7 @@ allow {{ net }}
 {% if is_chrony_server and (chrony_server_serve_when_unsynced | default(true) | bool) %}
 {#- 上游断了也继续对下服务, 保证「集群内最大时间差 <15 秒」在外网不通时依然成立。
     stratum 取较大值(越大越不权威), 真实上游恢复后客户端自动优先真源。 -#}
-local stratum {{ chrony_server_local_stratum | default(10) }}
+local stratum {{ chrony_server_local_stratum | default(10) }}{{ ' orphan' if chrony_ha else '' }}
 {% else %}
 #local stratum 10
 {% endif %}
