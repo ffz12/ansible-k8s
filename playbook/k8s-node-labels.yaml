@@ -5,7 +5,7 @@
 #   ansible-playbook playbook/k8s-node-labels.yaml --limit gn-10-14-64-1
 #
 # 标签来源(defaults.yaml 的 node_labels_by_accelerator, 可在 env.yaml 覆盖):
-#   accelerator_type=nvidia -> nvidia=true;  未写/none -> cpu_node=true;  dcu / npu 同理
+#   accelerator_type=nvidia -> nvidia=true;  dcu / npu 同理;  cpu -> cpu_node=true;  未写/none -> 不打
 #   某台要额外标签: inventory 行写 node_labels="{'gpu.model': 'b300'}", 与上面合并, 同名以它为准
 #
 # ⚠ 与 Calico 双池用的 hardware=gpu|cpu 标签是两回事, 那个由 ensure-hardware-label.yml 管, 这里不碰。
@@ -21,6 +21,17 @@
         _node_labels: >-
           {{ (node_labels_by_accelerator | default({}))[accelerator_type | default('none', true)] | default({})
              | combine(node_labels | default({})) }}
+
+    # 写了 accelerator_type 却不在映射里(拼错, 或新卡型如 mlu 还没加映射)时不静默跳过, 提示一下
+    - name: 提示 —— accelerator_type 不在映射里, 本机不打业务标签
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: accelerator_type={{ accelerator_type }} 不在 node_labels_by_accelerator 里
+          (现有: {{ (node_labels_by_accelerator | default({})).keys() | join('/') }})。
+          拼错就改 inventory; 新卡型在 env.yaml 覆盖映射加一项, 如 mlu: {mlu: "true"}。
+      when:
+        - (accelerator_type | default('none', true)) != 'none'
+        - (accelerator_type | default('none', true)) not in (node_labels_by_accelerator | default({}))
 
     - name: 打标签(--overwrite 幂等; 节点还没进集群则跳过不报错)
       command: >

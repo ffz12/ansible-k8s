@@ -286,11 +286,14 @@ calico_dual_ippool_enabled: false
 
 # k8s 业务标签: 部署/加节点结束时按 accelerator_type 自动打(playbook/k8s-node-labels.yaml)。
 # 与上面 Calico 选池的 hardware 标签无关。某台额外标签写 inventory 行 node_labels="{'k': 'v'}"。
+# 只给显式写了 accelerator_type 的节点打: CPU 机要写 accelerator_type=cpu 才打 cpu_node=true。
+#   未写/none 【不打】—— 未写不等于确认是 CPU 机(GPU 机漏写时会被误标成 cpu_node, 调度跑偏)。
+#   cpu 在运行时/分池上与未写等价(runc + hardware=cpu), 只多一个业务标签。
 node_labels_by_accelerator:
   nvidia: {nvidia: "true"}
   dcu: {dcu: "true"}
   npu: {npu: "true"}
-  none: {cpu_node: "true"}
+  cpu: {cpu_node: "true"}
 # blockSize 决定"每节点一次拿多少地址"。calico 按块分配, 节点上 Pod 数超过一块容量就再要一块,
 # 所以【池内块数不等于可容纳节点数】—— 可容纳节点数 = 块数 / ceil(每节点Pod数 / 每块地址数)。
 # 规划时按"实际每节点 Pod 数"算, 别只看块数。注意 kubelet_max_pods 默认 110:

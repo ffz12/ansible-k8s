@@ -4,16 +4,17 @@
 
 # 全部机器写在这。⚠ policy=inventory 时, 这里写的名字就是机器最终主机名
 [cluster]
-#cpu-001 ansible_host=192.168.1.111
-#gpu-su1-001 ansible_host=10.82.4.56  osinit_su=1 accelerator_type=nvidia
+#cpu-001 ansible_host=192.168.1.111 accelerator_type=cpu
+#gpu-001 ansible_host=192.168.1.121 accelerator_type=nvidia
+# (跑 os-init 且按 GPU-SUx-xxx 命名时, GPU 机还要加 osinit_su=<SU号>, 见 docs/主机初始化-os-init.md)
 # 多网卡节点: kubelet 默认按「默认路由网卡」自选 Node IP, 可能选错(如落到 10.101.16.x)。
 # 默认已把 kubelet --node-ip 钉成 ansible_host; 若 k8s InternalIP 要用与 SSH 不同的地址,
 # 单独指定: #cpu06 ansible_host=172.18.1.66 kube_node_ip=172.18.1.66
-# accelerator_type=nvidia/dcu/npu: 决定装哪种运行时, 同时决定 calico 双池分池
-#   (nvidia/dcu/npu -> hardware=gpu 标签, 不写 -> cpu)。GPU 机器漏写会被当 CPU 节点。
+# accelerator_type=nvidia/dcu/npu/cpu: 决定装哪种运行时, 同时决定 calico 双池分池
+#   (nvidia/dcu/npu -> hardware=gpu 标签; cpu 或不写 -> 普通 runc, hardware=cpu)。GPU 机器漏写会被当 CPU 节点。
 # calico_pool=gpu|cpu: 只覆盖分池, 不影响运行时。如 #cpu-009 ... calico_pool=gpu
-# accelerator_type 同时决定 k8s 业务标签(nvidia -> nvidia=true, 不写 -> cpu_node=true);
-#   额外标签: #gpu-su1-001 ... node_labels="{'gpu.model': 'b300'}"
+# accelerator_type 同时决定 k8s 业务标签: nvidia -> nvidia=true, cpu -> cpu_node=true, 不写 -> 不打;
+#   额外标签: #gpu-001 ... node_labels="{'gpu.model': 'b300'}"
 # ⚠ hardware 标签只在节点【首次加入】时打; 存量节点事后开双池要手工补:
 #   kubectl label node <名> hardware=gpu --overwrite
 
@@ -89,11 +90,11 @@
 [master_to_delete]
 
 # ---- GPU:有算力节点时用。[gpu]=打"有GPU"标签(角色自动判 gpu); [gpu_driver]=装驱动/升内核 ----
-# ⚠ GPU 节点只跑 os-init, 绝不进 [gpu_driver]。机器本体仍写在上面 [cluster](带 osinit_su)。
+# ⚠ GPU 节点只跑 os-init, 绝不进 [gpu_driver]。机器本体仍写在上面 [cluster]。
 [gpu]
-#gpu-su1-001
+#gpu-001
 #[gpu_driver]
-#gpu-su1-001
+#gpu-001
 
 # ---- 内网 NTP 服务器(可选; 不需要就【整组留空】, 全集群沿用原来的 chrony_ip 客户端行为)----
 # 填了才生效: 该机 chrony 变成对下服务的 NTP server, 其余节点自动改指向它(不用再改 chrony_ip)。
