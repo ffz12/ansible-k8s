@@ -27,7 +27,8 @@
     同一判据, 所以 chrony_allow_networks 漏没漏也一起被静默跳过)。 -#}
 {%- set is_chrony_server = (inventory_hostname in chrony_servers)
                            or ((ansible_host | default('')) in chrony_servers) -%}
-{#- 主备([chronyserver] >= 2 台): 组里第一台为主, 客户端对它加 prefer; 各 server 互相
+{#- 主备([chronyserver] >= 2 台): 客户端平等列出全部 server(不加 prefer, 由 chrony 按误差选;
+    2026-10 现网实测加了 prefer 后主停掉 10 分钟客户端仍不切, selectdata 显示备被 P 排除); 各 server 互相
     列为源 + local orphan。外网断开时 orphan 模式让几台 server 推选同一个基准, 不各走各的;
     主挂了客户端自动切备。只有 1 台或组为空时, 下面这些都不渲染, 与原行为一致。 -#}
 {%- set chrony_ha = chrony_servers | length > 1 -%}
@@ -43,9 +44,9 @@
 # Use public servers from the pool.ntp.org project.
 # Please consider joining the pool (http://www.pool.ntp.org/join.html).
 {% if chrony_servers | length > 0 and not is_chrony_server %}
-# 集群内有自建 NTP server([chronyserver] 组), 本机作为客户端指向它{{ '(第一台为主, prefer)' if chrony_ha else '' }}
+# 集群内有自建 NTP server([chronyserver] 组), 本机作为客户端指向它{{ '(多台主备)' if chrony_ha else '' }}
 {% for h in chrony_servers %}
-server {{ hostvars[h].ansible_host | default(h) if h in hostvars else h }} iburst{{ ' prefer' if chrony_ha and loop.first else '' }}
+server {{ hostvars[h].ansible_host | default(h) if h in hostvars else h }} iburst
 {% endfor %}
 {% else %}
 {% for s in chrony_client_sources %}

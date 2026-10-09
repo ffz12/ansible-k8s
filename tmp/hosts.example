@@ -98,7 +98,7 @@
 
 # ---- 内网 NTP 服务器(可选; 不需要就【整组留空】, 全集群沿用原来的 chrony_ip 客户端行为)----
 # 填了才生效: 该机 chrony 变成对下服务的 NTP server, 其余节点自动改指向它(不用再改 chrony_ip)。
-# 只列主机名(机器本体仍写在上面 [cluster])。填 2 台以上为主备, 第一台为主。
+# 只列主机名(机器本体仍写在上面 [cluster])。填 2 台以上为主备。
 # 客户端放行默认 all(defaults.yaml 的 chrony_allow_networks), 一般不用配。
 [chronyserver]
 #cpu-001
