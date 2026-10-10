@@ -1,0 +1,13 @@
+# 额外数据盘: 按 UUID 挂载并写 fstab(mount-nvme.yaml 按 data_disks 逐块 include, loop_var=_disk)
+- name: "数据盘 {{ _disk.dev }} —— 取 UUID"
+  command: blkid -s UUID -o value {{ _disk.dev }}
+  register: _dd_uuid
+  changed_when: false
+
+- name: "数据盘 {{ _disk.dev }} —— 挂载到 {{ _disk.path }}"
+  mount:
+    path: "{{ _disk.path }}"
+    src: "UUID={{ _dd_uuid.stdout }}"
+    fstype: "{{ fstype }}"
+    opts: defaults
+    state: mounted

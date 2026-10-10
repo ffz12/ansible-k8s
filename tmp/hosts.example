@@ -35,7 +35,7 @@
 
 [nvme_single]
 # 单盘机器(盘符不一致时在 [cluster] 的机器行上写 device_path=/dev/nvmeXn1)
-# 两块盘: 再写 data_device_path=/dev/nvmeYn1, 第二块挂到 /data(改路径用 data_mount_point)
+# 多块数据盘: data_disks="/dev/nvme1n1:/data,/dev/nvme3n1:/data2"(盘符:挂载点, 逗号分隔, 挂载点省略默认 /data)
 #cn-10-14-72-1
 
 

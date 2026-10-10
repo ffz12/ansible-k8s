@@ -1,3 +1,21 @@
+# containerd_root 可与 container_base 解耦单独配置; 落在系统盘上时提示(多半是数据盘没挂或路径写错)
+- name: 检查 containerd_root 所在挂载点
+  shell: |
+    p="{{ containerd_root | default('/var/lib/containerd') }}"
+    while [ ! -e "$p" ]; do p=$(dirname "$p"); done
+    findmnt -n -o TARGET -T "$p"
+  register: _cr_mnt
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: ⚠ containerd_root 在系统盘上
+  debug:
+    msg: >-
+      containerd_root={{ containerd_root | default('/var/lib/containerd') }} 所在挂载点是 /, 镜像会写到系统盘。
+      数据盘还没挂就先跑 mount-nvme*, 或检查 env.yaml 的 containerd_root / container_base。
+  when: (_cr_mnt.stdout | default('') | trim) == '/'
+
 # 1. 确保基础目录存在
 - name: Ensure containerd directories exist
   file:

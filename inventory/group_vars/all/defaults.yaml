@@ -42,7 +42,8 @@ sandbox_image: "{{ (registry ~ '/pause:' ~ pause_image_version) if (is_offline |
 pause: "{{ sandbox_image }}"
 #config 格式版本自动推导: 1.x -> 2, 2.x+ -> 3 (勿手改)
 containerd_config_version: "{{ 3 if (containerd_version.split('.')[0] | int) >= 2 else 2 }}"
-#containerd 数据目录(等同 docker data-root),随 container_base
+# containerd 数据目录(等同 docker data-root)。默认放在 container_base 下; 与 container_base 解耦,
+# 可在 env.yaml 单独指到另一块数据盘(先用 mount-nvme 的 data_disks 挂好), kubelet 仍在 container_base。
 containerd_root: "{{ container_base }}/containerd"
 
 # ================= Harbor 镜像清单 =================
