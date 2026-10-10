@@ -324,6 +324,23 @@ ceph orch device ls "$HOST" --refresh      # 全部 Available=Yes 再往下
 ```
 
 > ⚠ 不加主机名会清掉全集群所有带 GPT 头的 NVMe，包括别的节点的 NVMe 系统盘。
+>
+> ⚠ **zap 之前先确认这些盘没被现有 OSD 占用**（已建好 OSD 的节点重跑这一步会直接毁掉 OSD 数据）：
+>
+> ```bash
+> ceph osd tree | grep -A30 "$HOST"              # 该主机已有 OSD 就停下, 确认是不是要拆
+> ceph orch device ls "$HOST"                    # REJECT REASONS 是 LVM detected / locked 的是在用盘, 不能 zap
+> ssh "$HOST" cephadm ceph-volume lvm list       # 要在目标主机上跑; 在 ceph01 跑只看得到 ceph01 自己
+> ```
+>
+> 只有 REJECT REASONS 是 `Has GPT headers` 的才是要清的旧盘。
+>
+> zap 之后**不要再逐盘 `ceph orch daemon add osd`**：主机在 OSD spec 的 placement 里时，盘一变 Available 就会被 spec 自动建 OSD，手工再加会抢同一块盘。按列号 awk 筛 Available 也不可靠（`--wide` 会多出列），要筛就用 JSON：
+>
+> ```bash
+> ceph orch device ls "$HOST" --format json |
+>   jq -r '.[].devices[] | select(.available and (.path | test("^/dev/nvme"))) | .path'
+> ```
 
 2. 导出 spec，在 placement 里加新节点：
 
