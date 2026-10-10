@@ -6,8 +6,14 @@
   hosts: nvme_single
   become: yes
   vars:
-    # ===== 换盘只改这里 =====
-    device_path: "/dev/nvme2n1"          # 数据盘设备(LVM卷或裸盘); 换盘改这一处
+    # ===== 盘符 =====
+    # ⚠ 不直接在这里写 device_path: play vars 优先级高于 inventory, 写在这里会让 inventory
+    #   机器行上的 device_path=/dev/nvmeXn1 失效。改成取变量 + 默认值, inventory / -e 都能覆盖。
+    _dev: "{{ device_path | default('/dev/nvme2n1') }}"      # 第一块盘 -> container_base(containerd/kubelet)
+    # 第二块盘(可选): 填了就格式化并挂到 data_mount_point(默认 /data); 不填跳过, 与原行为一致。
+    #   inventory 机器行: node01 ... device_path=/dev/nvme0n1 data_device_path=/dev/nvme1n1
+    _data_dev: "{{ data_device_path | default('') }}"
+    _data_mnt: "{{ data_mount_point | default('/data') }}"
     fstype: "xfs"
     # container_base / containerd_root 来自 group_vars/all.yaml(与 containerd_setup 共用)
     #   - containerd: 数据目录直接建在盘上({{ containerd_root }}),由 config.toml 的 root 指向,不 bind
@@ -19,16 +25,16 @@
     # 1. 物理设备检查
     - name: Check if the data device exists
       stat:
-        path: "{{ device_path }}"
+        path: "{{ _dev }}"
       register: device_stat
 
     - name: 📢 [终端显示] 磁盘是否存在
       debug:
-        msg: "设备 {{ device_path }} 状态: {{ '✅ 存在' if device_stat.stat.exists else '❌ 不存在' }}"
+        msg: "设备 {{ _dev }} 状态: {{ '✅ 存在' if device_stat.stat.exists else '❌ 不存在' }}"
 
     - name: 中断执行 (如果磁盘不存在)
       fail:
-        msg: "找不到设备 {{ device_path }}，请确认硬件连接。"
+        msg: "找不到设备 {{ _dev }}，请确认硬件连接。"
       when: not device_stat.stat.exists
 
     # 2. 检查主挂载状态
@@ -46,7 +52,7 @@
 
     # 3. 安全检测: 盘上是否已有文件系统/数据
     - name: 检测盘上是否已有文件系统
-      command: "blkid -s TYPE -o value {{ device_path }}"
+      command: "blkid -s TYPE -o value {{ _dev }}"
       register: existing_fs
       changed_when: false
       failed_when: false
@@ -54,13 +60,13 @@
 
     - name: 📢 [终端显示] 盘上文件系统检测
       debug:
-        msg: "{{ device_path }} 文件系统: {{ existing_fs.stdout if existing_fs.stdout != '' else '空白(无文件系统)' }}"
+        msg: "{{ _dev }} 文件系统: {{ existing_fs.stdout if existing_fs.stdout != '' else '空白(无文件系统)' }}"
 
     # 仅当"未挂载"且"完全空白"时才格式化; 只要有任何文件系统就绝不格式化(双保险: 再叠加 force:no)
     - name: Create filesystem on the data device (仅空白盘)
       filesystem:
         fstype: "{{ fstype }}"
-        dev: "{{ device_path }}"
+        dev: "{{ _dev }}"
         force: no
       when:
         - not already_mounted
@@ -68,8 +74,58 @@
 
     - name: ⚠️ [终端显示] 盘上已有数据,跳过格式化
       debug:
-        msg: "⚠️ {{ device_path }} 已有文件系统({{ existing_fs.stdout }})，已跳过格式化，将直接挂载，数据保留。"
+        msg: "⚠️ {{ _dev }} 已有文件系统({{ existing_fs.stdout }})，已跳过格式化，将直接挂载，数据保留。"
       when: existing_fs.stdout != ""
+
+    # ---- 第二块盘(可选) -> {{ _data_mnt }}: 检查与第一块盘同一套规则 ----
+    - name: 第二块盘 —— 不能与第一块盘相同
+      assert:
+        that: _data_dev != _dev
+        fail_msg: "data_device_path 与 device_path 都是 {{ _dev }}, 第二块盘要填另一块"
+      when: _data_dev | length > 0
+
+    - name: 第二块盘 —— 设备是否存在
+      stat:
+        path: "{{ _data_dev }}"
+      register: data_dev_stat
+      when: _data_dev | length > 0
+
+    - name: 第二块盘 —— 不存在则中断
+      fail:
+        msg: "找不到第二块盘 {{ _data_dev }}，请确认 data_device_path。"
+      when:
+        - _data_dev | length > 0
+        - not data_dev_stat.stat.exists
+
+    - name: 第二块盘 —— 检测是否已有文件系统
+      command: "blkid -s TYPE -o value {{ _data_dev }}"
+      register: data_existing_fs
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: _data_dev | length > 0
+
+    - name: 第二块盘 —— 是否已挂载到 {{ _data_mnt }}
+      set_fact:
+        data_already_mounted: "{{ ansible_mounts | selectattr('mount', 'equalto', _data_mnt) | list | length > 0 }}"
+      when: _data_dev | length > 0
+
+    - name: 第二块盘 —— 格式化(仅空白盘)
+      filesystem:
+        fstype: "{{ fstype }}"
+        dev: "{{ _data_dev }}"
+        force: no
+      when:
+        - _data_dev | length > 0
+        - not data_already_mounted
+        - data_existing_fs.stdout == ""
+
+    - name: ⚠️ [终端显示] 第二块盘已有数据, 跳过格式化
+      debug:
+        msg: "⚠️ {{ _data_dev }} 已有文件系统({{ data_existing_fs.stdout }})，跳过格式化，直接挂到 {{ _data_mnt }}，数据保留。"
+      when:
+        - _data_dev | length > 0
+        - data_existing_fs.stdout != ""
 
     # ================= --check 预览到此为止 =================
     # --check 时早停: 设备存在性、是否已挂载、盘上有无文件系统都已判完并打印, 这就是实跑前
@@ -78,7 +134,7 @@
     - name: "[--check] 预览汇总"
       debug:
         msg:
-          - "目标设备: {{ device_path }}"
+          - "目标设备: {{ _dev }}"
           - "{{ container_base }} 已挂载: {{ already_mounted }}"
           # 判据与下面真实的格式化条件保持字面一致(existing_fs.stdout == "", 不加 trim),
           # 否则预览结论可能与实跑行为不符。
@@ -86,6 +142,11 @@
             {{ ('盘上已有文件系统(' ~ existing_fs.stdout ~ ') -> 实跑不会格式化, 直接挂载, 数据保留')
                if existing_fs.stdout != ''
                else ('盘完全空白 -> 实跑会执行 mkfs.' ~ fstype ~ ' 格式化该盘') }}
+          - >-
+            {{ ('第二块盘: 未配置(只挂第一块)') if _data_dev | length == 0 else
+               ('第二块盘 ' ~ _data_dev ~ ' -> ' ~ _data_mnt ~ ': ' ~
+                (('已有文件系统(' ~ data_existing_fs.stdout ~ '), 不格式化, 直接挂载')
+                 if data_existing_fs.stdout != '' else ('空白, 实跑会 mkfs.' ~ fstype))) }}
           - "核对无误后去掉 --check 实跑。"
       when: ansible_check_mode | bool
 
@@ -95,13 +156,13 @@
 
     # 4. 获取 UUID
     - name: Get UUID of the device
-      command: blkid -s UUID -o value {{ device_path }}
+      command: blkid -s UUID -o value {{ _dev }}
       register: device_uuid
       changed_when: false
 
     - name: 📢 [终端显示] 获取到的 UUID
       debug:
-        msg: "设备 {{ device_path }} 的 UUID 为: {{ device_uuid.stdout }}"
+        msg: "设备 {{ _dev }} 的 UUID 为: {{ device_uuid.stdout }}"
 
     # 5. 挂载数据盘到主挂载点 (用 UUID,写入 fstab)
     - name: Mount data device to container_base by UUID
@@ -139,15 +200,29 @@
         state: mounted
       loop: "{{ kubelet_bind }}"
 
-    # 9. 最终确认
+    # 9. 第二块盘挂到 {{ _data_mnt }}(用 UUID 写 fstab)
+    - name: 第二块盘 —— 取 UUID
+      command: blkid -s UUID -o value {{ _data_dev }}
+      register: data_dev_uuid
+      changed_when: false
+      when: _data_dev | length > 0
+
+    - name: 第二块盘 —— 挂载到 {{ _data_mnt }}
+      mount:
+        path: "{{ _data_mnt }}"
+        src: "UUID={{ data_dev_uuid.stdout }}"
+        fstype: "{{ fstype }}"
+        opts: defaults
+        state: mounted
+      when: _data_dev | length > 0
+
+    # 10. 最终确认
     - name: Final confirmation of mounts
       command: "findmnt {{ item }}"
       register: final_check
       changed_when: false
       failed_when: false
-      loop:
-        - "{{ container_base }}"
-        - "{{ kubelet_bind[0].dest }}"
+      loop: "{{ [container_base, kubelet_bind[0].dest] + ([_data_mnt] if _data_dev | length > 0 else []) }}"
 
     - name: 📢 [终端显示] 最终挂载确认
       debug:
