@@ -35,15 +35,17 @@
       template:
         src: openssl-san.conf.j2
         dest: "{{ harbor_copy_path }}/harbor/ssl/openssl-san.conf"
+      register: _harbor_san_conf
 
-    # 只重签服务端证书, CA 不动 —— 客户端信任的是 CA, 所以不用全集群重跑 harbor-trust。
-    # 用途: 单节点扩成双主时, 让 SAN 带上 VIP 和两台 IP(只用域名访问的话不重签也能用)。
-    - name: 重签服务端证书(-e harbor_regen_cert=true; CA 不变)
+    # SAN 变了(如单节点扩成双主, 要加 VIP 和两台 IP)就自动重签服务端证书, 不用加参数。
+    # 只重签服务端证书, CA 不动 —— 客户端信任的是 CA, 不用全集群重跑 harbor-trust。
+    # 单节点重跑时 SAN 渲染结果不变, 不会触发。
+    - name: SAN 有变化, 重签服务端证书(CA 不变)
       file:
         path: "{{ harbor_copy_path }}/harbor/ssl/{{ item }}"
         state: absent
       loop: [harbor.csr, harbor.crt]
-      when: harbor_regen_cert | default(false) | bool
+      when: _harbor_san_conf is changed
 
     - name: 生成harbor.key
       shell: |
@@ -113,17 +115,6 @@
 - name: debug
   debug:
     msg: "{{ san_status.stdout }}"
-
-- name: ⚠ 双主 —— 证书 SAN 里没有 VIP
-  debug:
-    msg: >-
-      证书 SAN 里没有 VIP {{ harbor_vip }}(多半是从单节点扩成双主, 证书还是旧的)。
-      只用域名 {{ harbor_dns }} 访问不受影响; 想让浏览器用 IP 打开不报警告, 加 -e harbor_regen_cert=true
-      重跑一次(只重签服务端证书, CA 不变, 客户端不用重新信任)。
-  when:
-    - harbor_ha | bool
-    - _harbor_cert_owner | bool
-    - harbor_vip not in san_status.stdout
 
 - name: Ensure local certs directory exists on control node
   delegate_to: localhost
