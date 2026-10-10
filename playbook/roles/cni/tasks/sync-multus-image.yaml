@@ -19,6 +19,7 @@
     executable: /bin/bash
   register: multus_login
   failed_when: "'Login Succeeded' not in multus_login.stdout"
+  no_log: true   # 命令里带密码, 防止 -v 时打印; 失败时报错内容会被隐藏, 先核对 harbor_admin_password
 
 - name: "[Multus] 探测控制机上有哪些架构的 multus 物料"
   stat:

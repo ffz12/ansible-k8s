@@ -11,14 +11,32 @@
   block:
   - name: 拷贝daemon.json
     template: src=daemon.json.j2 dest=/etc/docker/daemon.json
-  - name: 启动docker并登录harbor
+  - name: 启动docker
     shell: |
       systemctl enable docker --now
       systemctl reload docker
-      {% for item in harbor_instances %}
-      docker login {{ item.dns }} -uadmin -pHarbor12345
-      {% endfor %}
   ignore_errors: true
+
+# 登录 harbor: 账号密码读 env.yaml 的 harbor_admin_username / harbor_admin_password
+# (原来写死 -uadmin -pHarbor12345, 改了 harbor 密码就登不上, 且密码出现在进程列表里)。
+# 密码走 stdin 不进命令行; no_log 防止 -v 时打印出来。失败不中断(与原 ignore_errors 一致), 下面单独报。
+- name: 登录harbor
+  command: docker login {{ item.dns }} -u {{ harbor_admin_username | default('admin') }} --password-stdin
+  args:
+    stdin: "{{ harbor_admin_password | default('Harbor12345') }}"
+  loop: "{{ harbor_instances }}"
+  register: _harbor_login
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: ⚠ harbor 登录失败(检查 env.yaml 的 harbor_admin_password 是否与 harbor 实际密码一致)
+  debug:
+    msg: "{{ inventory_hostname }} 登录 {{ item.item.dns }} 失败, rc={{ item.rc }}"
+  loop: "{{ _harbor_login.results }}"
+  loop_control:
+    label: "{{ item.item.dns }}"
+  when: item.rc != 0
 
 - name: 检查docker服务运行
   shell: "systemctl is-active docker.service"
