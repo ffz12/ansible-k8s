@@ -2,7 +2,10 @@
 
 # The IP address or hostname to access admin UI and registry service.
 # DO NOT use localhost or 127.0.0.1, because Harbor needs to be accessed by external clients.
-hostname: {{ groups['harbor'][0] }} 
+# 用域名不用 IP: Harbor 把 token 认证地址设成 https://<hostname>/service/token, 写 IP 时客户端拿 token
+# 走裸 IP, 不经过按域名配的 containerd certs.d; 做高可用时 IP 还会钉死在某一台, VIP 漂走后登录失败。
+# 代价: 浏览器访问网页的电脑本机要能解析这个域名(hosts 或 DNS)。
+hostname: {{ harbor_dns }}
 
 # http related config
 http:
