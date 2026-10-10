@@ -88,12 +88,8 @@ vrrp_instance VI_1 {
 
     authentication {
         auth_type PASS
-        # ⚠ keepalived 只取 auth_pass 的【前 8 字符】, 超出会在启动日志里报
-        #     Truncating auth_pass to 8 characters
-        #   原写法 'LB_VIP_' ~ <VIP去点> 前缀就占了 7 位, 实际生效只剩 1 位 —— 于是
-        #   "基于 VIP 生成、避免多套 LB 冲突"这个意图【失效】: 任何 VIP 都得到 LB_VIP_1。
-        #   改为把 VIP 后两段转成十六进制(每段 2 位, 共 4 位)+ 3 位前缀 = 7 位, 不被截断,
-        #   同网段不同 VIP 也能区分。同一套 LB 内三台必须一致, 否则互相拒收 advert。
+        # keepalived 只取前 8 位。按 VIP 后两段转十六进制生成(VRP + 4 位 = 7 位), 不同 VIP 不撞;
+        # 同一套 LB 内各台必须一致。
         auth_pass {{ 'VRP' ~ '%02X%02X' % (lbvip.split('.')[2] | int, lbvip.split('.')[3] | int) }}
     }
 {% if lb_vrrp_unicast | default(true) | bool %}
