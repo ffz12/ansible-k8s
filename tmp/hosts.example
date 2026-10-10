@@ -52,6 +52,7 @@
 #a800-node30 accelerator_type=nvidia
 
 [harbor]
+# 1 台 = 单节点; 2 台 = 双主(env.yaml 配 harbor_vip), 两台不能与 [k8slb] 同机
 # Harbor 节点(在线从公共 mirror 拉镜像时可不部署)，走的ip配置部署写ip
 #172.171.1.217
 

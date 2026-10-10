@@ -7,49 +7,92 @@
   loop:
     - "ssl"
 
+# 单节点: 本机签发。双主: 只有 [harbor] 第一台签发, 再原样分发给第二台 ——
+#   两台必须是【同一套】CA 和证书, 否则 VIP 漂到另一台后客户端验证不过(x509 unknown authority)。
+- name: 本机是否负责签发证书
+  set_fact:
+    _harbor_cert_owner: "{{ (not (harbor_ha | bool)) or inventory_hostname == groups['harbor'][0] }}"
+
 # 以下证书生成全部加 creates 守卫: 证书已存在则跳过,避免重跑覆盖已签发证书导致信任链断裂
-- name: 生成ca.key
-  shell: |
-         cd {{ harbor_copy_path }}/harbor/ssl
-         openssl genrsa -out ca.key 3072
-  args:
-    creates: "{{ harbor_copy_path }}/harbor/ssl/ca.key"
+- name: 签发证书
+  when: _harbor_cert_owner | bool
+  block:
+    - name: 生成ca.key
+      shell: |
+             cd {{ harbor_copy_path }}/harbor/ssl
+             openssl genrsa -out ca.key 3072
+      args:
+        creates: "{{ harbor_copy_path }}/harbor/ssl/ca.key"
 
-- name: 生成ca.crt
-  shell: |
-         cd {{ harbor_copy_path }}/harbor/ssl
-         openssl req -new -x509 -days 36500 -key ca.key -out ca.crt -subj "/C=CN/ST=Beijing/L=Beijing/O=My Company/OU=IT Department/CN=HarborCA"
-  args:
-    creates: "{{ harbor_copy_path }}/harbor/ssl/ca.crt"
+    - name: 生成ca.crt
+      shell: |
+             cd {{ harbor_copy_path }}/harbor/ssl
+             openssl req -new -x509 -days 36500 -key ca.key -out ca.crt -subj "/C=CN/ST=Beijing/L=Beijing/O=My Company/OU=IT Department/CN=HarborCA"
+      args:
+        creates: "{{ harbor_copy_path }}/harbor/ssl/ca.crt"
 
-- name: 准备 OpenSSL 配置文件（含 SAN）
-  template:
-    src: openssl-san.conf.j2
-    dest: "{{ harbor_copy_path }}/harbor/ssl/openssl-san.conf"
+    - name: 准备 OpenSSL 配置文件（含 SAN）
+      template:
+        src: openssl-san.conf.j2
+        dest: "{{ harbor_copy_path }}/harbor/ssl/openssl-san.conf"
 
-- name: 生成harbor.key
-  shell: |
-         cd {{ harbor_copy_path }}/harbor/ssl
-         openssl genrsa -out harbor.key 3072
-  args:
-    creates: "{{ harbor_copy_path }}/harbor/ssl/harbor.key"
+    # 只重签服务端证书, CA 不动 —— 客户端信任的是 CA, 所以不用全集群重跑 harbor-trust。
+    # 用途: 单节点扩成双主时, 让 SAN 带上 VIP 和两台 IP(只用域名访问的话不重签也能用)。
+    - name: 重签服务端证书(-e harbor_regen_cert=true; CA 不变)
+      file:
+        path: "{{ harbor_copy_path }}/harbor/ssl/{{ item }}"
+        state: absent
+      loop: [harbor.csr, harbor.crt]
+      when: harbor_regen_cert | default(false) | bool
 
-- name: 生成harbor.csr
-  shell: |
-         cd {{ harbor_copy_path }}/harbor/ssl
-         openssl req -new -key harbor.key   -out harbor.csr  -subj "/C=CN/ST=Beijing/L=Beijing/O=My Company/OU=IT/CN={{ harbor_dns | default('harbor.local') }}" -config openssl-san.conf
-  args:
-    creates: "{{ harbor_copy_path }}/harbor/ssl/harbor.csr"
+    - name: 生成harbor.key
+      shell: |
+             cd {{ harbor_copy_path }}/harbor/ssl
+             openssl genrsa -out harbor.key 3072
+      args:
+        creates: "{{ harbor_copy_path }}/harbor/ssl/harbor.key"
 
-- name: 使用 CA 签发 harbor.crt 证书
-  shell: |
-    cd {{ harbor_copy_path }}/harbor/ssl
-    openssl x509 -req -in harbor.csr \
-      -CA ca.crt -CAkey ca.key -CAcreateserial \
-      -out harbor.crt -days 36500 \
-      -extfile openssl-san.conf -extensions v3_req
-  args:
-    creates: "{{ harbor_copy_path }}/harbor/ssl/harbor.crt"
+    - name: 生成harbor.csr
+      shell: |
+             cd {{ harbor_copy_path }}/harbor/ssl
+             openssl req -new -key harbor.key   -out harbor.csr  -subj "/C=CN/ST=Beijing/L=Beijing/O=My Company/OU=IT/CN={{ harbor_dns | default('harbor.local') }}" -config openssl-san.conf
+      args:
+        creates: "{{ harbor_copy_path }}/harbor/ssl/harbor.csr"
+
+    - name: 使用 CA 签发 harbor.crt 证书
+      shell: |
+        cd {{ harbor_copy_path }}/harbor/ssl
+        openssl x509 -req -in harbor.csr \
+          -CA ca.crt -CAkey ca.key -CAcreateserial \
+          -out harbor.crt -days 36500 \
+          -extfile openssl-san.conf -extensions v3_req
+      args:
+        creates: "{{ harbor_copy_path }}/harbor/ssl/harbor.crt"
+
+# ---- 双主: 第二台拿第一台的证书(ca.key 不分发, 只留在签发机上) ----
+- name: 双主 —— 从第一台读取证书
+  slurp:
+    src: "{{ harbor_copy_path }}/harbor/ssl/{{ item }}"
+  loop: [ca.crt, harbor.crt, harbor.key]
+  delegate_to: "{{ groups['harbor'][0] }}"
+  register: _harbor_cert_files
+  no_log: true
+  when:
+    - harbor_ha | bool
+    - not (_harbor_cert_owner | bool)
+
+- name: 双主 —— 写入同一套证书
+  copy:
+    content: "{{ item.content | b64decode }}"
+    dest: "{{ harbor_copy_path }}/harbor/ssl/{{ item.item }}"
+    mode: "{{ '0600' if item.item == 'harbor.key' else '0644' }}"
+  loop: "{{ _harbor_cert_files.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('') }}"
+  no_log: true
+  when:
+    - harbor_ha | bool
+    - not (_harbor_cert_owner | bool)
 
 - name: 检查证书生成效果
   shell: |
@@ -71,6 +114,17 @@
   debug:
     msg: "{{ san_status.stdout }}"
 
+- name: ⚠ 双主 —— 证书 SAN 里没有 VIP
+  debug:
+    msg: >-
+      证书 SAN 里没有 VIP {{ harbor_vip }}(多半是从单节点扩成双主, 证书还是旧的)。
+      只用域名 {{ harbor_dns }} 访问不受影响; 想让浏览器用 IP 打开不报警告, 加 -e harbor_regen_cert=true
+      重跑一次(只重签服务端证书, CA 不变, 客户端不用重新信任)。
+  when:
+    - harbor_ha | bool
+    - _harbor_cert_owner | bool
+    - harbor_vip not in san_status.stdout
+
 - name: Ensure local certs directory exists on control node
   delegate_to: localhost
   run_once: true
@@ -85,3 +139,4 @@
     src: "{{ harbor_copy_path }}/harbor/ssl/ca.crt"
     dest: "{{ offline_artifacts }}/harbor/{{ harbor_dns }}/certs/{{ harbor_ip }}-ca.crt"
     flat: yes
+  when: _harbor_cert_owner | bool

@@ -149,6 +149,10 @@ offline_arch: all              # amd64 | arm64 | all —— 下载哪些架构(�
 offline_distros: all           # all 或列表 [ubuntu, kylin, openeuler] —— packages(系统依赖包)层下哪些发行版
 harbor_dns: "{{ harbor_instances[0].dns }}"
 harbor_ip: "{{ harbor_instances[0].ip }}"
+# Harbor 双主: [harbor] 组 2 台时自动开启(1 台 = 单节点, 原行为)。双主需在 env.yaml 配 harbor_vip,
+# 并把 harbor_instances 第一项 ip 改成 VIP。详见 roles/harbor/tasks/preflight.yaml。
+harbor_ha: "{{ (groups['harbor'] | default([]) | length) > 1 }}"
+harbor_vip: ""
 registry: "{{ harbor_dns }}/{{ harbor_project | default('kubernetes') }}"   # 自建 harbor 前缀(项目名可在 env.yaml 覆盖, 默认 kubernetes)
 
 # ================= apt 代理(playbook/apt-proxy.yaml 用) =================

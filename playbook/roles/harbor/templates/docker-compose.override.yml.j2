@@ -1,0 +1,11 @@
+# Harbor 双主(roles/harbor/tasks/ha.yaml 生成, 手改会被覆盖)。
+# 容器不读宿主机 /etc/hosts。复制时对端返回的 token 地址是 https://{{ harbor_dns }}/service/token,
+# core / jobservice 里要能解析这个域名, 否则复制失败。
+{{ _harbor_compose_version.stdout | trim }}
+services:
+  core:
+    extra_hosts:
+      - "{{ harbor_dns }}:{{ harbor_vip }}"
+  jobservice:
+    extra_hosts:
+      - "{{ harbor_dns }}:{{ harbor_vip }}"

@@ -1,0 +1,239 @@
+# Harbor 双主([harbor] 组 2 台时由 main.yaml 引入)。
+#   ① 两台的 token 签名密钥统一 —— 否则 A 签的 token 到 B 验不过, VIP 切换后已登录的客户端 401,
+#      复制时去对端拿的 token 也可能是另一台签的。
+#   ② core / jobservice 容器里能解析 harbor_dns —— 复制时对端返回的 token 地址是
+#      https://<harbor_dns>/service/token, 容器不读宿主机 /etc/hosts, 解析不了复制就失败。
+#   ③ keepalived 挂 VIP, 健康检查 /api/v2.0/ping。
+#   ④ 两边各建一条 push 复制规则指向对方。
+# ⚠ ①② 的路径与行为按 Harbor 2.x 的目录结构写, 未在现网验证, 首次上线请按部署说明的步骤验收。
+
+# ---------------- ① 统一 token 签名密钥 ----------------
+- name: "[Harbor HA] 从第一台读取 token 签名密钥"
+  slurp:
+    src: "{{ data_volume }}/secret/{{ item }}"
+  loop: [core/private_key.pem, registry/root.crt]
+  delegate_to: "{{ groups['harbor'][0] }}"
+  register: _harbor_token_keys
+  no_log: true
+  when: inventory_hostname != groups['harbor'][0]
+
+- name: "[Harbor HA] 读取本机密钥文件属主(容器内用户, 不能改成 root)"
+  stat:
+    path: "{{ data_volume }}/secret/{{ item }}"
+  loop: [core/private_key.pem, registry/root.crt]
+  register: _harbor_token_stat
+  when: inventory_hostname != groups['harbor'][0]
+
+- name: "[Harbor HA] 第二台换成第一台的密钥"
+  copy:
+    content: "{{ item.0.content | b64decode }}"
+    dest: "{{ data_volume }}/secret/{{ item.0.item }}"
+    owner: "{{ item.1.stat.uid }}"
+    group: "{{ item.1.stat.gid }}"
+    mode: "{{ item.1.stat.mode }}"
+  loop: "{{ (_harbor_token_keys.results | default([])) | zip(_harbor_token_stat.results | default([])) | list }}"
+  loop_control:
+    label: "{{ item.0.item | default('') }}"
+  register: _harbor_token_synced
+  no_log: true
+  when: inventory_hostname != groups['harbor'][0]
+
+# ---------------- ② 容器内解析 harbor_dns ----------------
+- name: "[Harbor HA] 读取 docker-compose.yml 的 version 行"
+  shell: grep -m1 '^version' {{ harbor_copy_path }}/harbor/docker-compose.yml || true
+  register: _harbor_compose_version
+  changed_when: false
+
+- name: "[Harbor HA] 写 docker-compose.override.yml(core/jobservice 解析 {{ harbor_dns }} -> VIP)"
+  template:
+    src: docker-compose.override.yml.j2
+    dest: "{{ harbor_copy_path }}/harbor/docker-compose.override.yml"
+    mode: '0644'
+
+# docker-compose 在该目录执行时自动合并 override; 重复执行只会重建有变化的容器
+- name: "[Harbor HA] 应用 override"
+  shell: cd {{ harbor_copy_path }}/harbor && docker-compose up -d
+  changed_when: false
+
+- name: "[Harbor HA] 密钥换过则重启 core / registry"
+  shell: cd {{ harbor_copy_path }}/harbor && docker-compose restart core registry
+  when: _harbor_token_synced is changed
+
+# ---------------- ③ keepalived ----------------
+- name: "[Harbor HA] 等本机 Harbor 就绪"
+  uri:
+    url: https://127.0.0.1/api/v2.0/ping
+    validate_certs: false
+    return_content: true
+  register: _harbor_ping
+  until: _harbor_ping.status == 200
+  retries: 30
+  delay: 5
+
+- name: "[Harbor HA] (离线-RPM) 安装 keepalived"
+  shell: yum install -y --disablerepo="*" --enablerepo="local-offline" keepalived
+  when:
+    - is_offline | default(false) | bool
+    - ansible_os_family != 'Debian'
+
+- name: "[Harbor HA] 安装 keepalived"
+  package:
+    name: keepalived
+    state: present
+  when: not (is_offline | default(false) | bool) or ansible_os_family == 'Debian'
+
+- name: "[Harbor HA] 探测 VIP 所在网卡(按 ansible_host 所在网卡)"
+  shell: "ip -o -4 addr show | awk '$4 ~ \"^{{ ansible_host | default(inventory_hostname) }}/\" {print $2; exit}'"
+  register: _harbor_vip_if
+  changed_when: false
+  failed_when: _harbor_vip_if.stdout | trim | length == 0
+
+- name: "[Harbor HA] 健康检查脚本"
+  template:
+    src: check_harbor.sh.j2
+    dest: /etc/keepalived/check_harbor.sh
+    mode: '0700'
+    owner: root
+    group: root
+  register: _harbor_ka_check
+
+- name: "[Harbor HA] keepalived 配置"
+  template:
+    src: keepalived-harbor.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    mode: '0644'
+  register: _harbor_ka_conf
+
+- name: "[Harbor HA] 启动 keepalived"
+  systemd:
+    name: keepalived
+    enabled: true
+    state: "{{ 'restarted' if (_harbor_ka_conf is changed or _harbor_ka_check is changed) else 'started' }}"
+
+# ---------------- ④ 双向复制 ----------------
+- name: "[Harbor HA] 对端地址"
+  set_fact:
+    _harbor_peer_ip: "{{ _harbor_node_ips | difference([ansible_host | default(inventory_hostname)]) | first }}"
+
+- name: "[Harbor HA] 等对端 Harbor 就绪"
+  uri:
+    url: "https://{{ _harbor_peer_ip }}/api/v2.0/ping"
+    validate_certs: false
+  register: _harbor_peer_ping
+  until: _harbor_peer_ping.status == 200
+  retries: 30
+  delay: 5
+
+- name: "[Harbor HA] 查询已有的目标仓库"
+  uri:
+    url: https://127.0.0.1/api/v2.0/registries?page_size=100
+    user: "{{ harbor_admin_username | default('admin') }}"
+    password: "{{ harbor_admin_password | default('Harbor12345') }}"
+    force_basic_auth: true
+    validate_certs: false
+  register: _harbor_registries
+  no_log: true
+
+- name: "[Harbor HA] 新建目标仓库(指向对端 {{ _harbor_peer_ip }})"
+  uri:
+    url: https://127.0.0.1/api/v2.0/registries
+    method: POST
+    user: "{{ harbor_admin_username | default('admin') }}"
+    password: "{{ harbor_admin_password | default('Harbor12345') }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      name: "ha-peer-{{ _harbor_peer_ip }}"
+      type: harbor
+      url: "https://{{ _harbor_peer_ip }}"
+      insecure: true
+      credential:
+        type: basic
+        access_key: "{{ harbor_admin_username | default('admin') }}"
+        access_secret: "{{ harbor_admin_password | default('Harbor12345') }}"
+    status_code: [201]
+  no_log: true
+  when: _harbor_registries.json | selectattr('name', 'equalto', 'ha-peer-' ~ _harbor_peer_ip) | list | length == 0
+
+- name: "[Harbor HA] 重新查询目标仓库 ID"
+  uri:
+    url: https://127.0.0.1/api/v2.0/registries?page_size=100
+    user: "{{ harbor_admin_username | default('admin') }}"
+    password: "{{ harbor_admin_password | default('Harbor12345') }}"
+    force_basic_auth: true
+    validate_certs: false
+  register: _harbor_registries2
+  no_log: true
+
+- name: "[Harbor HA] 查询已有的复制规则"
+  uri:
+    url: https://127.0.0.1/api/v2.0/replication/policies?page_size=100
+    user: "{{ harbor_admin_username | default('admin') }}"
+    password: "{{ harbor_admin_password | default('Harbor12345') }}"
+    force_basic_auth: true
+    validate_certs: false
+  register: _harbor_policies
+  no_log: true
+
+# 事件触发: 本机推镜像后自动推到对端; 不同步删除(一边误删不会连带删掉另一边)
+# 目标项目不存在时 push 复制会自动创建项目; 用户/权限/机器人账号不会同步, 要两边各配
+- name: "[Harbor HA] 新建复制规则(全部项目, 事件触发 push 到对端)"
+  uri:
+    url: https://127.0.0.1/api/v2.0/replication/policies
+    method: POST
+    user: "{{ harbor_admin_username | default('admin') }}"
+    password: "{{ harbor_admin_password | default('Harbor12345') }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      name: "ha-push-to-{{ _harbor_peer_ip }}"
+      description: "Harbor 双主: 推到对端(ansible 生成)"
+      dest_registry:
+        id: "{{ (_harbor_registries2.json | selectattr('name', 'equalto', 'ha-peer-' ~ _harbor_peer_ip) | first).id }}"
+      filters: []
+      trigger:
+        type: event_based
+      deletion: false
+      override: true
+      enabled: true
+    status_code: [201]
+  register: _harbor_policy_created
+  no_log: true
+  when: _harbor_policies.json | selectattr('name', 'equalto', 'ha-push-to-' ~ _harbor_peer_ip) | list | length == 0
+
+- name: "[Harbor HA] 首次建规则后手动触发一次, 把已有镜像同步过去"
+  uri:
+    url: https://127.0.0.1/api/v2.0/replication/policies?name=ha-push-to-{{ _harbor_peer_ip }}
+    user: "{{ harbor_admin_username | default('admin') }}"
+    password: "{{ harbor_admin_password | default('Harbor12345') }}"
+    force_basic_auth: true
+    validate_certs: false
+  register: _harbor_new_policy
+  no_log: true
+  when: _harbor_policy_created is changed
+
+- name: "[Harbor HA] 触发全量复制"
+  uri:
+    url: https://127.0.0.1/api/v2.0/replication/executions
+    method: POST
+    user: "{{ harbor_admin_username | default('admin') }}"
+    password: "{{ harbor_admin_password | default('Harbor12345') }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      policy_id: "{{ (_harbor_new_policy.json | first).id }}"
+    status_code: [201]
+  no_log: true
+  when: _harbor_policy_created is changed
+
+- name: "[Harbor HA] 当前 VIP 所在"
+  shell: ip -o -4 addr show | grep -q ' {{ harbor_vip }}/' && echo '本机持有 VIP' || echo '本机未持有 VIP'
+  register: _harbor_vip_holder
+  changed_when: false
+
+- name: "[Harbor HA] 结果"
+  debug:
+    msg: "{{ inventory_hostname }}: {{ _harbor_vip_holder.stdout }}; 复制规则 ha-push-to-{{ _harbor_peer_ip }}"

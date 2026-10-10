@@ -1,0 +1,47 @@
+# Harbor 双主 VIP(roles/harbor/tasks/ha.yaml 生成, 手改会被覆盖)
+global_defs {
+   enable_script_security
+   script_user root
+   vrrp_garp_master_refresh 60
+   vrrp_garp_master_repeat 2
+}
+
+vrrp_script chk_harbor {
+    script "/etc/keepalived/check_harbor.sh"
+    interval 3
+    timeout 3
+    rise 2
+    fall 2
+    # 不配 weight: 与 nopreempt 同用时, 检查失败要让 instance 进 FAULT 停发 advert,
+    # 对端按"MASTER 消失"接管; 配了 weight 只降本机优先级, nopreempt 下 VIP 不会走
+    # (原理与现网实测见 roles/haproxy-ha/templates/keepalived.conf.j2)。
+}
+
+vrrp_instance VI_HARBOR {
+    state BACKUP
+    interface {{ _harbor_vip_if.stdout | trim }}
+    virtual_router_id {{ (harbor_vip | regex_replace('[.]', '') | int) % 254 + 1 }}
+    priority {{ 100 - (groups['harbor'].index(inventory_hostname) * 10) }}
+    advert_int 1
+    nopreempt       # 原主恢复后不抢回 VIP, 避免来回切
+
+    authentication {
+        auth_type PASS
+        auth_pass {{ 'HRB' ~ '%02X%02X' % (harbor_vip.split('.')[2] | int, harbor_vip.split('.')[3] | int) }}
+    }
+
+    unicast_src_ip {{ ansible_host | default(inventory_hostname) }}
+    unicast_peer {
+{% for ip in _harbor_node_ips if ip != (ansible_host | default(inventory_hostname)) %}
+        {{ ip }}
+{% endfor %}
+    }
+
+    virtual_ipaddress {
+        {{ harbor_vip }}/{{ harbor_vip_prefix | default(vip_prefix | default(24)) }} dev {{ _harbor_vip_if.stdout | trim }}
+    }
+
+    track_script {
+        chk_harbor
+    }
+}

@@ -1,0 +1,6 @@
+#!/bin/bash
+# keepalived 健康检查: 本机 Harbor 是否在应答(探 127.0.0.1, 不探 VIP —— 要判断的是本机该不该持 VIP)。
+# /api/v2.0/ping 正常返回 "Pong"; 拿不到就算失败(core 挂了、nginx 挂了都会失败)。
+out="$(curl -sk --max-time 2 https://127.0.0.1/api/v2.0/ping 2>/dev/null)"
+[ "$out" = '"Pong"' ] || [ "$out" = 'Pong' ] && exit 0
+exit 1

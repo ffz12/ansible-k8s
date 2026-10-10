@@ -1,0 +1,64 @@
+# 单节点 / 双主 判定与预检。
+# 开关是 inventory 的 [harbor] 组台数: 1 台 = 单节点(与原行为一致), 2 台 = 双主。
+# 双主 = 两台各自独立(各自 DB/存储, 不共享), 互相 push 复制, keepalived 在两台上挂 VIP,
+#        客户端只认 harbor_dns -> VIP。
+
+- name: "[Harbor] 节点 IP(未写 ansible_host 时用组里写的名字/IP)"
+  set_fact:
+    _harbor_node_ips: "{{ _harbor_node_ips_fixed }}"
+  vars:
+    _harbor_node_ips_fixed: >-
+      {%- set out = [] -%}
+      {%- for h in groups['harbor'] -%}
+      {%- set _ = out.append(hostvars[h].ansible_host | default(h)) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: "[Harbor] 双主预检"
+  when: harbor_ha | bool
+  block:
+    - name: "[Harbor] 双主只支持 2 台"
+      assert:
+        that: groups['harbor'] | length == 2
+        fail_msg: "[harbor] 组有 {{ groups['harbor'] | length }} 台, 双主只支持 2 台(3 台要两两复制, 暂不支持)"
+
+    - name: "[Harbor] 双主必须配 harbor_vip, 且 harbor_instances 的 ip 要填 VIP"
+      assert:
+        that:
+          - harbor_vip | default('') | trim | length > 0
+          - harbor_ip == harbor_vip
+        fail_msg: >-
+          双主需要在 env.yaml 配 harbor_vip, 并把 harbor_instances 第一项的 ip 改成 VIP
+          (当前 harbor_vip={{ harbor_vip | default('') }}, harbor_instances[0].ip={{ harbor_ip }})。
+          ip 不是 VIP 时客户端会钉在某一台, 那台挂了不会切换。
+
+    - name: "[Harbor] VIP 不能是某台 Harbor 自己的 IP"
+      assert:
+        that: harbor_vip not in _harbor_node_ips
+        fail_msg: "harbor_vip={{ harbor_vip }} 与 Harbor 节点 IP 重复, VIP 要用一个没被占用的地址"
+
+    # 两套 keepalived 都写 /etc/keepalived/keepalived.conf, 同机会互相覆盖
+    - name: "[Harbor] Harbor 节点不能与 [k8slb] 同机"
+      assert:
+        that: _harbor_node_ips | intersect(_k8slb_ips) | length == 0
+        fail_msg: >-
+          Harbor 节点 {{ _harbor_node_ips | intersect(_k8slb_ips) | join(',') }} 也在 [k8slb] 里。
+          两套 keepalived 写同一个配置文件会互相覆盖, Harbor 双主请放在不跑 k8s LB 的机器上。
+      vars:
+        _k8slb_ips: >-
+          {%- set out = [] -%}
+          {%- for h in groups['k8slb'] | default([]) -%}
+          {%- set _ = out.append(hostvars[h].ansible_host | default(h)) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "[Harbor] VIP 的 virtual_router_id 不能与 k8s LB 相同"
+      assert:
+        that: _harbor_vrid | int != _lb_vrid | int
+        fail_msg: >-
+          harbor_vip={{ harbor_vip }} 与 lbvip={{ lbvip }} 算出的 virtual_router_id 都是 {{ _harbor_vrid }},
+          同一网段会互相抢 VIP, 换一个 harbor_vip。
+      when: has_lbvip | default(false) | bool
+      vars:
+        _harbor_vrid: "{{ (harbor_vip | regex_replace('[.]', '') | int) % 254 + 1 }}"
+        _lb_vrid: "{{ (lbvip | regex_replace('[.]', '') | int) % 254 + 1 }}"

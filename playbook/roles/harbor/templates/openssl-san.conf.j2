@@ -24,3 +24,8 @@ DNS.1 = {{ harbor_dns }}
 {% if harbor_ip %}
 IP.1 = {{ harbor_ip }}
 {% endif %}
+{% if harbor_ha | bool %}
+{% for ip in _harbor_node_ips %}
+IP.{{ loop.index + 1 }} = {{ ip }}
+{% endfor %}
+{% endif %}

@@ -1,3 +1,6 @@
+# 1 台 = 单节点(原行为), 2 台 = 双主; 判定与预检见 preflight.yaml
+- include_tasks: preflight.yaml
+
 - name: 目录创建
   file: path={{ item }} state=directory  mode=0755
   loop:
@@ -27,3 +30,5 @@
     loop: "{{ harbor_status.stdout_lines }}"
     when: item | length > 0  # 跳过空行
 
+- include_tasks: ha.yaml
+  when: harbor_ha | bool
