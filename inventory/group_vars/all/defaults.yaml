@@ -425,16 +425,16 @@ chrony_allow_networks:
 # ############################################################################
 
 # ============================================================================
-#  ⚠【故意不在此兜底】的 4 个: pod_subnet / service_subnet / dns_domain / etcd_data_dir
+#  ⚠【故意不在此兜底】的 3 个: pod_subnet / service_subnet / etcd_data_dir
+#  (dns_domain 原也在此列, 2026-10 起给了默认值 cluster.local, 见 kubelet/kubeadm 兜底段)
 #
 #  它们都是【建集群后不可改】的值 —— 改了等于重建集群或重签证书。给兜底的代价是:
 #  精简版 env.yaml 会【静默】拿到默认值而不是报错, 拿错网段建完集群才发现, 代价是重建。
-#  对这 4 个, "宁可明确报错也别猜" 比 "不炸" 更合理。
+#  对这 3 个, "宁可明确报错也别猜" 比 "不炸" 更合理。
 #
 #  改为在真正消费它们的 role 里做预检 assert, 缺了就明确报错并告知该在 env.yaml 填什么:
 #    pod_subnet     -> kube-init-master/tasks/main.yml + cni/tasks/main.yaml
 #    service_subnet -> kube-init-master/tasks/main.yml
-#    dns_domain     -> kube-init-master/tasks/main.yml + nodelocaldns/tasks/main.yml
 #    etcd_data_dir  -> etcd/etcd-common/tasks/main.yaml + etcd/etcd-destroy/tasks/main.yml
 #  (放 role 而非 playbook: 所有入口 playbook 自动覆盖, 不会漏掉单独跑的那些)
 #
