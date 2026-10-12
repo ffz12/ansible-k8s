@@ -718,6 +718,7 @@ multus_cni_components:
 - multus-cni
 
 # ================= apiserver 入口(lbvip 空值统一处理) =================
+vip_prefix: 22                           # VIP 掩码位数(k8s LB 与 Harbor 双主 keepalived 共用), 按业务网卡实际掩码改
 # ⚠ lbvip 是可选的(单 master 不需要)。历史上四处写法不一致, 空串 lbvip: "" 时:
 #     · `lbvip is defined` 判定为【真】(空串也算已定义) -> kubeadm 渲出 ":8443"、cilium 取 8443
 #     · `default(x)` 不带 true 时空串【不】回退 -> cilium k8sServiceHost 渲成 ""
