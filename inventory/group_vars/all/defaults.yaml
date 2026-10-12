@@ -226,11 +226,6 @@ cri_dockerd_version: "0.3.16"            # 仅 [cri_docker_nodes] 非空时用�
 #   kube-common 的预检拿派生值与节点 config.toml 逐字比对, 不一致就拦下全部节点。
 #   自己从零装的集群不存在这个问题(containerd-setup 与预检同源, 必然一致)。
 #sandbox_image: harbor.local.clusters/kubernetes/pause:3.10.1
-docker_mirrors:                          # 容器镜像加速(可选)
-  - "https://docker.hlmirror.com"
-  - "https://docker.1ms.run"
-  - "https://docker.m.daocloud.io"
-  - "https://proxy.1panel.live"
 
 
 # ---- DNS(Debian 系初始化, 默认不接管) ----
@@ -274,14 +269,7 @@ domains: "local.clusters"
 k8s_version: "1.34.3"
 containerd_version: "1.7.32"
 runc_version: "1.1.12"
-docker_version: "29.4.2"
-buildx_version: "0.32.1"
-compose_version: "2.32.4"
-cri_dockerd_version: "0.3.16"
 calico_version: "3.31.3"
-flannel_version: "0.26.7"
-flannel_cni_version: "1.6.2-flannel1"
-cilium_version: "1.16.5"
 helm_version: "3.18.5"                   # 不带 v; 模板会拼 helm-v{{helm_version}}
 multus_cni_version: "4.2.4"
 # 装哪个 CNI。被 roles/cni 及 k8s-cni-switch / sync-cni-images 裸引用(9 处 {{ }} + 6 处 when:,
@@ -326,7 +314,7 @@ calico_registry_online: "docker.io/calico"
 flannel_registry_online: "docker.io/flannel"
 cilium_registry_online: "quay.io/cilium"
 cilium_helm_repo: "https://helm.cilium.io"
-docker_mirrors:
+docker_mirrors:                          # 容器镜像加速(可选)
   - "https://docker.hlmirror.com"
   - "https://docker.1ms.run"
   - "https://docker.m.daocloud.io"
@@ -485,27 +473,7 @@ flannel_version: "0.26.7"
 flannel_cni_version: "1.6.2-flannel1"    # flannel-cni-plugin 镜像 tag(拼进 flannel_images.flannel_cni)
 cilium_version: "1.16.5"
 
-# 是否启用 NodeLocal DNSCache(每节点本地 DNS 缓存, 查询链: Pod -> 169.254.25.10 -> CoreDNS)。
-# true = 装机时随 CNI 之后自动部署 DaemonSet, 并把 kubelet 的 clusterDNS 指向它(与 kk 同款做法);
-#        worker 由 kubeadm join 拉 kubelet-config ConfigMap 自动继承, 无需单独配。
-# 不填/false = 不装, Pod 直连 coredns ClusterIP。
-# 单绑 link-local 形态, iptables / ipvs 两种 kube-proxy 模式都适用。
-enable_nodelocaldns: true                # 装机时随 CNI 之后自动部署, 并把 kubelet clusterDNS 指向它
-# 下面两项默认值即可, 一般不用动:
-#nodelocaldns_ip: "169.254.25.10"        # 改了要与各节点 kubelet clusterDNS 一致(由上面开关自动同步)
-#nodelocaldns_coredns_svc: coredns       # 上游 CoreDNS Service 名。现已【自动探测】(依次试
-                                         #   本项 -> kube-dns -> coredns), kubeadm 集群是 kube-dns、
-                                         #   kk 集群是 coredns, 都不用手填; 只有用了别的名字才需指定
-# nftables 要求【内核 5.13+ 且 nft 1.0.1+】, 装之前逐节点确认:
-#   ansible all -m shell -a 'uname -r; nft list tables'
-#   麒麟/openEuler 等老内核不满足时改 iptables(ipvs 仍可用, 但不建议新站点再选)。
-# ⚠ 只在建集群时生效: 已有集群改这里不会切换 kube-proxy, 存量 ipvs 集群保持 ipvs 别动。
-# 仅 nftables 模式生效; 默认 0.0.0.0/0(defaults.yaml 已兜底), 保证 keepalived VIP:<nodePort> 能通。
-# 要把 NodePort 限定在业务网段才取消注释(收紧后 VIP 漂移到的节点也必须在列表网段内):
-#nodeport_addresses: ["172.171.1.0/24"]
 
-# ⚠ lb_proxy 单机和提前规划vip的不开，特殊场景：提前未规划vip单又想高可用时打开
-#lb_proxy: keepalived-only
 
 # 单 master: lbvip 保持注释, 入口自动取「首 master : apiserver_port」。
 # 多 master: 必须填 lbvip, 入口变「lbvip : apiserver_lb_port」(>=2 台 master 没配会被 assert 拦)。
@@ -564,6 +532,8 @@ enable_nodelocaldns: true                # 装机时随 CNI 之后自动部署, 
 # 要负载均衡就直接上形态 2; 只要故障转移、机器暂时不够就走形态 1。
 #
 # ---- 非标准: lb_proxy: keepalived-only ----
+# ⚠ 单机、已提前规划 VIP 的都不开; 特殊场景(没提前规划 VIP 又想高可用)才打开:
+#lb_proxy: keepalived-only
 # 给"已经建成 2 master 且拿不到 VIP"这类情况兜底 —— 只跑 keepalived、不装 haproxy,
 # VIP 直接落到持有它那台的 apiserver。有故障转移, 【无负载均衡】。
 # 唯一的实际价值: 端口与"无 VIP"状态一致(都是 apiserver_port), 所以配上域名后能从
@@ -640,33 +610,6 @@ kube_signing_duration: "876000h"
 #   届时把本项置 false 即可(行为不变, 只是不再显式声明), 无需改模板。
 kubelet_rotate_server_cert_gate: true
 
-# ---- kubelet 调优 ----
-kubelet_cpu_manager_policy: "none"       # none(通用) / static(CPU 绑核, 仅 AI 物理机)
-kubelet_cpu_align_by_socket: false       # 仅 static 且 sockets<=NUMA 节点数时才 true(否则 kubelet 起不来)
-kubelet_max_pods: 110                    # AI 大节点可调大(注意 pod CIDR 每节点容量)
-kubelet_kube_reserved_cpu: "200m"
-kubelet_kube_reserved_mem: "512Mi"
-kubelet_system_reserved_cpu: "200m"
-kubelet_system_reserved_mem: "256Mi"
-
-kubelet_eviction_soft_grace: "1m30s"     # 软驱逐宽限期
-kubelet_eviction_max_pod_grace: 120      # 驱逐时给 Pod 的最大优雅退出秒数
-kubelet_eviction_pressure_transition: "30s"  # 退出驱逐压力状态的最短停留(防抖)
-kubelet_pod_pids_limit: 50000            # 单 Pod 最大进程数(防 fork 炸弹); -1 不限。AI 训练/多进程负载易撞 1w 上限, 故给 5w
-kubelet_container_log_max_size: "5Mi"    # 单容器日志文件上限
-kubelet_container_log_max_files: 3       # 容器日志保留文件数
-kubelet_shutdown_grace: "30s"            # 节点关机时给普通 Pod 的优雅退出时间
-kubelet_shutdown_grace_critical: "10s"   # 其中留给关键 Pod 的部分
-
-
-# kubelet 的 client/serving 证书走 CSR, 由 controller-manager 的 --cluster-signing-duration
-# 控制 —— 即本项。不设默认只有 8760h(1y), 与控制面证书(kubeadm 直签, 876000h)不一致。
-kube_signing_duration: "876000h"         # =100y, 与控制面证书对齐; 改小需同步考虑轮换与审批
-# 显式声明 kubelet serving 证书自动轮换(featureGates.RotateKubeletServerCertificate)。
-# 该 gate 自 k8s 1.12 起默认即 true, 写出来不改变行为, 只是让轮换这件事在配置里可见,
-# 并与现网 kk 集群写法一致。⚠ 已 GA-locked: 未来版本移除该 gate 后 kubelet 会启动失败,
-# 届时把本项置 false 即可(行为不变, 只是不再显式声明)。
-kubelet_rotate_server_cert_gate: true
 #kubelet_security_enhancement: false      # true=开 CIS 安全加固(关只读端口10255/protectKernelDefaults/TLS套件等)
 # kubelet: podPidsLimit: -1 + serializeImagePulls: false
 #   ⚠ -1 = 放弃单 Pod pid 上限(fork 炸弹可打满整机)。
@@ -876,17 +819,6 @@ apiserver_lb_port: 8443
 #
 #  取值见 tmp/env.yaml.example, 必须在 env.yaml 显式写。【不要往这里加默认值。】
 # ============================================================================
-# ---- etcd 调优----
-etcd_cert_expiry: "36500"                # 证书有效期(天)
-etcd_cluster_token: "prod-etcd-cluster-01"
-etcd_enable_metrics: true                # 暴露 etcd metrics 端点(listen-metrics-urls, 监控用; 有安全顾虑改 false)
-etcd_config:
-  quota_backend_bytes: 8589934592        # 8G
-  auto_compaction_retention: "1h"
-  auto_compaction_mode: periodic
-  heartbeat_interval: 500
-  election_timeout: 5000
-  log_level: info
 
 # ---- kubeadm-config 模板要用的其余变量, 兜底 ----
 # 下面这些被 kube-init-master/templates/kubeadm-config.yaml.j2 【裸引用、无 default()】,
@@ -978,6 +910,7 @@ nodeport_addresses:
 # kubelet 资源预留 / 驱逐阈值 / 日志与关机宽限。这些是【调优值】, 按机型该调:
 #   AI 大节点常调 kubelet_max_pods 与两组 *_reserved_*; 调之前先看清各项含义。
 kubelet_cpu_manager_policy: "none"       # none(通用) / static(CPU 绑核, 仅 AI 物理机)
+kubelet_cpu_align_by_socket: false       # 仅 static 且 sockets<=NUMA 节点数时才 true(否则 kubelet 起不来)
 kubelet_kube_reserved_cpu: "200m"
 kubelet_kube_reserved_mem: "512Mi"
 kubelet_system_reserved_cpu: "200m"
@@ -1012,6 +945,8 @@ crictl_arch_map:
   aarch64: "crictl-v{{ crictl_version }}-linux-arm64.tar.gz"
 
 # ================= etcd(外置二进制集群) =================
+etcd_cert_expiry: "36500"                # 证书有效期(天)
+etcd_cluster_token: "prod-etcd-cluster-01"
 # etcd_install_dir 原先只在 tmp/env.yaml.example 里定义, 但被裸引用(无 default()):
 #   下面 etcd_bin_dir 直接派生它, 另在 etcd-install/etcd-common 的 tasks 里用 ——
 #   即本节第一行就依赖一个可能未定义的变量, 精简版 env.yaml 跑 etcd-deploy 直接 undefined。
@@ -1047,7 +982,7 @@ etcd_cluster_members: >-
   }}
 etcd_peer_port: 2380
 etcd_client_port: 2379
-etcd_enable_metrics: true
+etcd_enable_metrics: true                # 暴露 etcd metrics 端点(监控用; 有安全顾虑改 false)
 etcd_metrics_listen_urls: "http://{{ ansible_host }}:2381"
 
 # ================= 动态成员列表 =================
