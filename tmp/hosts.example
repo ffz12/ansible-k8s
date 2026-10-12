@@ -13,6 +13,8 @@
 # accelerator_type=nvidia/dcu/npu/cpu: 决定装哪种运行时, 同时决定 calico 双池分池
 #   (nvidia/dcu/npu -> hardware=gpu 标签; cpu 或不写 -> 普通 runc, hardware=cpu)。GPU 机器漏写会被当 CPU 节点。
 # calico_pool=gpu|cpu: 只覆盖分池, 不影响运行时。如 #cpu-009 ... calico_pool=gpu
+# DNS 按机器覆盖(一次 init 跑完, 不用分两遍): ... init_config_dns=true dns=223.5.5.5,114.114.114.114
+#   没外网的 GPU 机写内网 DNS: ... init_config_dns=true dns=10.14.73.1
 # accelerator_type 同时决定 k8s 业务标签: nvidia -> nvidia=true, cpu -> cpu_node=true, 不写 -> 不打;
 #   额外标签: #gpu-001 ... node_labels="{'gpu.model': 'b300'}"
 # ⚠ hardware 标签只在节点【首次加入】时打; 存量节点事后开双池要手工补:

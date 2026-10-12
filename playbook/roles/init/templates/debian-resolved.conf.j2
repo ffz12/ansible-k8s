@@ -1,3 +1,5 @@
+{#- dns 可以是列表(env.yaml), 也可以是逗号分隔的字符串(inventory 机器行 dns=10.0.0.1,10.0.0.2) -#}
+{%- set _dns = (dns.split(',') | map('trim') | list) if dns is string else dns -%}
 [Resolve]
-DNS={{ dns | join(' ') }}
+DNS={{ _dns | join(' ') }}
 Domains={{ domains | default('') }}
