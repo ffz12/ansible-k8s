@@ -157,7 +157,7 @@
       mount:
         path: "{{ container_base }}"
         src: "UUID={{ device_uuid.stdout }}"
-        fstype: "{{ fstype }}"
+        fstype: "{{ existing_fs.stdout | trim if existing_fs.stdout | trim | length > 0 else fstype }}"   # 已有文件系统按实际类型挂(如 ext4), 空白盘才用 fstype
         opts: defaults
         state: mounted
 

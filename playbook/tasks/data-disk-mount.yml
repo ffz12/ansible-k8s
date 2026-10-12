@@ -4,10 +4,15 @@
   register: _dd_uuid
   changed_when: false
 
+- name: "数据盘 {{ _disk.dev }} —— 取文件系统类型"
+  command: blkid -s TYPE -o value {{ _disk.dev }}
+  register: _dd_type
+  changed_when: false
+
 - name: "数据盘 {{ _disk.dev }} —— 挂载到 {{ _disk.path }}"
   mount:
     path: "{{ _disk.path }}"
     src: "UUID={{ _dd_uuid.stdout }}"
-    fstype: "{{ fstype }}"
+    fstype: "{{ _dd_type.stdout | trim if _dd_type.stdout | trim | length > 0 else fstype }}"   # 按盘上实际类型挂
     opts: defaults
     state: mounted
