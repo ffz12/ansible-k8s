@@ -5,7 +5,21 @@
 #  kube_criSocket / 在线镜像源 / 下载 mirror / 各类路径等可调项都在 env.yaml。
 # ============================================================================
 
+# ---- 离线预取范围(学 kk: 声明一次架构+系统, prefetch-all.sh 自动读取, 不用每次手打 ARCH=/DISTRO=) ----
+# 不填=all(双架构、全发行版, = 现状)。优先级: 环境变量 ARCH=/DISTRO= > 这里 > all。
+#offline_arch: amd64                    # amd64 | arm64 | all —— 本套集群的架构
+#offline_distros: [ubuntu, kylin]       # all 或列表, 只对 packages(系统依赖包)层生效; 用不到的发行版就不下
+
+
 # ================= Docker =================
+# 两者都可选, 不填就完全不写进 daemon.json(沿用 docker 自身默认网段)。
+# 只在默认网段(如 172.18.0.0/16、100.64.0.0/24)与现网冲突时才需要填。
+#docker_bip: "192.168.10.1/24"            # docker0 桥的地址(单网桥场景)
+#docker_default_address_pools:            # 自定义网络(docker network create)取址池
+#  - { base: "10.200.0.0/16", size: 24 }
+
+
+
 # 版本(docker/buildx/compose/cri_dockerd)是变参, 定义在 env.yaml; 这里(定参)按版本变量拼文件名。
 docker_arch_map:
   x86_64:
@@ -36,7 +50,20 @@ cri_dockerd_services:
 
 # ================= Containerd =================
 #containerd sandbox(pause)镜像: 离线->自建 Harbor(与 sync/kubeadm 同为 registry), 在线->国内 mirror
+
+# container_base 是 containerd/kubelet 数据盘主挂载点, 【必填, 别删】——
+#   它是本变量的【唯一定义处】(defaults.yaml 里没有兜底), 三个挂盘 playbook
+#   (mount-nvme / mount-nvme-lvm / mount-nvme-lvm-containerfs)与 containerd-setup 都读这里,
+#   改路径改这一处即可, 全体跟着走; containerd_root 会自动派生为 <container_base>/containerd。
+#   删掉或注释会让上述 playbook 直接报 container_base undefined。
+#   ⚠ 别在 playbook 的 play vars: 里重复定义它(play vars 优先级高于 group_vars, 会让这里的
+#     改动对那个 playbook 静默失效, 而 containerd-setup 仍按这里走 -> 盘挂在 A、containerd
+#     往 B 写、数据落回系统盘且不报错)。
 #pause_image_version 由下方 k8s_compat 按 k8s_version 自动取
+# containerd 大版本决定 config.toml 格式: >=2 走 v3(pause 的键名是 sandbox),
+# 1.x 走 v2(键名 sandbox_image)。由 containerd_config_version 自动派生, 不用手写。
+
+
 sandbox_image: "{{ (registry ~ '/pause:' ~ pause_image_version) if (is_offline | default(false) | bool) else (kube_image_mirror ~ '/pause:' ~ pause_image_version) }}"
 #cri-dockerd 的 pod-infra-container-image, 跟随 sandbox_image
 pause: "{{ sandbox_image }}"
@@ -45,6 +72,14 @@ containerd_config_version: "{{ 3 if (containerd_version.split('.')[0] | int) >= 
 # containerd 数据目录(等同 docker data-root)。默认放在 container_base 下; 与 container_base 解耦,
 # 可在 env.yaml 单独指到另一块数据盘(先用 mount-nvme 的 data_disks 挂好), kubelet 仍在 container_base。
 containerd_root: "{{ container_base }}/containerd"
+
+# ================= Harbor 信息 =================
+harbor_admin_username: admin
+harbor_admin_password: Harbor12345      # 建议改
+password: root123                        # harbor 数据库密码,建议改
+# harbor 里存 k8s 镜像的项目名; 不填默认 kubernetes。镜像前缀 registry = <harbor_dns>/<harbor_project>
+#harbor_project: kubernetes
+
 
 # ================= Harbor 镜像清单 =================
 harbor_offline_images:
@@ -178,6 +213,64 @@ apt_proxy_url: "http://10.2.0.15:3128"
 #   抬这里的值 = 静默改掉所有【没在自己 env.yaml 写这些项】的站点, 下次 pull 就换版本,
 #   而 containerd 跨大版本(1.7 -> 2.x)会让 containerd-setup 重写 config.toml 格式并重启
 #   容器运行时。2026-09-14 曾把这四项抬到 1.35.8/2.3.5/3.32.2/1.5.1, 已撤回(改错了地方)。
+# docker 层(本项目 docker 仅给 Harbor 用; 版本供 docker_arch_map 拼包名 + 离线下载脚本)
+docker_version: "29.4.2"                 # docker 静态二进制包版本
+buildx_version: "0.32.1"                 # docker buildx 插件版本
+compose_version: "2.32.4"                # docker compose 插件版本(仅离线下载脚本用; docker_arch_map 的 compose 文件名不带版本)
+cri_dockerd_version: "0.3.16"            # 仅 [cri_docker_nodes] 非空时用到; 改版本需重下离线包(文件名带版本号)
+# sandbox(pause)镜像 —— 【默认不写】, 由 defaults.yaml 自动派生:
+#   离线 <registry>/pause:<pause_image_version>, 在线 <kube_image_mirror>/pause:<pause_image_version>
+#   (registry = <harbor_dns>/<harbor_project>; pause_image_version 按 k8s_version 从 k8s_compat 派生)
+# ⚠ 只有【接管已有集群】才需要写: 那种集群的 pause 早已推在固定路径(如 kk 装的是
+#   registry.cn-beijing.aliyuncs.com/kubesphereio/pause:3.9), 派生值必然与之不一致, 而
+#   kube-common 的预检拿派生值与节点 config.toml 逐字比对, 不一致就拦下全部节点。
+#   自己从零装的集群不存在这个问题(containerd-setup 与预检同源, 必然一致)。
+#sandbox_image: harbor.local.clusters/kubernetes/pause:3.10.1
+docker_mirrors:                          # 容器镜像加速(可选)
+  - "https://docker.hlmirror.com"
+  - "https://docker.1ms.run"
+  - "https://docker.m.daocloud.io"
+  - "https://proxy.1panel.live"
+
+
+# ---- DNS(Debian 系初始化, 默认不接管) ----
+# init_config_dns=false(默认): 不碰系统原有 DNS, 下面 dns/domains 不生效。
+# 要 ansible 接管(写 systemd-resolved)时置 true, 并填好 dns/domains。
+# 不同机器 DNS 不同(如 CPU 有外网、GPU 没外网), 在 inventory 机器行上覆盖, 一次 init 跑完:
+#   gpu-001 ansible_host=... init_config_dns=true dns=10.14.73.1
+#   cpu-001 ansible_host=... init_config_dns=true dns=223.5.5.5,114.114.114.114
+# 机器行优先级高于 env.yaml; 多个用逗号分隔。注意 [组:vars] 写法优先级低于 env.yaml, 不生效。
+init_config_dns: false
+dns:
+- 114.114.114.114
+- 223.5.5.5
+domains: "local.clusters"
+#osinit_ntp_servers: [10.82.4.1, 10.82.4.2]  # 多个上游(仅 os-init 用, 不写默认取 chrony_ip)
+# ============================================================================
+#  os-init / os-check / os-account(可选, 交付项目有统一基线要求时才用; 普通站点靠 init 就够)
+#  变量与默认值见 playbook/roles/os-*/defaults/main.yaml, 默认值都是保守的(不删用户、sudo 要密码、UTC)。
+#  要覆盖哪项就把它抄到这里改, 常见几项:
+#    osinit_timezone / oscheck_expect_timezone   两者必须一致, 否则 os-check 误报 FAIL
+#    osacct_user                                 统一登录账号名(默认 osadmin)
+#    osacct_user_password                        统一密码; 或 export OSACCT_USER_PASSWORD(只写一处)
+#  ⚠ osacct_remove_extra_users: true 会删除统一账号/root 外的所有一般用户及家目录, 不可逆, 别照抄。
+# ============================================================================
+
+
+
+# 切 k8s 版本【只改这一处】, 用真实 patch 号(先 curl https://dl.k8s.io/release/stable-1.36.txt 查,
+#   否则 kubeadm 二进制 404)。改完自动跟上的: coredns / pause / crictl / etcd
+#   (defaults.yaml 的 k8s_compat 按小版本派生; 现有行 1.28 / 1.34 / 1.35 / 1.36)。
+#   ⚠ 上新小版本【必须先加一行】k8s_compat, 别指望兜底 —— 缺行时 crictl_version 兜底成
+#     default(k8s_version) 即补丁版号(如 1.35.8), 而 cri-tools 只发 minor.0, 必然 404;
+#     coredns / etcd 也会拿到别的小版本的值(现网踩过, 见 defaults.yaml 那段注释)。
+#     权威值: kubeadm config images list --kubernetes-version v<版本>
+#   ⚠ 不会自动跟上、需自己查兼容性的: containerd / runc / CNI(calico/cilium/flannel)版本。
+#   换版本前先确认离线物料: ls offline/artifacts/kubernetes/
+
+
+
+
 k8s_version: "1.34.3"
 containerd_version: "1.7.32"
 runc_version: "1.1.12"
@@ -272,7 +365,43 @@ flannel_images:
   flannel:        "{{ (registry ~ '/flannel')        if (is_offline | default(false) | bool) else (flannel_registry_online ~ '/flannel') }}:v{{ flannel_version }}"
   flannel_cni:    "{{ (registry ~ '/flannel-cni-plugin') if (is_offline | default(false) | bool) else (flannel_registry_online ~ '/flannel-cni-plugin') }}:v{{ flannel_cni_version }}"
 
+# Pod 带宽限速(kubernetes.io/{ingress,egress}-bandwidth 注解)。默认关。
+# ⚠ 开之前必须确认各节点 /opt/cni/bin/bandwidth 存在 —— calico-cni 镜像【不含】该插件,
+#   它属于上游 containernetworking/plugins。置 true 后 kube-common 会自动装该包;
+#   若手工改了 conflist 却没装插件, 全节点 Pod 都建不了 sandbox:
+#     plugin type="bandwidth" failed (add): failed to find plugin "bandwidth"
+#calico_enable_bandwidth: false
+#cni_plugins_version: "1.6.2"            # 上一项为 true 时才用到
+# ---- Pod / Service 网段(⚠ 建完集群不可改, defaults 无兜底, 缺了 assert 会拦) ----
+# 开双池时四项一体: pod_subnet 必须覆盖两个池段, 且三段两两不重叠。
+
+
 # ================= Calico 双 IPPool(GPU/CPU 分池, 可选) =================
+# ---- GPU/CPU 分 Pod 网段(可选, 默认关) ----
+# 按节点 hardware=gpu/cpu 标签分池, 标签依 inventory 的 accelerator_type 自动打。
+# 超网算法与验算脚本见 docs/部署说明.md 十三.1。
+# ⚠ 取消注释【只删行首那一个 #】, 别按块整段取消(说明行会变裸标量, YAML 直接报错)。
+#
+# ⚠⚠ 【第 0 步】开双池前先回上面把 pod_subnet 改成覆盖两池的超网(本例 10.14.0.0/17)。
+#   只取消下面几行的注释、pod_subnet 留着默认的 10.233.64.0/18, 装出来的集群【能跑但是错的】:
+#   Pod 从 10.14.x 取地址, 而 kube-proxy 的 clusterCIDR 是 10.233.64.0/18(来自 podSubnet),
+#   于是 nft 规则里那句 `ip saddr != 10.240.0.0/12 jump mark-for-masquerade` 对所有 Pod 成立
+#   —— Pod 访问任何 ClusterIP 都被 SNAT 成节点 IP。后果:
+#     · 后端拿不到真实源 Pod IP;
+#     · 按源 Pod/命名空间选择器写的 NetworkPolicy 对经 Service 的流量失效;
+#     · 多一层 SNAT + conntrack, 高并发下有端口耗尽风险。
+#   连通性完全正常, 所以功能测试全过也发现不了。2026-09-17 现网踩过(cpu200~203 那套)。
+#   自洽的一组: pod_subnet 10.14.0.0/17 + 下面两池 + service_subnet 不与之重叠即可
+#   (10.96.0.0/12 或 10.206.0.0/16 都行)。
+#calico_dual_ippool_enabled: true
+#calico_gpu_pool_cidr: "10.14.32.0/19"    # 必填(上一项为 true 时)
+#calico_cpu_pool_cidr: "10.14.96.0/20"    # 必填(上一项为 true 时)
+# blockSize = 每节点一次拿多少地址; 池内块数 != 可容纳节点数(节点 Pod 数超一块就再要一块)。
+# 按 kubelet_max_pods=110 算: /28 每节点要 7 块, /26 要 2 块。GPU 节点别忘 DaemonSet 也占。
+#calico_gpu_pool_blockSize: 28            # 每块 16 个地址
+#calico_cpu_pool_blockSize: 26            # 每块 64 个地址
+
+
 # 默认关闭 —— 走原来的单池逻辑(calico 用 CALICO_IPV4POOL_CIDR/podSubnet 自建一个池),
 # 现有站点/生产 111 节点集群不受影响。仅当需要按硬件类型隔离 Pod 网段时才开。
 #
@@ -328,6 +457,130 @@ calico_cpu_pool_name: cpu-pool
 #   2026-09-17 现网踩过。算法与 python 片段见 docs/部署说明.md 十三.1。
 calico_gpu_pool_cidr: ""
 calico_cpu_pool_cidr: ""
+# cilium 路由: tunnel(overlay,默认) / native(直接路由,同二层)
+cilium_routing_mode: tunnel
+cilium_tunnel_protocol: vxlan           # tunnel 模式下: vxlan / geneve
+cilium_kube_proxy_replacement: false    # true=eBPF 替换 kube-proxy(需内核>=5.10)
+enable_multus: false                     # 是否叠加 multus 多网卡
+# calico / flannel / cilium / helm: 与 k8s 版本无关, 按各自兼容矩阵挑。
+# ⚠ etcd_version 例外, 【不要在这里写】—— 它跟随 k8s 版本, 三处各自取值(权威口径见
+#   defaults.yaml 的 etcd_version 那段注释):
+#     下载端  : download-k8s-offline.sh 跑 kubeadm config images list 校准(权威值);
+#     离线部署: roles/etcd/etcd-install 直接扫 offline/artifacts/etcd/ 用实际下到的版本
+#               —— 【不看本文件也不看 k8s_compat】, 所以在这里手写对离线完全无效;
+#     在线部署: 用 defaults.yaml 的 k8s_compat 派生值。
+#   真要钉死某版本(如外置 etcd 独立运维、故意跑比 kubeadm 推荐更新的补丁版)才写它。
+#   写了之后装控制面时会与 kubeadm 推荐值比对: 不一致打 ⚠ 告警(默认不拦);
+#   想让它直接失败设 etcd_version_strict: true。
+#   ⚠ 别写成空串 —— etcd_version: "" 会盖掉派生值, 路径拼成 etcd/v/ 直接找不到物料。
+#      不写(保持注释)才是"走派生/物料发现"。
+#etcd_version: "3.6.8"                     # 仅在【故意钉死】时取消注释, 值自己填
+# ⚠ 换 calico 版本【不是只改这个数】: CRD 与 ClusterRole 规则在 7800+ 行的 vendored 上游
+#   manifest 里, 本项只换镜像 tag。必须先为目标版本生成模板:
+#     scripts/gen-calico-template.sh <版本>          # 先看 CRD/RBAC diff
+#     scripts/gen-calico-template.sh <版本> --apply  # 确认后写入
+#   模板按版本存放(roles/cni/templates/calico/<版本>.yaml.j2), 各站点可停在不同版本;
+#   缺对应模板时 roles/cni 会明确报错并列出仓库现有版本。详见 docs/部署说明.md 十三.2。
+flannel_version: "0.26.7"
+flannel_cni_version: "1.6.2-flannel1"    # flannel-cni-plugin 镜像 tag(拼进 flannel_images.flannel_cni)
+cilium_version: "1.16.5"
+
+# 是否启用 NodeLocal DNSCache(每节点本地 DNS 缓存, 查询链: Pod -> 169.254.25.10 -> CoreDNS)。
+# true = 装机时随 CNI 之后自动部署 DaemonSet, 并把 kubelet 的 clusterDNS 指向它(与 kk 同款做法);
+#        worker 由 kubeadm join 拉 kubelet-config ConfigMap 自动继承, 无需单独配。
+# 不填/false = 不装, Pod 直连 coredns ClusterIP。
+# 单绑 link-local 形态, iptables / ipvs 两种 kube-proxy 模式都适用。
+enable_nodelocaldns: true                # 装机时随 CNI 之后自动部署, 并把 kubelet clusterDNS 指向它
+# 下面两项默认值即可, 一般不用动:
+#nodelocaldns_ip: "169.254.25.10"        # 改了要与各节点 kubelet clusterDNS 一致(由上面开关自动同步)
+#nodelocaldns_coredns_svc: coredns       # 上游 CoreDNS Service 名。现已【自动探测】(依次试
+                                         #   本项 -> kube-dns -> coredns), kubeadm 集群是 kube-dns、
+                                         #   kk 集群是 coredns, 都不用手填; 只有用了别的名字才需指定
+# nftables 要求【内核 5.13+ 且 nft 1.0.1+】, 装之前逐节点确认:
+#   ansible all -m shell -a 'uname -r; nft list tables'
+#   麒麟/openEuler 等老内核不满足时改 iptables(ipvs 仍可用, 但不建议新站点再选)。
+# ⚠ 只在建集群时生效: 已有集群改这里不会切换 kube-proxy, 存量 ipvs 集群保持 ipvs 别动。
+# 仅 nftables 模式生效; 默认 0.0.0.0/0(defaults.yaml 已兜底), 保证 keepalived VIP:<nodePort> 能通。
+# 要把 NodePort 限定在业务网段才取消注释(收紧后 VIP 漂移到的节点也必须在列表网段内):
+#nodeport_addresses: ["172.171.1.0/24"]
+
+# ⚠ lb_proxy 单机和提前规划vip的不开，特殊场景：提前未规划vip单又想高可用时打开
+#lb_proxy: keepalived-only
+
+# 单 master: lbvip 保持注释, 入口自动取「首 master : apiserver_port」。
+# 多 master: 必须填 lbvip, 入口变「lbvip : apiserver_lb_port」(>=2 台 master 没配会被 assert 拦)。
+
+# VRRP 抢占策略: delay(默认, 故障切走 + 恢复后等 N 秒回切) / immediate / nopreempt(不回切)
+# ⚠ nopreempt 走 FAULT 机制(不配 weight): 两台同时故障时期间【无人持 VIP】; delay 走降权,
+#   总有一台持有。不回切的代价就在这里, 想要就自己开。详见 defaults.yaml 的那段注释。
+#lb_vrrp_preempt_mode: nopreempt
+#lb_vrrp_preempt_delay: 10               # 仅 delay 模式用; keepalived 允许 0-1000 秒
+# kube_cp_endpoint_ip 与下面的 cp_endpoint_domain/target 【分工不同, 别混】:
+#   kube_cp_endpoint_ip  —— 往【别人建的】域名 endpoint 集群加节点时用(典型: kk 建的
+#     lb.kubesphere.local)。域名由 kube-add-node/master 从 join 命令里正则抠出, 本项只回答
+#     "那个域名在新节点上解析到哪个 IP"。⚠ 值必须是 IP; 本仓库建的集群用不到它。
+#   cp_endpoint_domain   —— 【本仓库建】域名 endpoint 集群时用(见下一节)。
+# 二者互斥: 配了 cp_endpoint_domain 时上面那条路径会自动跳过(避免同一名字两个写入方)。
+#kube_cp_endpoint_ip: 172.171.0.x        # 默认取 lbvip 或首 master IP
+
+# endpoint 在 kubeadm init 时写进 kubeadm-config ConfigMap 与 apiserver 证书 SAN, 【事后不可改】。
+# 用域名: 以后换入口(补 VIP / 换网段)只需把解析指到新地址 —— 名字没变, 证书与 kubeconfig 不动。
+# 用 IP  : 同样的事要改 ConfigMap + 重签证书 + 改每节点四份 kubeconfig(本仓库无对应工具)。
+# 代价只是"每节点要有一行 hosts 解析", 由 kube-common 自动下发 —— 所以默认就用域名。
+# ⚠ 每节点必须能解析它, 否则 kubelet 起不来。有内网 DNS 的站点也可以配在 DNS 里。
+# ⚠ 别用 .local 结尾(mDNS 保留域)。本仓库约定 .local.clusters, 与 harbor 一致。
+# 置空则回到旧行为(endpoint 直接用 IP)。
+
+#cp_endpoint_target: 172.171.0.250   
+# ============================================================================
+#  两种目标形态(端口在 init 时定死, 选之前想清楚)
+# ============================================================================
+#
+# 【形态 1】单 master, 以后靠 keepalived 加 VIP 做高可用 —— 端口 apiserver_port
+#   起步(现在):
+#     lbvip 不填; lb_proxy 不填
+#     endpoint = lb.local.clusters:apiserver_port -> 解析到首 master
+#     ⚠ 此时【没有】高可用: 首 master 挂了, 其余 master 的 apiserver 虽活着但没人找得到 ——
+#       每节点四份 kubeconfig 都指着这个名字。域名买的是"以后能平滑换地址", 不是"现在就有 HA"。
+#   升级(拿到一个同网段空闲 IP 之后):
+#     lbvip: 172.171.0.250
+#     lb_proxy: keepalived-only          # ⚠ 必填! 漏了它端口会跳到 apiserver_lb_port, 与已定死
+#                                        #   的 endpoint 不一致, 变成"看着能用但 HA 是假的"
+#     lb_vrrp_preempt_mode: nopreempt    # 可选: 故障切走后不回切
+#     [k8slb] 填 2-3 台(可与 master 共机)
+#     跑 lb-haproxy-install.yaml(该形态下只装 keepalived) + cp-endpoint-hosts.yaml
+#     端口不变, 所以证书与 kubeconfig 一行不动 —— 这就是域名的收益所在。
+#   ⚠ 这条路【永远加不进 haproxy】(它抢不到 apiserver_port), 也就是永远没有负载均衡。
+#
+# 【形态 2】3 master + keepalived + haproxy —— 端口 apiserver_lb_port, 负载均衡 + 高可用
+#     lbvip: 172.171.0.250
+#     lb_proxy 保持默认 haproxy
+#     [k8slb] 填 2-3 台(可与 master 共机; haproxy 听 apiserver_lb_port, 与 apiserver 不冲突)
+#     顺序: 先 lb-haproxy-install.yaml 再 k8s-install.yaml
+#           (admin.conf 指向 endpoint, init 之后的 task 全靠 kubectl, VIP 不通会卡住)
+#
+# 两种形态【不能互换】: 端口不同, 而 endpoint 事后不可改。
+#   形态 1 -> 形态 2 要重建集群; 形态 1 内部(无 VIP -> 有 VIP)不用, 那才是域名解决的事。
+# 要负载均衡就直接上形态 2; 只要故障转移、机器暂时不够就走形态 1。
+#
+# ---- 非标准: lb_proxy: keepalived-only ----
+# 给"已经建成 2 master 且拿不到 VIP"这类情况兜底 —— 只跑 keepalived、不装 haproxy,
+# VIP 直接落到持有它那台的 apiserver。有故障转移, 【无负载均衡】。
+# 唯一的实际价值: 端口与"无 VIP"状态一致(都是 apiserver_port), 所以配上域名后能从
+# "域名指首 master"平滑升级到"域名指 VIP" —— 不重签证书、不改 kubeconfig。
+# ⚠ 但这条路【永远加不进 haproxy】(端口在 init 时定死), 也就是永远没有负载均衡。
+#   新建集群不要选它, 直接上标准形态。
+
+
+kube_criSocket: unix:///run/containerd/containerd.sock   # 默认 containerd; cri-dockerd 用 unix:///var/run/cri-dockerd.sock
+dns_domain: cluster.local                # 集群内 DNS 域名(几乎不用改)
+# nftables 要求【内核 5.13+ 且 nft 1.0.1+】, 装之前逐节点确认:
+#   ansible all -m shell -a 'uname -r; nft list tables'
+#   麒麟/openEuler 等老内核不满足时改 iptables(ipvs 仍可用, 但不建议新站点再选)。
+# ⚠ 只在建集群时生效: 已有集群改这里不会切换 kube-proxy, 存量 ipvs 集群保持 ipvs 别动。
+
+
+
 cilium_image_repo: "{{ registry if (is_offline | default(false) | bool) else cilium_registry_online }}"
 
 # ================= 离线包路径(多版本 v{{k8s_version}}) =================
@@ -357,7 +610,7 @@ nodelocaldns_ip: "169.254.25.10"                 # link-local; 必须与各节�
 # dnsPolicy Default, 走宿主机 DNS 启动, 不依赖集群内解析。worker 由 kubeadm join 拉取
 # 集群的 kubelet-config ConfigMap, 自动继承该值, 无需单独配置。
 # 本模板是单绑(link-local)形态, iptables / ipvs 两种 kube-proxy 模式都适用。
-enable_nodelocaldns: false
+enable_nodelocaldns: true
 nodelocaldns_version: "1.26.4"                    # k8s-dns-node-cache 版本(现网 1.26.4), 可 env.yaml 覆盖
 # 1.26.4 是 registry.k8s.io/dns 的正规上游 tag(现网镜像即拉自此)。在线走 daocloud 的 k8s 代理(国内快);
 # 离线由 download-k8s-offline.sh 从同源拉好存 tar, 部署时 load 进自建 Harbor。不再走 kk hub。
@@ -386,6 +639,47 @@ kube_signing_duration: "876000h"
 # ⚠ 它已 GA-locked: 未来某个版本移除该 gate 后, kubelet 见到它会【启动失败】。
 #   届时把本项置 false 即可(行为不变, 只是不再显式声明), 无需改模板。
 kubelet_rotate_server_cert_gate: true
+
+# ---- kubelet 调优 ----
+kubelet_cpu_manager_policy: "none"       # none(通用) / static(CPU 绑核, 仅 AI 物理机)
+kubelet_cpu_align_by_socket: false       # 仅 static 且 sockets<=NUMA 节点数时才 true(否则 kubelet 起不来)
+kubelet_max_pods: 110                    # AI 大节点可调大(注意 pod CIDR 每节点容量)
+kubelet_kube_reserved_cpu: "200m"
+kubelet_kube_reserved_mem: "512Mi"
+kubelet_system_reserved_cpu: "200m"
+kubelet_system_reserved_mem: "256Mi"
+
+kubelet_eviction_soft_grace: "1m30s"     # 软驱逐宽限期
+kubelet_eviction_max_pod_grace: 120      # 驱逐时给 Pod 的最大优雅退出秒数
+kubelet_eviction_pressure_transition: "30s"  # 退出驱逐压力状态的最短停留(防抖)
+kubelet_pod_pids_limit: 50000            # 单 Pod 最大进程数(防 fork 炸弹); -1 不限。AI 训练/多进程负载易撞 1w 上限, 故给 5w
+kubelet_container_log_max_size: "5Mi"    # 单容器日志文件上限
+kubelet_container_log_max_files: 3       # 容器日志保留文件数
+kubelet_shutdown_grace: "30s"            # 节点关机时给普通 Pod 的优雅退出时间
+kubelet_shutdown_grace_critical: "10s"   # 其中留给关键 Pod 的部分
+
+
+# kubelet 的 client/serving 证书走 CSR, 由 controller-manager 的 --cluster-signing-duration
+# 控制 —— 即本项。不设默认只有 8760h(1y), 与控制面证书(kubeadm 直签, 876000h)不一致。
+kube_signing_duration: "876000h"         # =100y, 与控制面证书对齐; 改小需同步考虑轮换与审批
+# 显式声明 kubelet serving 证书自动轮换(featureGates.RotateKubeletServerCertificate)。
+# 该 gate 自 k8s 1.12 起默认即 true, 写出来不改变行为, 只是让轮换这件事在配置里可见,
+# 并与现网 kk 集群写法一致。⚠ 已 GA-locked: 未来版本移除该 gate 后 kubelet 会启动失败,
+# 届时把本项置 false 即可(行为不变, 只是不再显式声明)。
+kubelet_rotate_server_cert_gate: true
+#kubelet_security_enhancement: false      # true=开 CIS 安全加固(关只读端口10255/protectKernelDefaults/TLS套件等)
+# kubelet: podPidsLimit: -1 + serializeImagePulls: false
+#   ⚠ -1 = 放弃单 Pod pid 上限(fork 炸弹可打满整机)。
+#   ⚠ 二者互斥: 本项 true 时走 -1, 上面的 kubelet_pod_pids_limit 【不参与渲染】(成死值)。
+#kubelet_unlimited_pids: true
+
+# ---- 节点调优可选开关(默认全关, 需要的站点才打开) ----
+# 这些与本仓库既有默认值部分冲突, 故做成开关, 不影响其它站点/现网集群。
+# NVIDIA 驱动 modprobe 参数(EnableStreamMemOPs / PeerMappingOverride / 放开 profiling)
+#   只下发文件 + 重建 initramfs, 【不自动重启】; reboot 后按 /proc/driver/nvidia/params 校验。
+#gpu_nvidia_modprobe_tuning: true
+
+
 
 # ================= 节点调优可选开关(与本仓库既有默认值可能冲突, 故做成开关) =================
 # 全部默认【关】—— 不影响现网 111 节点集群及其它站点。需要的站点在 env.yaml 逐项打开。
@@ -582,6 +876,17 @@ apiserver_lb_port: 8443
 #
 #  取值见 tmp/env.yaml.example, 必须在 env.yaml 显式写。【不要往这里加默认值。】
 # ============================================================================
+# ---- etcd 调优----
+etcd_cert_expiry: "36500"                # 证书有效期(天)
+etcd_cluster_token: "prod-etcd-cluster-01"
+etcd_enable_metrics: true                # 暴露 etcd metrics 端点(listen-metrics-urls, 监控用; 有安全顾虑改 false)
+etcd_config:
+  quota_backend_bytes: 8589934592        # 8G
+  auto_compaction_retention: "1h"
+  auto_compaction_mode: periodic
+  heartbeat_interval: 500
+  election_timeout: 5000
+  log_level: info
 
 # ---- kubeadm-config 模板要用的其余变量, 兜底 ----
 # 下面这些被 kube-init-master/templates/kubeadm-config.yaml.j2 【裸引用、无 default()】,
@@ -593,11 +898,9 @@ apiserver_lb_port: 8443
 # env.yaml 后加载, 写了仍然覆盖这里; 这里只保证"不写也不炸"。
 #
 # ⚠ pod_subnet / service_subnet 不在这里兜底(见上方那段说明), 改走 role 内预检 assert。
-# kube_proxy_mode 取值: nftables(当前默认) / iptables / ipvs(已弃用, 仅存量集群保留)
-# ⚠ ipvs 上游已弃用(KEP-5495): 1.35 弃用 -> 1.40 默认禁用 -> 1.43 移除。理由是 ipvs 从未真正
-#   摆脱 iptables(内核 IPVS API 实现不了完整 Service 语义, 底下仍在写 iptables 规则)。
-#   2026-10 起默认改 nftables。存量 ipvs 集群的 env.yaml 里写着 kube_proxy_mode: ipvs, 不受影响;
-#   ipvs 相关代码(init 加载 ip_vs 模块、预检)保留, 别删 —— 删了存量节点重跑 init 会丢模块。
+# kube_proxy_mode 取值: ipvs(当前默认) / nftables / iptables
+# ⚠ ipvs 上游已弃用(KEP-5495): 1.35 弃用 -> 1.40 默认禁用 -> 1.43 移除。现阶段仍默认 ipvs(现网均为 ipvs);
+#   k8s 升到 1.40 前要切 nftables。ipvs 相关代码(init 加载 ip_vs 模块、预检)别删。
 # nftables: 1.33 GA, 要求【内核 5.13+ 且 nft 1.0.1+】。老内核发行版(麒麟/openEuler 等)可能不满足,
 #   上手前逐节点查 uname -r 与 nft --version; 不满足就继续用 ipvs 或 iptables。
 #   ⚠ 非 ipvs 的 drop-in 替换: KEP-3866 记了 NodePort 地址绑定、从 localhost 访问 NodePort 的行为差异,
@@ -664,7 +967,7 @@ apiserver_lb_port: 8443
 #     内核侧健康, 数据面不受影响, 集群照常跑 —— 损失的只是"在宿主机直接看规则"这个窗口。
 #     绕法: kubectl -n kube-system exec <该节点的 kube-proxy Pod> -- nft ...(见 docs/部署说明.md 十七)。
 #     所以上面那句"查 nft --version"不够: nft --version 正常也可能崩, 要实跑 `nft list tables`。
-kube_proxy_mode: nftables
+kube_proxy_mode: ipvs
 # kube_proxy_mode=nftables 时才生效(见 kubeadm-config.yaml.j2 里的条件渲染)。
 # 默认 0.0.0.0/0 = 对齐 iptables/ipvs 模式"监听所有本机地址"的行为, 保证 keepalived VIP
 # 也能走 NodePort(不然会连不上, 见上面 kube_proxy_mode 那段注释)。网络要分区隔离

@@ -34,16 +34,16 @@ if [ -d .git ] && [ -f scripts/git-hooks/pre-commit ]; then
     fi
 fi
 
-echo "初始化完成。请按实际环境修改 inventory/ 下的配置。"
+echo "初始化完成。请按实际环境修改 inventory/hosts 和 inventory/group_vars/all/env.yaml。"
 
 # os-init 待办提醒
-if [ -d playbook/roles/os-init ]; then
-    cat <<'TIP'
+#if [ -d playbook/roles/os-init ]; then
+#    cat <<'TIP'
 
-[待办] 跑 os-init / os-account 前:
-  vim inventory/hosts                    # 机器写进 [cluster]; 有 GPU 单列 [gpu] 并逐台填 osinit_su
-  vim inventory/group_vars/all/env.yaml  # ①连接(未免密才填 bootstrap_*) ②osacct_user_password(账号名默认 osadmin, 青岛 wwxq) ③离线置 is_offline: true
+#[待办] 跑 os-init / os-account 前:
+#  vim inventory/hosts                    # 机器写进 [cluster]; 有 GPU 单列 [gpu] 并逐台填 osinit_su
+#  vim inventory/group_vars/all/env.yaml  # ①连接(未免密才填 bootstrap_*) ②osacct_user_password(账号名默认 osadmin, 青岛 wwxq) ③离线置 #is_offline: true
 
-  密码只写一处: env.yaml 优先级 > 角色默认; 走 export OSACCT_USER_PASSWORD 时别用 sudo(会清环境变量), 用 sudo -E。
-TIP
-fi
+#  密码只写一处: env.yaml 优先级 > 角色默认; 走 export OSACCT_USER_PASSWORD 时别用 sudo(会清环境变量), 用 sudo -E。
+#TIP
+#fi
