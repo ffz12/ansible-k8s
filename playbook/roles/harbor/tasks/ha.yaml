@@ -202,22 +202,36 @@
       override: true
       enabled: true
     status_code: [201]
-  register: _harbor_policy_created
   no_log: true
   when: _harbor_policies.json | selectattr('name', 'equalto', 'ha-push-to-' ~ _harbor_peer_ip) | list | length == 0
 
-- name: "[Harbor HA] 首次建规则后手动触发一次, 把已有镜像同步过去"
+# 首次同步: 按规则名查执行记录, 一次都没跑过才触发。
+# 不能用"新建规则 is changed"判断 —— uri 模块 POST 成功也不报 changed, 原写法触发永远被跳过。
+- name: "[Harbor HA] 查询本机复制规则 ID"
   uri:
-    url: https://127.0.0.1/api/v2.0/replication/policies?name=ha-push-to-{{ _harbor_peer_ip }}
+    url: https://127.0.0.1/api/v2.0/replication/policies?page_size=100
     user: "{{ harbor_admin_username | default('admin') }}"
     password: "{{ harbor_admin_password | default('Harbor12345') }}"
     force_basic_auth: true
     validate_certs: false
-  register: _harbor_new_policy
+  register: _harbor_policies2
   no_log: true
-  when: _harbor_policy_created is changed
 
-- name: "[Harbor HA] 触发全量复制"
+- name: "[Harbor HA] 取规则 ID"
+  set_fact:
+    _harbor_policy_id: "{{ (_harbor_policies2.json | selectattr('name', 'equalto', 'ha-push-to-' ~ _harbor_peer_ip) | first).id }}"
+
+- name: "[Harbor HA] 查询该规则的执行记录"
+  uri:
+    url: "https://127.0.0.1/api/v2.0/replication/executions?policy_id={{ _harbor_policy_id }}&page_size=1"
+    user: "{{ harbor_admin_username | default('admin') }}"
+    password: "{{ harbor_admin_password | default('Harbor12345') }}"
+    force_basic_auth: true
+    validate_certs: false
+  register: _harbor_execs
+  no_log: true
+
+- name: "[Harbor HA] 从未执行过, 触发一次全量复制"
   uri:
     url: https://127.0.0.1/api/v2.0/replication/executions
     method: POST
@@ -227,10 +241,11 @@
     validate_certs: false
     body_format: json
     body:
-      policy_id: "{{ (_harbor_new_policy.json | first).id }}"
+      policy_id: "{{ _harbor_policy_id | int }}"
     status_code: [201]
+  changed_when: true
   no_log: true
-  when: _harbor_policy_created is changed
+  when: (_harbor_execs.json | default([])) | length == 0
 
 - name: "[Harbor HA] 当前 VIP 所在"
   shell: ip -o -4 addr show | grep -q ' {{ harbor_vip }}/' && echo '本机持有 VIP' || echo '本机未持有 VIP'
