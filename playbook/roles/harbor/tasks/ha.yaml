@@ -193,6 +193,9 @@
       dest_registry:
         id: "{{ (_harbor_registries2.json | selectattr('name', 'equalto', 'ha-peer-' ~ _harbor_peer_ip) | first).id }}"
       filters: []
+      # 不扁平化: 两边仓库路径保持一致(如 kubernetes/coredns/coredns)。不写时页面显示"替换所有级",
+      # 目标名称空间为空时不生效, 这里显式写 0 免得误会
+      dest_namespace_replace_count: 0
       trigger:
         type: event_based
       deletion: false
