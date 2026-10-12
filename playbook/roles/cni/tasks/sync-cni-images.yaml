@@ -59,6 +59,8 @@
     REGISTRY="{{ registry }}"
     ARCHS="{{ _cni_archs | join(' ') }}"
     DST="${REGISTRY}/calico-${COMP}:${VERSION}"
+    # 先删本机 manifest 缓存: 否则 inspect 读的是本地 ~/.docker/manifests, Harbor 清空后仍会误判"已在"
+    docker manifest rm "${DST}" >/dev/null 2>&1 || true
     if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip calico-${COMP}:${VERSION} (已在 harbor)"; exit 0; fi
     MANIFEST_ARGS=""
     for a in $ARCHS; do
@@ -94,6 +96,8 @@
     # $1=本地镜像名(不含 -arch) $2=目标(含 tag, 不含 -arch) $3=tar 文件名(不含 .tar.gz)
     sync_one() {
       local SRC="$1" DST="$2" TAR="$3" a MANIFEST_ARGS=""
+      # 先删本机 manifest 缓存: 否则 inspect 读的是本地 ~/.docker/manifests, Harbor 清空后仍会误判"已在"
+      docker manifest rm "${DST}" >/dev/null 2>&1 || true
       if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${DST} (已在 harbor)"; return 0; fi
       for a in $ARCHS; do
         docker load -i "{{ flannel_images_dir }}/images/${a}/${TAR}.tar.gz"
@@ -129,6 +133,8 @@
     ARCHS="{{ _cni_archs | join(' ') }}"
     sync_one() {
       local SRC="$1" DST="$2" TAR="$3" a MANIFEST_ARGS=""
+      # 先删本机 manifest 缓存: 否则 inspect 读的是本地 ~/.docker/manifests, Harbor 清空后仍会误判"已在"
+      docker manifest rm "${DST}" >/dev/null 2>&1 || true
       if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${DST} (已在 harbor)"; return 0; fi
       for a in $ARCHS; do
         docker load -i "{{ cilium_images_dir }}/images/${a}/${TAR}.tar.gz"

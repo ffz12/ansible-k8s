@@ -67,6 +67,8 @@
     VER="{{ nodelocaldns_version }}"
     DST="${REGISTRY}/k8s-dns-node-cache:${VER}"
     ARCHS="{{ _nld_archs | join(' ') }}"
+    # 先删本机 manifest 缓存: 否则 inspect 读的是本地 ~/.docker/manifests, Harbor 清空后仍会误判"已在"
+    docker manifest rm "${DST}" >/dev/null 2>&1 || true
     if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then echo "skip ${DST} (已在 harbor)"; exit 0; fi
     MANIFEST_ARGS=""
     for a in $ARCHS; do
