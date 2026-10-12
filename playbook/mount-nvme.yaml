@@ -50,6 +50,13 @@
       debug:
         msg: "{{ container_base }} 当前状态: {{ '⚠️ 已挂载' if already_mounted else '🆗 未挂载 (准备执行)' }}"
 
+    # 占用检查: 有分区/分区表、被挂载、在 RAID/LVM 里就停下(container_base 已挂载=重跑, 不查)
+    - name: 第一块盘 —— 占用检查
+      include_tasks: "{{ playbook_dir }}/tasks/disk-guard.yml"
+      vars:
+        _guard_dev: "{{ _dev }}"
+      when: not already_mounted
+
     # 3. 安全检测: 盘上是否已有文件系统/数据
     - name: 检测盘上是否已有文件系统
       command: "blkid -s TYPE -o value {{ _dev }}"

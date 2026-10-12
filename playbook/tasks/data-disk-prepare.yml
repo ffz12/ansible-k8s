@@ -20,6 +20,12 @@
   set_fact:
     _dd_mounted: "{{ ansible_mounts | selectattr('mount', 'equalto', _disk.path) | list | length > 0 }}"
 
+- name: "数据盘 {{ _disk.dev }} —— 占用检查"
+  include_tasks: "{{ playbook_dir }}/tasks/disk-guard.yml"
+  vars:
+    _guard_dev: "{{ _disk.dev }}"
+  when: not _dd_mounted
+
 - name: "数据盘 {{ _disk.dev }} —— 格式化(仅空白盘)"
   filesystem:
     fstype: "{{ fstype }}"

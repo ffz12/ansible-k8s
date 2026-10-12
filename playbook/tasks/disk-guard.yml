@@ -1,0 +1,27 @@
+# 格式化前的占用检查(mount-nvme.yaml 对每块盘 include, 传 _guard_dev)。
+# blkid 只能看出整盘有没有文件系统; 只有分区表、或在 RAID/LVM 里的盘 TYPE 为空, 会被当成空白盘。
+# 这里补上: 有分区、有分区表、被挂载、被 RAID/LVM/dm 占用(holders), 任一成立就停下。
+# 目标挂载点已挂载(重跑)时不调用本检查, 那种情况本来就不会格式化。
+- name: "占用检查 {{ _guard_dev }}"
+  shell: |
+    d="{{ _guard_dev }}"
+    base=$(basename "$(readlink -f "$d")")
+    n=$(lsblk -nrpo NAME "$d" 2>/dev/null | wc -l)
+    [ "$n" -gt 1 ] && echo "有分区/子设备: $(lsblk -nrpo NAME "$d" | tail -n +2 | xargs)"
+    pt=$(blkid -s PTTYPE -o value "$d" 2>/dev/null)
+    [ -n "$pt" ] && echo "有分区表: $pt"
+    m=$(findmnt -n -o TARGET -S "$d" 2>/dev/null | xargs)
+    [ -n "$m" ] && echo "已挂载: $m"
+    h=$(ls "/sys/block/$base/holders" 2>/dev/null | xargs)
+    [ -n "$h" ] && echo "被占用(RAID/LVM/dm): $h"
+    true
+  register: _guard
+  changed_when: false
+  check_mode: false
+
+- name: "拦截被占用的盘 {{ _guard_dev }}"
+  fail:
+    msg: >-
+      {{ _guard_dev }} 不能用作数据盘: {{ _guard.stdout_lines | join('; ') }}。
+      多半是盘符写错(指到了系统盘或 RAID 成员), 用 lsblk 核对后改 device_path / data_disks。
+  when: _guard.stdout | trim | length > 0
