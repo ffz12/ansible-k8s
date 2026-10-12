@@ -201,8 +201,7 @@ registry: "{{ harbor_dns }}/{{ harbor_project | default('kubernetes') }}"   # �
 # 下面这个默认值只是兜底(保持引入本变量之前 playbook 里的写法), 基本一定要覆盖。
 apt_proxy_url: "http://10.2.0.15:3128"
 
-# ================= k8s 版本配套(A 组自动派生) =================
-# ================= 版本兜底(env.yaml 未定义时生效) =================
+# ================= 版本兜底 / k8s 版本配套(env.yaml 未定义时生效) =================
 # ⚠ 这些是【变参】, 正常由 env.yaml 提供(见 tmp/env.yaml.example)。这里给兜底是因为
 #   scripts/offline/versions.env.j2 会引用它们 —— 精简版/老版 env.yaml 少写任一项,
 #   gen-offline-versions.yaml 就会 undefined 渲染失败, 连带 prefetch 拿不到版本。
@@ -616,16 +615,12 @@ kubelet_rotate_server_cert_gate: true
 #   ⚠ 二者互斥: 本项 true 时走 -1, 上面的 kubelet_pod_pids_limit 【不参与渲染】(成死值)。
 #kubelet_unlimited_pids: true
 
-# ---- 节点调优可选开关(默认全关, 需要的站点才打开) ----
-# 这些与本仓库既有默认值部分冲突, 故做成开关, 不影响其它站点/现网集群。
-# NVIDIA 驱动 modprobe 参数(EnableStreamMemOPs / PeerMappingOverride / 放开 profiling)
-#   只下发文件 + 重建 initramfs, 【不自动重启】; reboot 后按 /proc/driver/nvidia/params 校验。
-#gpu_nvidia_modprobe_tuning: true
-
-
-
 # ================= 节点调优可选开关(与本仓库既有默认值可能冲突, 故做成开关) =================
 # 全部默认【关】—— 不影响现网 111 节点集群及其它站点。需要的站点在 env.yaml 逐项打开。
+#
+# NVIDIA 驱动 modprobe 参数(EnableStreamMemOPs / PeerMappingOverride / 放开 profiling):
+#   只下发文件 + 重建 initramfs, 【不自动重启】; reboot 后按 /proc/driver/nvidia/params 校验。
+#gpu_nvidia_modprobe_tuning: true
 #
 # ---- 已废弃(2026-09-09): node_tuning_sysctl / node_tuning_keep_higher_net_buffers ----
 # 交付标准 1.6 的 13 项 sysctl 原先走 /etc/sysctl.d/99-node-tuning.conf drop-in, 由这两个
