@@ -13,12 +13,12 @@
 # 只放这次要初始化的机器, 已交付的老机器别放
 #cpu-001
 
-# ---- 挂盘 ----
-[nvme_lvm]
+# ---- 挂盘(旧组名 nvme_lvm / nvme_single 仍兼容) ----
+[disk_lvm]
 # 会清盘! 先 --check 看选中了哪几块
 #gpu-001
 
-[nvme_single]
+[disk_direct]
 #cpu-001 device_path=/dev/nvme0n1 data_disks="/dev/nvme1n1:/data"
 
 # ---- 运行时 / Harbor ----
