@@ -121,38 +121,18 @@
         group: root
         mode: u=rwX,go=rX
 
-    - name: 【Ubuntu 22.04 离线】覆写传统 sources.list(留时间戳备份)
+    # 追加本地源, 不动原有源(sources.list / ubuntu.sources 原样保留), 有外网的机器照常能用在线源。
+    # 离线装包只读这一个文件(见下面「离线」装包任务), 连不上的在线源不刷新、不参与选包,
+    # 不会让 apt 报错, 也不会选到在线源里拉不到的版本。
+    # 旧版本这里会覆写 sources.list、把 24.04 的 ubuntu.sources 改名成 .disabled-<时间戳>;
+    # 已跑过的机器想恢复在线源, 把 .disabled-<时间戳> 改回 ubuntu.sources、或从 sources.list 备份还原。
+    - name: 【离线】追加本地源(不动原有源)
       copy:
-        dest: /etc/apt/sources.list
+        dest: /etc/apt/sources.list.d/offline-local.list
         content: "deb [trusted=yes] file:///opt/ubuntu-offline-pkgs ./\n"
-        backup: yes
-      when: ansible_distribution_version == "22.04"
-
-    # 24.04 的官方源在 sources.list.d/ubuntu.sources(deb822 格式)。
-    # ⚠ 原先这里是 `echo "" > ubuntu.sources` 直接清空 —— 原内容不可恢复, 装完想回在线源
-    #   只能靠仓库自带的标准源文件重建, 站点定制过的内网 mirror 就丢了。
-    #   改为【改名保留】: mv 成 ubuntu.sources.disabled-<时间戳>, apt 不再读它(只认 *.sources),
-    #   要恢复直接改回名字即可。幂等: 文件已被移走(不存在)时跳过, 不会用空文件覆盖已有备份。
-    - name: 【Ubuntu 24.04 离线】检查官方源文件是否还在
-      stat:
-        path: /etc/apt/sources.list.d/ubuntu.sources
-      register: _ubuntu_sources
-      when: ansible_distribution_version == "24.04"
-
-    - name: 【Ubuntu 24.04 离线】改名屏蔽官方源(保留原内容, 可改回)
-      command: >-
-        mv /etc/apt/sources.list.d/ubuntu.sources
-           /etc/apt/sources.list.d/ubuntu.sources.disabled-{{ ansible_date_time.iso8601_basic_short }}
-      when:
-        - ansible_distribution_version == "24.04"
-        - _ubuntu_sources.stat.exists | default(false)
-
-    - name: 【Ubuntu 24.04 离线】写入离线源(留时间戳备份)
-      copy:
-        dest: /etc/apt/sources.list
-        content: "deb [trusted=yes] file:///opt/ubuntu-offline-pkgs ./\n"
-        backup: yes
-      when: ansible_distribution_version == "24.04"
+        owner: root
+        group: root
+        mode: '0644'
   when: is_offline | bool
 
 - name: 【在线模式】配置官方/国内镜像软件源
@@ -387,13 +367,28 @@
         autoclean: yes
   when: not is_offline | bool
 
-- name: 更新缓存并批量安装必要软件包 (动态合并线上/线下包清单)
+- name: 安装必要软件包(在线走 apt 模块; 离线只读本地源)
   tags: [packages]
-  apt:
-    name: "{{ debian_online_pkgs if not is_offline | bool else debian_offline_pkgs }}"
-    state: present
-    update_cache: yes
-    allow_unauthenticated: "{{ 'yes' if is_offline | bool else 'no' }}"
+  block:
+    - name: 【在线】更新缓存并批量安装
+      apt:
+        name: "{{ debian_online_pkgs }}"
+        state: present
+        update_cache: yes
+      when: not is_offline | bool
+
+    # 不用 apt 模块: 它刷新缓存时任何一个源连不上都会整体报错, 而离线机器上原有在线源是连不上的
+    - name: 【离线】只用本地源刷新并批量安装(不碰原有在线源)
+      shell: |
+        set -e
+        O="-o Dir::Etc::sourcelist=sources.list.d/offline-local.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0"
+        apt-get $O update
+        DEBIAN_FRONTEND=noninteractive apt-get $O -y --allow-unauthenticated install {{ debian_offline_pkgs | join(' ') }}
+      args:
+        executable: /bin/bash
+      register: _offline_pkgs
+      changed_when: "' 0 newly installed' not in _offline_pkgs.stdout"
+      when: is_offline | bool
   vars:
     # 纯在线环境安装的包清单
     debian_online_pkgs:

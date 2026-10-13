@@ -94,12 +94,16 @@
     - is_offline | bool
     - ansible_distribution in ['RedHat', 'openEuler', 'CentOS', 'Kylin Linux Advanced Server', 'Kylin']
 
-- name: (离线-DEB) 从本地源安装 {{ 'haproxy+keepalived' if _lb_need_haproxy | bool else 'keepalived' }}(源由 init 写入 file:///opt/ubuntu-offline-pkgs)
-  apt:
-    name: "{{ ['haproxy', 'keepalived'] if _lb_need_haproxy | bool else ['keepalived'] }}"
-    state: present
-    update_cache: yes
-    allow_unauthenticated: true
+- name: (离线-DEB) 只用本地源安装 {{ 'haproxy+keepalived' if _lb_need_haproxy | bool else 'keepalived' }}(源由 init 追加到 sources.list.d/offline-local.list)
+  shell: |
+    set -e
+    O="-o Dir::Etc::sourcelist=sources.list.d/offline-local.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0"
+    apt-get $O update
+    DEBIAN_FRONTEND=noninteractive apt-get $O -y --allow-unauthenticated install {{ 'haproxy keepalived' if _lb_need_haproxy | bool else 'keepalived' }}
+  args:
+    executable: /bin/bash
+  register: _lb_offline_pkgs
+  changed_when: "' 0 newly installed' not in _lb_offline_pkgs.stdout"
   when:
     - is_offline | bool
     - ansible_distribution in ['Debian', 'Ubuntu']
