@@ -110,16 +110,9 @@ cilium_chart_src: "{{ offline_artifacts }}/cni/cilium/v{{ cilium_version }}/cili
 # ############################################################################
 
 # ================= 版本兜底 / k8s 版本配套(env.yaml 未定义时生效) =================
-# ⚠ 这些是【变参】, 正常由 env.yaml 提供(见 tmp/env.yaml.example)。这里给兜底是因为
-#   scripts/offline/versions.env.j2 会引用它们 —— 精简版/老版 env.yaml 少写任一项,
-#   gen-offline-versions.yaml 就会 undefined 渲染失败, 连带 prefetch 拿不到版本。
-#   env.yaml 后加载, 写了就覆盖这里, 不影响现有站点。
-#
-# ⚠ 这里的值【故意保持旧版、不要跟着现网升】。它们只是"少写也不炸"的下限, 不代表推荐版本。
-#   推荐版本写在 tmp/env.yaml.example —— 那是新站点照抄的模板, 改它只影响新站点。
-#   抬这里的值 = 静默改掉所有【没在自己 env.yaml 写这些项】的站点, 下次 pull 就换版本,
-#   而 containerd 跨大版本(1.7 -> 2.x)会让 containerd-setup 重写 config.toml 格式并重启
-#   容器运行时。2026-09-14 曾把这四项抬到 1.35.8/2.3.5/3.32.2/1.5.1, 已撤回(改错了地方)。
+# 正常由 env.yaml 提供, 这里只是少写时不报错的兜底(离线下载脚本也引用它们)。
+# ⚠ 这里的值故意保持旧版, 不要跟着升: 没在 env.yaml 写这些项的站点会被静默换版本,
+#   containerd 跨大版本还会重写 config.toml 并重启运行时。推荐版本写在 tmp/env.yaml.example。
 # docker 层(本项目 docker 仅给 Harbor 用; 版本供 docker_arch_map 拼包名 + 离线下载脚本)
 docker_version: "29.4.2"                 # docker 静态二进制包版本
 buildx_version: "0.32.1"                 # docker buildx 插件版本
@@ -156,19 +149,9 @@ multus_cni_version: "4.2.4"
 kube_network_plugin: calico              # calico(manifest) / flannel(manifest) / cilium(helm)
 
 k8s_minor: "{{ k8s_version.split('.')[0] ~ '.' ~ k8s_version.split('.')[1] }}"
-# k8s 小版本 -> 配套组件(兜底默认). 权威值在装 k8s 时由 `kubeadm config images list` 自动查询覆盖
-# (见 roles/kubernetes/kube-init-master/tasks/sync-images-to-harbor.yml),一般不用手维护此表。
-# 仅用于 containerd sandbox 的 pause(k8s 装之前就要用)+ 离线兜底。只列在用版本,新版本自动查,pause 变号再加行。
-# 校准记录(避免后人重复怀疑):
-#   1.36 那行四项已全部实测核对 ——
-#     coredns/pause/etcd 来自 `kubeadm config images list --kubernetes-version v1.36.3`
-#       (输出 etcd:3.6.8-0, 表里取二进制版本 3.6.8, 去掉镜像构建后缀 -0)
-#     crictl 1.36.0 由实际下载的二进制 `crictl -v` 确认
-#   1.35 那行实测核对(2026-09-11): kubeadm v1.35.8 给出 coredns v1.13.1 / pause 3.10.1 /
-#     etcd 3.6.6-0; crictl 取 1.35.0(cri-tools 只发 minor.0, 无补丁版)。
-#   crictl 官方兼容 k8s ±1 个次要版本, 故各行的 crictl 需与该行 k8s 次要版本对齐, 不可混用
-#   (如 1.36.0 覆盖 1.35/1.36/1.37, 但不覆盖 1.34)。
-# ⚠ 换 k8s 次要版本必须先加对应行 —— 缺行时 crictl_version 兜底成补丁版(如 1.35.8)必然 404。
+# k8s 小版本 -> 配套组件(兜底)。装 k8s 时以 `kubeadm config images list` 的结果为准, 一般不用手维护。
+# crictl 只发 minor.0, 且只兼容 k8s ±1 个小版本, 每行要与该行 k8s 小版本对齐。
+# ⚠ 换 k8s 小版本必须先加对应一行, 缺行时 crictl 会拼成补丁版号(如 1.35.8)而下载 404。
 k8s_compat:
   "1.28": { coredns: "1.10.1", pause: "3.9",    crictl: "1.28.0", etcd: "3.5.12" }
   "1.34": { coredns: "1.12.1", pause: "3.10.1", crictl: "1.34.0", etcd: "3.6.5"  }
@@ -370,43 +353,16 @@ domains: "local.clusters"
 #  ⚠ osacct_remove_extra_users: true 会删除统一账号/root 外的所有一般用户及家目录, 不可逆, 别照抄。
 # ============================================================================
 
-# ================= 节点调优可选开关(与本仓库既有默认值可能冲突, 故做成开关) =================
-# 全部默认【关】—— 不影响现网 111 节点集群及其它站点。需要的站点在 env.yaml 逐项打开。
-#
+# ================= 节点调优可选开关(默认全关, 需要的站点在 env.yaml 打开) =================
 # NVIDIA 驱动 modprobe 参数(EnableStreamMemOPs / PeerMappingOverride / 放开 profiling):
-#   只下发文件 + 重建 initramfs, 【不自动重启】; reboot 后按 /proc/driver/nvidia/params 校验。
+#   只下发文件 + 重建 initramfs, 不自动重启; 重启后按 /proc/driver/nvidia/params 校验。
 #gpu_nvidia_modprobe_tuning: true
 #
-# ---- 已废弃(2026-09-09): node_tuning_sysctl / node_tuning_keep_higher_net_buffers ----
-# 交付标准 1.6 的 13 项 sysctl 原先走 /etc/sysctl.d/99-node-tuning.conf drop-in, 由这两个
-# 变量控制。现已【全部合并进 roles/init/files/sysctl.conf】, 模板与这两个变量一并删除。
+# sysctl 统一改 roles/init/files/sysctl.conf(node_tuning_sysctl 等旧变量已删除, env.yaml 里留着也不生效)。
 #
-# 为什么合并: drop-in 想靠 99- 前缀覆盖主配置, 但方向搞反了 —— systemd 把
-# /etc/sysctl.conf 当作 99-sysctl.conf 处理, 字母序 99-node-tuning < 99-sysctl,
-# 于是主配置【后】加载、一律覆盖 drop-in 的同名项。现网 35 节点实测: 两处都定义的 6 项
-# 全按 sysctl.conf 生效(netdev_max_backlog/rmem_max/wmem_max/file-max/inotify×2),
-# 只在 drop-in 里定义的 5 项才真正生效。keep_higher_net_buffers 因此一直是空转的。
-#
-# ⚠ 若你的 env.yaml 里还留着这两行, 删掉即可 —— 它们现在【不被任何代码读取】,
-#   留着会让人误以为改它们能调整 sysctl。改这 13 项请直接改 files/sysctl.conf。
-#
-# kubelet: podPidsLimit: -1 + serializeImagePulls: false(并行拉镜像)
-#
-# ⚠ -1 【不是】"不限" —— 这里原先写"等于放弃单 Pod 进程数上限"是不准确的。
-#   本仓库 containerd 配的是 SystemdCgroup = true(见 containerd-setup 的 config*.toml.j2),
-#   Pod 的 cgroup 由 systemd 管, 于是:
-#     podPidsLimit 填【具体数字】-> kubelet 直接把 pids.max 写进 pod cgroup, 不看 systemd
-#     podPidsLimit 填 -1        -> kubelet 【不写】, 继承 kubepods.slice
-#                                  -> 落到 systemd 的 DefaultTasksMax(/etc/systemd/system.conf)
-#   所以 -1 反而可能【比填一个大数字更受限】。2026-09-14 现网在容器内实测 pids.max=3000
-#   就是这么来的 —— 当时 kubelet 已是 -1, 但 Pod 仍被 systemd 的默认值卡住。
-#
-#   本仓库 init role 现在会把 DefaultTasksMax 设成 infinity(见 roles/init/tasks/common.yaml
-#   的 init_set_default_tasks_max), 所以 -1 在【本仓库装的新节点】上确实接近"不限"。
-#   但那依赖 init 跑过且 kubepods.slice 是在那之后创建的 —— 存量节点/别人装的集群不保证。
-#
-#   要一个【确定】的上限, 用 kubelet_pod_pids_limit(默认 50000)比 -1 更可控:
-#   它由 kubelet 直接写进 pod cgroup, 与 systemd 的默认值无关。
+# kubelet_unlimited_pids: true 时 podPidsLimit=-1 + 并行拉镜像。
+#   ⚠ -1 不等于不限: 会落到 systemd 的 DefaultTasksMax, 可能比填具体数字更受限
+#   (init 会把它设成 infinity, 但别人装的或存量节点不保证)。要确定的上限用 kubelet_pod_pids_limit。
 kubelet_unlimited_pids: false
 
 # ================= 内网 NTP server(chrony) =================
@@ -622,51 +578,17 @@ nodeport_addresses:
 # ############################################################################
 
 # ================= VRRP 传输方式(keepalived) =================
-# true(默认) = 单播: 显式把对端 IP 列进 unicast_peer, VRRP 报文点对点发送。
-# false      = 组播: keepalived 的默认行为, 报文发往 224.0.0.18, 依赖交换机在同 VLAN 内泛洪。
-#
-# 为什么默认改成单播(2026-09-10 现网踩过):
-#   某站点三台 LB, .1 的 VRRP 组播【出了物理口】(eth3 上 tcpdump 抓到了)但交换机没转发给
-#   同 VLAN 的另外两台, 而 .2 <-> .3 之间双向正常 —— 单向组播故障。后果:
-#     .1 收得到 .2 的 advert 却每秒 "forcing new election" 无人响应;
-#     .2 收不到 .1, 认定自己是唯一 MASTER -> 两台同时持 VIP 且【永不收敛】。
-#   表面还能用(两台跑同样的 haproxy、后端同样几台 apiserver), 但双方 GARP 互打、
-#   交换机 ARP 表在两个 MAC 间抖, 症状是偶发 apiserver 连接重置, 极难定位。
-#   改单播后立即收敛, 且故障转移实测正常(停 MASTER -> VIP 漂移 -> 恢复 -> 漂回)。
-#
-# 单播的代价: 每台要知道对端 IP, 所以【只支持同一 play 内的固定成员】。
-#   本模板从 groups['k8slb'] 自动生成并排除自己, 不需要手填 —— 手填极易出错:
-#   现网手工改时三台的 unicast_src_ip 全复制成了同一个 IP, 非本机地址 bind 失败
-#   (bind unicast_src ... failed 99 - Cannot assign requested address)-> 直接进 FAULT
-#   状态, 不参与选主也不持 VIP。
-#
-# 什么时候用组播: LB 成员会动态增减、或交换机组播确认可靠且希望少改配置时。
+# true(默认) = 单播, 对端 IP 从 [k8slb] 自动生成, 不要手填(src 写成非本机地址会直接进 FAULT)。
+# false      = 组播(224.0.0.18), 依赖交换机转发; 组播单向不通时会出现两台同时持 VIP。
 lb_vrrp_unicast: true
 
 # ---- 抢占策略(三选一) ----
-#   immediate  原主恢复后【立即】抢回 VIP。VRRP 默认行为。
-#   delay      原主恢复后等 lb_vrrp_preempt_delay 秒再抢回 —— 仍然会回切, 只是防抖动。
-#   nopreempt  原主恢复后【永不】抢回。VIP 一直留在当前 MASTER, 直到它自己故障。
-#
-# ⚠ 三者的关键前提: nopreempt 与 preempt_delay 【只在 state BACKUP 下生效】。
-#   本模板因此在这两种模式下把所有节点都渲染成 state BACKUP。
-#   历史上模板写的是 `state MASTER` + `nopreempt`, keepalived 启动时直接报
-#     (VI_1) Warning - nopreempt will not work with initial state MASTER - clearing
-#   把 nopreempt 清掉 —— 也就是说那行配置一直【没生效】, 实际行为是 immediate。
-#   配置意图与实际行为不一致, 后来人会误判"已经配了不回切"。
-#
-# ⚠ 全节点 state BACKUP 的副作用: 冷启动(全部同时起)时没有天然的 MASTER,
-#   要等约 3×advert_int(默认 3 秒)选主才有 VIP。热启动/单台重启不受影响。
-#
-# ⚠ nopreempt 的取舍: 它保证不回切, 但也意味着【VIP 可能长期停在低优先级节点上】。
-#   若各 LB 节点性能不对等(比如首台配置更好), 或希望 VIP 有确定的归属, 用 delay 更合适。
-#   另: nopreempt 走 FAULT 机制(不配 weight, 见 keepalived.conf.j2), 多台同时故障时期间
-#   【无人持 VIP】; delay 走 weight 降权, 总有一台持有(哪怕它自己也坏了)。
-#   ⚠ 但这条代价在【LB 与 master 共机】时是伪的: 3 master 挂 2 台 etcd 就没 quorum、
-#     apiserver 也全死了, VIP 在谁手上都没意义。只有独立 LB 节点(LB 故障 ≠ apiserver 故障)
-#     才需要权衡它。共机站点选 nopreempt 基本没有实质缺点。
-#   2026-10 起默认 nopreempt(本项目 LB 都与 master 共机)。独立 LB 节点的站点在 env.yaml
-#   设 lb_vrrp_preempt_mode: delay —— 否则 haproxy-ha 的预检会直接拦下, 不会静默装错。
+#   immediate  原主恢复后立即抢回 VIP
+#   delay      原主恢复后等 lb_vrrp_preempt_delay 秒再抢回
+#   nopreempt  原主恢复后不抢回(默认), 少一次 VIP 切换
+# delay / nopreempt 下所有节点都渲染成 state BACKUP, 冷启动约 3 秒选出主才有 VIP。
+# nopreempt 只适合 LB 与 master 共机(本项目都是); 独立 LB 节点在 env.yaml 设 delay,
+#   否则 haproxy-ha 的预检会拦下。
 lb_vrrp_preempt_mode: nopreempt
 # delay 模式下等待多少秒再抢回(nopreempt 时不用)。太短起不到防抖作用, 太长则故障恢复后 VIP 归位慢。
 # keepalived 允许 0-1000; 5-30 秒是常见区间。
@@ -752,36 +674,13 @@ vip_prefix: 22                           # VIP 掩码位数(k8s LB 与 Harbor �
 # has_lbvip: 只有【已定义且非空】才算有 VIP
 has_lbvip: "{{ (lbvip is defined) and ((lbvip | default('') | trim | length) > 0) }}"
 
-# ---- controlPlaneEndpoint 用域名(可选) ----
-# 默认空 = 保持现状(endpoint 直接用 IP), 存量站点零影响。
-# 填了域名之后 controlPlaneEndpoint 渲成 <域名>:<端口>, 并由 ensure-cp-endpoint-hosts.yml
-# 往每个节点 /etc/hosts 写一行「<cp_endpoint_target> <域名>」。
-#
-# 为什么值得用域名: controlPlaneEndpoint 在 kubeadm init 时写进 kubeadm-config ConfigMap
-# 与 apiserver 证书 SAN, 【事后不可改】。写 IP 的话以后要换入口(补 VIP / 换网段)得改 ConfigMap
-# + 重签 apiserver 证书 + 更新每节点四份 kubeconfig(本仓库无对应工具); 写域名则只需把解析
-# 指到新地址 —— 名字没变, 证书和 kubeconfig 一行不动。
-# 已实测(2026-09-16, cluster C): kubeadm 会把 controlPlaneEndpoint 自动签进 SAN, 不需要
-# certSANs 块 —— cpu201 的证书 SAN 里有 172.171.1.200(那不是它自己的 IP, 只能因为是 endpoint)。
-#
-# 2026-09-17 默认从空改为 lb.local.clusters —— 域名【默认开】。理由: endpoint 事后不可改,
-#   而"建集群时用不用域名"这个决定的代价完全不对称:
-#     用了域名: 以后单 master 想加 VIP, 改 hosts 解析 + 滚动重启 kubelet 就行
-#     没用域名: 同样的事要改 ConfigMap + 重签 apiserver 证书 + 改每节点四份 kubeconfig(无工具)
-#   而域名的代价只是"每节点要有一行 hosts 解析", 由 kube-common 自动下发。
-#   置空则回到旧行为(endpoint 直接用 IP), 已建好的集群不受影响(endpoint 已定死)。
-#
-# ⚠ 每个节点都必须能解析这个名字, 否则 kubelet 起不来 —— 它由 kube-common 里的
-#   ensure-cp-endpoint-hosts.yml 自动写进 /etc/hosts, 覆盖所有会有 kubelet.conf 的节点。
-#   有内网 DNS 的站点也可以在 DNS 里配, 那样 hosts 那行只是冗余。
-# ⚠ 端口不在域名的能力范围内: 端口同样在 init 时定死, 域名只能改地址。所以
-#     单 master(:apiserver_port) -> 加 keepalived VIP(:apiserver_port)   端口不变, 域名重指即可
-#     单 master(:apiserver_port) -> 3 master + haproxy(:apiserver_lb_port) 端口变, 仍需重建
-#   见下面 lb_proxy 的说明。
-# ⚠ 别用 .local 后缀: 它是 mDNS(RFC 6762)保留域, systemd-resolved 可能走 mDNS 而不查 hosts。
-#   本仓库既有约定是 .local.clusters(harbor 就是 harbor.local.clusters), 故默认值跟着它。
-# ⚠ 改了解析目标之后, 各节点 kubelet 的 long-lived watch 仍钉在旧地址上直到重连 ——
-#   要切干净得滚动重启 kubelet。比重签证书便宜得多, 但不是零操作。
+# ---- controlPlaneEndpoint 用域名(默认开) ----
+# endpoint 在 kubeadm init 时写进证书和 ConfigMap, 事后不可改。用域名的话以后换入口(补 VIP、换网段)
+#   只需改解析; 用 IP 则要重签证书、改每节点 kubeconfig。置空则 endpoint 直接用 IP。
+# ⚠ 每个节点都要能解析它, 由 kube-common 自动写进 /etc/hosts(有内网 DNS 也可以配在 DNS 里)。
+# ⚠ 域名只能换地址, 换不了端口: 单 master 改 haproxy(端口不同)仍要重建集群, 见下面 lb_proxy。
+# ⚠ 别用 .local 后缀(mDNS 保留域), 沿用 .local.clusters。
+# ⚠ 改了解析目标后, 要滚动重启各节点 kubelet 才会连到新地址。
 cp_endpoint_domain: lb.local.clusters
 
 # 域名解析到哪个地址。默认: 有 VIP 用 VIP, 否则首 master。
