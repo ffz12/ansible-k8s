@@ -448,26 +448,7 @@ chrony_allow_networks:
 # ---- GPU/CPU 分 Pod 网段(可选, 默认关) ----
 # 按节点 hardware=gpu/cpu 标签分池, 标签依 inventory 的 accelerator_type 自动打。
 # 超网算法与验算脚本见 docs/部署说明.md 十三.1。
-# ⚠ 取消注释【只删行首那一个 #】, 别按块整段取消(说明行会变裸标量, YAML 直接报错)。
-#
-# ⚠⚠ 【第 0 步】开双池前先回上面把 pod_subnet 改成覆盖两池的超网(本例 10.14.0.0/17)。
-#   只取消下面几行的注释、pod_subnet 留着默认的 10.233.64.0/18, 装出来的集群【能跑但是错的】:
-#   Pod 从 10.14.x 取地址, 而 kube-proxy 的 clusterCIDR 是 10.233.64.0/18(来自 podSubnet),
-#   于是 nft 规则里那句 `ip saddr != 10.240.0.0/12 jump mark-for-masquerade` 对所有 Pod 成立
-#   —— Pod 访问任何 ClusterIP 都被 SNAT 成节点 IP。后果:
-#     · 后端拿不到真实源 Pod IP;
-#     · 按源 Pod/命名空间选择器写的 NetworkPolicy 对经 Service 的流量失效;
-#     · 多一层 SNAT + conntrack, 高并发下有端口耗尽风险。
-#   连通性完全正常, 所以功能测试全过也发现不了。2026-09-17 现网踩过(cpu200~203 那套)。
-#   自洽的一组: pod_subnet 10.14.0.0/17 + 下面两池 + service_subnet 不与之重叠即可
-#   (10.96.0.0/12 或 10.206.0.0/16 都行)。
-#calico_dual_ippool_enabled: true
-#calico_gpu_pool_cidr: "10.14.32.0/19"    # 必填(上一项为 true 时)
-#calico_cpu_pool_cidr: "10.14.96.0/20"    # 必填(上一项为 true 时)
-# blockSize = 每节点一次拿多少地址; 池内块数 != 可容纳节点数(节点 Pod 数超一块就再要一块)。
-# 按 kubelet_max_pods=110 算: /28 每节点要 7 块, /26 要 2 块。GPU 节点别忘 DaemonSet 也占。
-#calico_gpu_pool_blockSize: 28            # 每块 16 个地址
-#calico_cpu_pool_blockSize: 26            # 每块 64 个地址
+# 开启示例和【第 0 步】(先改 pod_subnet)见 tmp/env.yaml.example 的 pod_subnet 下面。
 
 
 # 默认关闭 —— 走原来的单池逻辑(calico 用 CALICO_IPV4POOL_CIDR/podSubnet 自建一个池),
