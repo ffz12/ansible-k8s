@@ -3,14 +3,18 @@
 # 各组用途、机器行可用变量、注意事项见 docs/主机清单说明.md
 
 [cluster]
+# accelerator_type 必写: nvidia/dcu/npu/cpu, GPU 机漏写会被当成 CPU 节点
+# 没外网的机器按行配 DNS: init_config_dns=true dns=10.14.73.1
 #cpu-001 ansible_host=192.168.1.111 kube_node_ip=192.168.1.111 accelerator_type=cpu
 #gpu-001 ansible_host=192.168.1.121 kube_node_ip=192.168.1.121 accelerator_type=nvidia
 
 [init]
+# 只放这次要初始化的机器, 已交付的老机器别放
 #cpu-001
 
 # ---- 挂盘 ----
 [nvme_lvm]
+# 会清盘! 先 --check 看选中了哪几块
 #gpu-001
 
 [nvme_single]
@@ -21,30 +25,36 @@
 #cpu-001
 
 [docker]
+# 只给 Harbor 用; docker 侧只支持 nvidia
 #cpu-001
 
 [harbor]
+# 1 台单节点, 2 台双主(配 harbor_vip); 不能与 [k8slb] 同机; 加第二台时有数据的写第一个
 #cpu-001
 
 [cri_docker_nodes]
 
 # ---- Kubernetes ----
 [k8slb]
+# 多 master 才需要
 #cpu-001
 
 [k8s_master]
+# 建议奇数台; 多 master 要配 lbvip
 #cpu-001
 
 [k8s_node]
 #gpu-001
 
 [etcd]
+# 建议 3 或 5 台
 #cpu-001
 
 # ---- 扩缩容临时组(平时留空) ----
 [node_to_delete]
 [etcd_to_add]
 [etcd_to_delete]
+# 只管 LB 层, 与删 k8s master 无关; 缩容 LB 时这一行不能删, 否则静默跳过
 [master_to_delete]
 
 # ---- 可选 ----
@@ -53,13 +63,16 @@
 #[gpu_driver]
 
 [chronyserver]
+# 留空 = 全集群直连 chrony_ip; 填 2 台以上为主备
 #cpu-001
 
 [ceph]
 
 [cluster:vars]
+# 主机名取清单里的名字, 别改成 ip
 osinit_hostname_policy=inventory
 
 [all:vars]
+# 集群参数写 env.yaml, 别写这里(优先级低, 会被覆盖)
 ansible_python_interpreter=/usr/bin/python3
 ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
