@@ -55,10 +55,7 @@ if [ -x /usr/bin/cloud-init ]; then
 else
   kv cloudinit "not-installed"
 fi
-# ⚠ 不能用 `list-timers --all | grep -c apt-daily` 数 —— masked 之后这两个
-#   timer 依然会被列出来(NEXT/LEFT 全是 n/a), 数出来永远是 2, 跟真实是否已
-#   关掉无关。2026-08 青岛现网踩过: mask 明明成功了(is-enabled 显示 masked),
-#   体检却一直判 FAIL。改成看 list-unit-files 的 STATE 列, 数"没被 masked"的。
+# 用 list-unit-files 数"没被 masked"的 timer; list-timers 在 masked 后仍会列出, 数出来永远是 2。
 kvn apt_timers   "$(systemctl list-unit-files --type=timer 2>/dev/null | grep 'apt-daily' | grep -vc 'masked')"
 kv apt_periodic  "$(grep -hoE '"[01]"' /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null | tr -d '"' | tr '\n' ' ')"
 # ⚠ is-enabled 在 disabled 时也返回非 0 码, 直接 `|| echo absent` 会两条都输出
@@ -80,17 +77,11 @@ kv gov_current   "$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>
 kv boost_no_turbo "$(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || echo NA)"
 kv boost_flag     "$(cat /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || echo NA)"
 kv cstate_disabled "$(cat /sys/module/intel_idle/parameters/max_cstate 2>/dev/null || echo NA)"
-# ⚠ cpu_mhz_now 只作参考, 【不可作睿频判据】——
-#   intel_pstate passive 模式下 /proc/cpuinfo 的 cpu MHz 报的是内核【请求值】
-#   (performance governor 钉在 max), 不是测量值。现网实证: 空载报 3398,
-#   同一时刻 APERF/MPERF 实测只有 3000。
-#   ⚠ 本脚本【只读, 不压测】, 所以【不采满载实测频率】—— 那个必须人工跑一次压测,
-#     读 APERF/MPERF(MSR 0xE8/0xE7)或 turbostat --Summary 的 Bzy_MHz,
-#     命令见交付文档「睿频实测」一节。这里只把基频/温度墙/温度摆出来供比对。
+# cpu_mhz_now 只作参考, 不能当睿频判据(passive 模式下报的是内核请求值, 不是实测值)。
+# 本脚本只读不压测, 满载频率要人工压测后读 APERF/MPERF 或 turbostat 的 Bzy_MHz。
 kv cpu_mhz_now    "$(awk -F': *' '/cpu MHz/{s+=$2; n++} END{if(n)printf "%.0f", s/n}' /proc/cpuinfo 2>/dev/null)"
-# intel_pstate 运行模式: active=BIOS 开了 HWP / passive=内核检测不到 HWP 自动退回
-#   ⚠ passive 不等于睿频有问题 —— 现网 5 台 passive 实测睿频高出基频 21~23%, 正常。
-#   只影响一点: passive 才暴露 ondemand governor, 存在被别的服务改走的风险。
+# intel_pstate 运行模式: active = BIOS 开了 HWP, passive = 没开(内核自动退回)。
+#   passive 不等于睿频有问题, 只是会暴露 ondemand governor, 可能被别的服务改走。
 kv pstate_status  "$(cat /sys/devices/system/cpu/intel_pstate/status 2>/dev/null || echo NA)"
 kv scaling_driver "$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver 2>/dev/null || echo NA)"
 # 基频从 MSR 0xCE bits15:8 读(×100MHz)。
