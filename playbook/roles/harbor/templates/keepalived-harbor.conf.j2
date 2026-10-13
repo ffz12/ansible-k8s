@@ -8,10 +8,10 @@ global_defs {
 
 vrrp_script chk_harbor {
     script "/etc/keepalived/check_harbor.sh"
-    # 推大镜像时 Harbor 负载高, ping 会变慢; 2 秒超时 x 2 次就切, 现网推 calico 时 VIP 中途漂走,
-    # 层和 manifest 落到两台上报 blob unknown。放宽到: 单次 5 秒超时, 连续 3 次失败(约 15 秒)才切。
-    interval 5
-    timeout 6
+    # 脚本只在容器停了/连不上/5xx 时失败(超时算忙, 见 check_harbor.sh)。脚本最长约 12 秒,
+    # timeout 要大于它; 连续 3 次失败(约 30 秒)才切, 避免推/拉大镜像时误切。
+    interval 10
+    timeout 15
     rise 2
     fall 3
     # 不配 weight: 与 nopreempt 同用时, 检查失败要让 instance 进 FAULT 停发 advert,

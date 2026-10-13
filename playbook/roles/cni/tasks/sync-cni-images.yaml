@@ -66,7 +66,7 @@
     for a in $ARCHS; do
       docker load -i "{{ calico_images_dir }}/images/${a}/${COMP}.tar.gz"
       docker tag "calico/${COMP}:${VERSION}-${a}" "${DST}-${a}"
-      docker push "${DST}-${a}"
+      for _i in 1 2 3; do docker push "${DST}-${a}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
       MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
     done
     docker manifest rm "${DST}" >/dev/null 2>&1 || true
@@ -74,7 +74,7 @@
     for a in $ARCHS; do
       docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
     done
-    docker manifest push --insecure "${DST}"
+    for _i in 1 2 3; do docker manifest push --insecure "${DST}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
     for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
   loop: "{{ calico_components }}"
   args:
@@ -102,13 +102,13 @@
       for a in $ARCHS; do
         docker load -i "{{ flannel_images_dir }}/images/${a}/${TAR}.tar.gz"
         docker tag "${SRC}-${a}" "${DST}-${a}"
-        docker push "${DST}-${a}"
+        for _i in 1 2 3; do docker push "${DST}-${a}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
         MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
       done
       docker manifest rm "${DST}" >/dev/null 2>&1 || true
       docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
       for a in $ARCHS; do docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"; done
-      docker manifest push --insecure "${DST}"
+      for _i in 1 2 3; do docker manifest push --insecure "${DST}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
       for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
     }
     sync_one "flannel/flannel:v{{ flannel_version }}" \
@@ -139,13 +139,13 @@
       for a in $ARCHS; do
         docker load -i "{{ cilium_images_dir }}/images/${a}/${TAR}.tar.gz"
         docker tag "${SRC}-${a}" "${DST}-${a}"
-        docker push "${DST}-${a}"
+        for _i in 1 2 3; do docker push "${DST}-${a}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
         MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
       done
       docker manifest rm "${DST}" >/dev/null 2>&1 || true
       docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
       for a in $ARCHS; do docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"; done
-      docker manifest push --insecure "${DST}"
+      for _i in 1 2 3; do docker manifest push --insecure "${DST}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
       for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
     }
     sync_one "quay.io/cilium/cilium:v{{ cilium_version }}" \

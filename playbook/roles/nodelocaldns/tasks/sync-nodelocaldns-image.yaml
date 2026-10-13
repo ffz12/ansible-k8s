@@ -74,7 +74,7 @@
     for a in $ARCHS; do
       docker load -i "{{ nodelocaldns_images_dir }}/${a}/k8s-dns-node-cache.tar.gz"
       docker tag "registry.k8s.io/dns/k8s-dns-node-cache:${VER}-${a}" "${DST}-${a}"
-      docker push "${DST}-${a}"
+      for _i in 1 2 3; do docker push "${DST}-${a}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
       MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
     done
     # 即便只有一个架构也建 manifest list: 保持 tag 形态一致(模板始终引用不带 -arch 的 tag)
@@ -83,7 +83,7 @@
     for a in $ARCHS; do
       docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
     done
-    docker manifest push --insecure "${DST}"
+    for _i in 1 2 3; do docker manifest push --insecure "${DST}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
     for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
   args:
     executable: /bin/bash

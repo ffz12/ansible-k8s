@@ -102,7 +102,7 @@
       docker load -i "{{ k8s_images_dir }}/images/${a}/${IMAGE_NAME}.tar.gz"
       # 源镜像名带 -arch 后缀(save_img 存 tar 时按 __ARCH__ 模板打的标签)
       docker tag "registry.k8s.io/${IMAGE_NAME}-${a}:${TAG}" "${DST}-${a}"
-      docker push "${DST}-${a}"
+      for _i in 1 2 3; do docker push "${DST}-${a}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
       MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
     done
     docker manifest rm "${DST}" >/dev/null 2>&1 || true
@@ -110,7 +110,7 @@
     for a in $ARCHS; do
       docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
     done
-    docker manifest push --insecure "${DST}"
+    for _i in 1 2 3; do docker manifest push --insecure "${DST}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
     for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
   loop: 
   - pause
@@ -132,7 +132,7 @@
       docker load -i "{{ k8s_images_dir }}/images/${a}/${IMAGE_NAME}.tar.gz"
       # 源镜像名带 -arch 后缀(save_img 存 tar 时按 __ARCH__ 模板打的标签)
       docker tag "registry.k8s.io/${IMAGE_NAME}-${a}:${TAG}" "${DST}-${a}"
-      docker push "${DST}-${a}"
+      for _i in 1 2 3; do docker push "${DST}-${a}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
       MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
     done
     docker manifest rm "${DST}" >/dev/null 2>&1 || true
@@ -140,7 +140,7 @@
     for a in $ARCHS; do
       docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
     done
-    docker manifest push --insecure "${DST}"
+    for _i in 1 2 3; do docker manifest push --insecure "${DST}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
     for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
   loop:
   - coredns
@@ -163,7 +163,7 @@
       docker load -i "{{ k8s_images_dir }}/images/${a}/${IMAGE_NAME}.tar.gz"
       # 源镜像名带 -arch 后缀(save_img 存 tar 时按 __ARCH__ 模板打的标签)
       docker tag "registry.k8s.io/${IMAGE_NAME}-${a}:${TAG}" "${DST}-${a}"
-      docker push "${DST}-${a}"
+      for _i in 1 2 3; do docker push "${DST}-${a}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
       MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
     done
     docker manifest rm "${DST}" >/dev/null 2>&1 || true
@@ -171,7 +171,7 @@
     for a in $ARCHS; do
       docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
     done
-    docker manifest push --insecure "${DST}"
+    for _i in 1 2 3; do docker manifest push --insecure "${DST}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
     for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
   loop: "{{ k8s_components }}"
   args:

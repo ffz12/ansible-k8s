@@ -76,7 +76,7 @@
     for a in $ARCHS; do
       docker load -i "{{ multus_cni_images_dir }}/${a}/multus-cni.tar.gz"
       docker tag "ghcr.io/k8snetworkplumbingwg/multus-cni:${VER}-${a}" "${DST}-${a}"
-      docker push "${DST}-${a}"
+      for _i in 1 2 3; do docker push "${DST}-${a}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
       MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
     done
     docker manifest rm "${DST}" >/dev/null 2>&1 || true
@@ -84,7 +84,7 @@
     for a in $ARCHS; do
       docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
     done
-    docker manifest push --insecure "${DST}"
+    for _i in 1 2 3; do docker manifest push --insecure "${DST}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
     for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
   args:
     executable: /bin/bash
