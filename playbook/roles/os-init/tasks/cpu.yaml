@@ -9,18 +9,9 @@
 #    cat /sys/devices/system/cpu/cpufreq/boost
 #    cat /sys/devices/system/cpu/intel_pstate/no_turbo
 #
-#  ⚠ 现网事故(2026-08 青岛 6 台): 重启后 4/6 台 governor 掉回 ondemand。
-#    根因是 cpufrequtils.service(LSB 脚本经 systemd-sysv-generator 生成)在本角色
-#    的服务 Finished 之后 14 秒才跑, 按 /etc/default/cpufrequtils 的 GOVERNOR
-#    重设一遍 —— 该文件不存在时脚本回落到 ondemand, 于是覆盖掉 performance。
-#    cpu-001 侥幸没掉, 只因为它那台恰好有这个文件且值是 performance。
-#    三处一起堵:
-#      1) 不再安装 cpufrequtils(本角色从未用过它的命令, 装它纯属引入竞争者)
-#      2) 已装的机器写 /etc/default/cpufrequtils GOVERNOR=performance, 方向一致
-#      3) service 加 After=cpufrequtils.service 等, 保证本角色最后收尾
-#  ⚠ 另一处更隐蔽的问题: 原来的 governor 校验紧跟在 systemctl restart 之后 ——
-#    那一刻必然是 performance, 所以这一项【每次都判 PASS】, 等于自己给自己作弊,
-#    重启后才暴露。现在校验前先 sleep 让开机竞争者跑完, 且明确说明其局限。
+#  ⚠ cpufrequtils.service 开机会按 /etc/default/cpufrequtils 重设 governor, 文件缺失时回落到 ondemand,
+#    覆盖掉 performance。所以: 默认不装 cpufrequtils; 已装的写 GOVERNOR=performance;
+#    本角色的服务排在它之后执行。governor 校验前先等几秒, 抓开机时被改回去的情况。
 # ============================================================================
 
 - name: 探测 cpufreq 是否可用
@@ -50,11 +41,7 @@
           可用 governor 中没有 performance: {{ osinit_govs.stdout }}
           —— 需要在 BIOS 中改为最高性能模式(或加载 intel_pstate/acpi-cpufreq)。
 
-    # ⚠ 原来这里装 cpufrequtils("提供 cpufreq-info / cpufreq-set")——
-    #   但本角色从头到尾没用过这两个命令, 装它只带来一个和自己抢 governor 的
-    #   LSB 服务(见文件头事故说明)。所以默认【不装】。
-    #   真需要这两个命令排查时: -e osinit_install_cpufrequtils=true
-    #   (装了也不怕: 下面会把 GOVERNOR 写成 performance, 方向一致就不存在赛跑)
+    # 默认不装 cpufrequtils(会和 governor 服务抢)。排查需要时 -e osinit_install_cpufrequtils=true。
     - name: 安装 cpufrequtils(默认不装, 它会和 governor 服务抢)
       apt:
         name: cpufrequtils
@@ -191,11 +178,7 @@
 # 内核 5.8+ 检测不到 HWP 时【自动退回 passive】, 所以 passive 基本等价于
 # "BIOS 里 HWP 是关的" —— 即使 /proc/cmdline 里没写 intel_pstate=passive。
 #
-# ⚠ 为什么要报这个: HWP 关闭会导致睿频上不去(实测过 Xeon 8468 被锁在 2100 基频),
-#   交付标准要求启用 TurboBoost, 光看 no_turbo=0 不够 —— 那只说明"没禁用睿频",
-#   不代表睿频真能跑上去。而且 passive 模式才可能被 ondemand 抢走 governor。
-# ⚠ 本角色【不改】这个 —— 它只能在 BIOS 里改(改 cmdline 强制 active 在 HWP
-#   关闭时无效), 属于 os-check 报出、人工去 BIOS 处置的项。
+# HWP 关闭会导致睿频上不去, 光看 no_turbo=0 不够。本角色只报告不修改, 只能在 BIOS 里改。
 - name: 读取 intel_pstate 运行模式
   command: cat /sys/devices/system/cpu/intel_pstate/status
   register: osinit_pstate_status
