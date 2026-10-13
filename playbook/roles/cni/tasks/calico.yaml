@@ -30,23 +30,10 @@
   delegate_to: localhost
 
 # ============================================================================
-#  预检: pod_subnet 必须覆盖两个池段, 且四段互不重叠
-#
-#  为什么需要这个: 开双池时只取消 calico_dual_ippool_enabled/两池 CIDR 的注释、忘了回头
-#  改 pod_subnet(env.yaml 里它在双池块【上方】十几行), 装出来的集群【能跑但是错的】——
-#  Pod 从池段取地址, 而 kube-proxy 的 clusterCIDR 来自 kubeadm 的 podSubnet(= pod_subnet),
-#  于是 nft/iptables 里那句 `saddr != <clusterCIDR> jump mark-for-masquerade` 对所有 Pod
-#  成立, Pod 访问任何 ClusterIP 都被 SNAT 成节点 IP:
-#      · 后端拿不到真实源 Pod IP;
-#      · 按源 Pod/命名空间选择器写的 NetworkPolicy 对经 Service 的流量失效;
-#      · 多一层 SNAT + conntrack, 高并发下有端口耗尽风险。
-#  连通性完全正常, 功能测试全过也发现不了。2026-09-17 现网踩过(pod_subnet 留着默认的
-#  10.240.0.0/12, 两池是 10.14.32.0/19 + 10.14.96.0/20)。且 pod_subnet 建完集群不可改,
-#  只能改 kube-proxy 的 cm 兜, 所以必须在装机【之前】拦住。
-#
-#  为什么用 python3 而不是 assert + netaddr 滤镜: netaddr/ipaddr 滤镜要额外装 python 包
-#  (Kylin 离线环境很麻烦), 而 ipaddress 是 python3 标准库、控制节点必然有(ansible 自己就要)。
-#  delegate_to: localhost + run_once —— 纯配置校验, 不碰任何目标机。
+#  预检: pod_subnet 必须覆盖两个池段, 且四段互不重叠(仅双池)
+#  开双池却没改 pod_subnet 时集群能跑但是错的: kube-proxy 的 clusterCIDR 来自 pod_subnet,
+#  Pod 访问 ClusterIP 全被 SNAT 成节点 IP, NetworkPolicy 失效。pod_subnet 建完不可改, 所以装机前拦住。
+#  用 python3 标准库 ipaddress 校验(不依赖 netaddr), 只在控制机上跑。
 # ============================================================================
 - name: "预检 —— pod_subnet 覆盖两池且四段不重叠(仅双池模式)"
   command:
@@ -120,29 +107,10 @@
   delegate_to: localhost
 
 # ============================================================================
-#  预检: 必须存在与 calico_version 对应的 manifest 模板
-#
-#  为什么需要这个: calico_version 只决定【镜像 tag】(defaults.yaml 的 calico_images.*),
-#  而 CRD 与 ClusterRole 规则来自那份 7800+ 行的 vendored 上游 manifest。改
-#  calico_version 完全不会动那 7800 行, 于是很容易出现"新版镜像 + 旧版 manifest"
-#  (或反过来)的错配, 而且【不报错】, 只在运行时表现为:
-#      felix: cannot list resource "clusternetworkpolicies" ... forbidden
-#      -> readiness 503 -> calico-node 起不来
-#  历史上踩过两次: 3.27->3.31 漏了 9 个 CRD + 2 条 ClusterRole 规则; 之后现网
-#  env.yaml 写 3.32.2 而模板是 3.31.3 生成的, 当时按"补一条 RBAC"治标, 根因是错配。
-#
-#  ⚠ 2026-09-11 改为【按版本存放】: templates/calico/<版本>.yaml.j2
-#  原先是单一的 templates/calico.yaml.j2 + "模板版本必须等于 calico_version" 的双向
-#  严格相等校验。那样一份入库模板只能服务一个版本, 而 calico_version 在各站点自己的
-#  env.yaml(gitignore)里 —— 后果是【全部站点必须同时换版本】:
-#    · push 新模板的那一刻, 落后的站点立刻撞 assert 装不了 CNI;
-#    · 想让老集群停在旧版也不行 —— 双向相等, 写旧版号照样被拦, 没有退路。
-#  改成按版本存放后, 各站点按自己的节奏升级, push 不再是同步点。校验也从"版本相等"
-#  变成"该版本的模板存不存在", 缺了就明确告诉你去跑生成脚本。
-#
-#  加新版本: scripts/gen-calico-template.sh <目标版本> 先看 diff(它会单独列出 CRD
-#  增减与各 ClusterRole 的 rules 增减), 确认无异常后 --apply 生成新文件。
-#  旧版本文件保持不动, 老集群不受影响。
+#  预检: 必须有 calico_version 对应的 manifest 模板(templates/calico/<版本>.yaml.j2)
+#  calico_version 只决定镜像 tag, CRD 和 RBAC 来自模板。两者版本不一致时不报错,
+#  运行时 calico-node 因权限不足起不来。模板按版本存放, 各站点可以停在不同版本。
+#  加新版本: scripts/gen-calico-template.sh <版本> 先看 diff, 确认后加 --apply。
 # ============================================================================
 - name: 预检 —— 该 calico 版本的 manifest 模板是否存在
   stat:
@@ -203,11 +171,7 @@
   register: _calico_tmpl_ver
   changed_when: false
   failed_when: false
-  # ⚠ check_mode: false 是【必须】的, 不是优化。--check 模式下 shell/command 默认【不执行】
-  #   (ansible 无法判断命令有没有副作用, 一律跳过) -> register 拿不到 stdout ->
-  #   下面 assert 拿 "" 与 calico_version 比 -> 必然失败, 报"模板里的标记是空"。
-  #   于是任何 --check 都在这里死掉, 连后面渲染那步都验不到。2026-09-14 实测踩到。
-  #   本任务是纯只读(grep/sed/tr), 在 check 下照常执行是安全的。
+  # check_mode: false 必须写: --check 下 shell 默认不执行, 拿不到输出, 下面的 assert 必然失败。本任务只读。
   check_mode: false
   run_once: true
   delegate_to: localhost
