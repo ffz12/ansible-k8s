@@ -75,13 +75,7 @@ osinit_sync_wait: 60            # 等待 chrony 实际同步上的最长秒数
 #   置 false 前先确认跨节点差在 osinit_time_max_offset 秒内:
 #     ansible cluster -m shell -a 'date -u +%FT%T'
 osinit_fail_on_unsynced: true
-# chrony 的配置路径与服务名【按发行版区分】。init 角色 common.yaml 早就这么做了(见那两个
-# chrony task 的行内三元式, 以及"Debian 上服务名是 chrony 不是 chronyd"那条注释);
-# os-init 原先写死 Debian 取值, 在 openEuler / Kylin / RHEL 上会:
-#   · 配置写到不存在的 /etc/chrony/ 目录 —— template 模块不建父目录, 直接报错
-#   · systemd 找不到名为 chrony 的服务 —— 那边叫 chronyd
-# 而 os-init 侧的 chrony 任务【没有 ignore_errors】(init 侧有), 所以是硬失败,
-# 不会像老角色那样被静默掩盖 —— 非 Debian 站点跑 --tags time 会直接中断。
+# chrony 配置路径与服务名按发行版区分(Debian: /etc/chrony/chrony.conf + chrony; 其它: /etc/chrony.conf + chronyd)。
 osinit_chrony_conf: "{{ '/etc/chrony/chrony.conf' if ansible_os_family == 'Debian' else '/etc/chrony.conf' }}"
 osinit_chrony_service: "{{ 'chrony' if ansible_os_family == 'Debian' else 'chronyd' }}"
 
@@ -113,8 +107,7 @@ mgmt_ip: "{{ ansible_host | default(ansible_default_ipv4.address) }}"
 #     keep      → 机器仍是 CPU-111(不动机器, 清单只是标识)
 #     inventory → 机器被改成 cpu-001(按清单纠正机器)
 #
-# 默认用 inventory: 清单里写什么, 机器就叫什么, 最直观也最不容易出意外 ——
-# ip 策略会把 cpu-001(192.168.1.111) 改成 CPU-111, 与运维习惯的序号对不上。
+# 默认 inventory: 清单里写什么机器就叫什么(ip 策略会把 cpu-001 改成 CPU-111 这类名字)。
 osinit_hostname_policy: inventory
 # policy=explicit 时的目标主机名, 在 inventory 里逐台写:
 #   cpu-001 ansible_host=192.168.1.111 osinit_hostname=cpu-001
@@ -133,10 +126,7 @@ osinit_write_cluster_hosts: true
 # true = 无视上述保护, 强行固定到【当前运行】的内核。
 # 什么时候用: 新内核起不来要回退, 已经引导回旧内核并要把它钉死。
 osinit_grub_force: false
-# ⚠ 「当前运行内核」由 grub.yaml 每次【实时 uname -r】取得, 不用 ansible_kernel ——
-#   ansible.cfg 配了 fact_caching_timeout=86400, 重启换内核后 24 小时内 fact 仍是
-#   旧版本, 会把 GRUB 钉回旧内核(现网 maascpu-011 就这么被钉回 5.15.0-119 的)。
-#   os-check 侧不受影响: 它的 os-collect.sh 自己跑 uname -r, 也不读 fact 缓存。
+# ⚠ 当前内核由 grub.yaml 实时 uname -r 取得, 不用 ansible_kernel(fact 缓存 24 小时, 重启换内核后会钉回旧内核)。
 
 # ---------------- 软件包 ----------------
 osinit_packages:
@@ -146,49 +136,23 @@ osinit_packages:
   - ethtool
   - dmidecode
   - numactl
-  # ⚠ 下面三个是现网排查睿频时【缺包缺出来的】—— 当时 turbostat / rdmsr / cpupower
-  #   全都没装, 只能 dd 读 /dev/cpu/0/msr 绕过去。判"睿频是否真能跑上去"必须读
-  #   APERF/MPERF, 而 /proc/cpuinfo 的 cpu MHz 在 intel_pstate passive 模式下
-  #   报的是内核请求值(空载报 3398, 实测只有 3000), 不能当判据。
+  # 下面三个用于排查睿频: 判断睿频要读 APERF/MPERF, /proc/cpuinfo 的 cpu MHz 不能当判据。
   - msr-tools           # rdmsr —— 读 APERF/MPERF 算真实频率; 几十 KB, 不依赖内核版本
   - sysstat             # mpstat, 看各核负载是否均衡
   - linux-tools-common  # cpupower/turbostat 的分发 wrapper(与内核版本无关, 装它无风险)
-# 是否安装 cpupower + turbostat(同一个包里)。默认 true —— 判 HWP/频率问题的主力工具:
-#   cpupower frequency-info 报 "no or unknown cpufreq driver is active"
-#   就是 Xeon 8468 锁死基频那次最关键的一条证据;
-#   turbostat --Summary 的 Bzy_MHz 是睿频实测的标准取法。
-# ⚠ 装法有坑, 别改成 linux-tools-generic:
-#   - linux-tools-common 只有 wrapper, 单装它会报 "cpupower not found for kernel x"
-#   - 可执行文件在 linux-tools-$(uname -r) 里, 是【带内核版本号】的包
-#   - 元包 linux-tools-generic 会【跟着新内核走】, 而本角色在 apt-mark hold 内核
-#     (交付标准要求内核固定) —— 装元包等于给 apt 留一条把内核带升级的路
-#   所以 packages.yaml 里用实时 uname -r 拼出确切版本的包名装, 见该文件说明。
-# 装不上不中止: 内核被 hold 时对应 tools 包可能不在源里, msr-tools 已够用。
+# 是否安装 cpupower + turbostat(排查 HWP / 睿频的主力工具)。
+# ⚠ 别改成 linux-tools-generic: 元包会跟着新内核走, 而本角色 hold 了内核。packages.yaml 按 uname -r 拼确切包名。
+# 装不上不中止(内核被 hold 时源里可能没有对应包, msr-tools 已够用)。
 osinit_install_cpupower: true
 
 # ---------------- CPU 性能 ----------------
 osinit_cpu_governor: performance
 osinit_cpu_service: os-cpu-performance.service
-# 是否安装 cpufrequtils。默认 false ——
-# 本角色从未用过它的 cpufreq-info / cpufreq-set, 装它只会带进来一个
-# cpufrequtils.service(LSB 生成), 它开机会按 /etc/default/cpufrequtils 的
-# GOVERNOR 重设 governor, 该文件缺失时回落到 ondemand, 把 performance 覆盖掉。
-# ⚠ 现网事故: 6 台里 4 台重启后 governor 掉回 ondemand, 就是这么来的
-#   (cpufrequtils 比本角色的服务晚 14 秒跑)。
-# 已经装了的机器不卸载(卸载可能连带别的包), 改为把 GOVERNOR 写成 performance,
-# 方向一致就不存在赛跑 —— 见 tasks/cpu.yaml。
+# 是否安装 cpufrequtils。默认 false: 它的开机服务会把 governor 改回 ondemand, 覆盖 performance。
+# 已经装了的机器不卸载, 改为把 GOVERNOR 写成 performance(见 tasks/cpu.yaml)。
 osinit_install_cpufrequtils: false
-# ⚠ thermald 是另一个会压频率的用户态守护(现网 6 台全 enabled, 当次 inactive)。
-#   本角色【不动它】—— 它属于过热保护的一环, 而且从没实际出过事,
-#   与 cpufrequtils(实锤把 4 台改回 ondemand)不是一个性质, 不值得为假想问题 mask 掉。
-#   os-check 会在「CPU 供电性能模式」项里把它连同其他竞争者一起报出来
-#   (gov_rivals), 真出问题再人工 mask。
-# governor 校验前的等待秒数。
-# ⚠ 原来校验紧跟 systemctl restart 之后, 那一刻必然是 performance, 于是这一项
-#   【每次都判 PASS】—— 自己给自己作弊, 重启后才暴露。等一会儿至少能抓到
-#   "刚设完就被别的服务改回去"这类即时覆盖。
-#   但仍然【判不了重启后是否持久】, 那个只能靠重启后复验, 见 tasks/cpu.yaml 末尾提示。
-# 置 0 = 不等待(赶时间时用)。
+# thermald 也可能压频率, 本角色不动它(属于过热保护); os-check 会在 gov_rivals 里报出来, 需要时人工 mask。
+# governor 校验前等待的秒数, 用来抓"刚设完就被别的服务改回去"。判不了重启后是否持久, 要重启后复验。0 = 不等待。
 osinit_gov_verify_delay: 5
 
 # ---------------- 日志审计外送(osinit_do_syslog=true 时生效) ----------------
