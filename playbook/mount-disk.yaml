@@ -1,0 +1,227 @@
+---
+- name: Mount data disk; containerd via config-root, kubelet via bind
+  # 单盘机器组(inventory 的 [disk_direct](旧名 [nvme_single] 仍兼容), 只列主机名; 机器本体仍在 [cluster])。
+  # ⚠ 组留空 = 本 playbook 匹配不到主机、直接跳过, 不会误挂全集群。
+  #   老 inventory 若没有这个组, 加上再跑; 想临时指定几台仍可叠加 --limit。
+  hosts: "disk_direct:nvme_single"
+  become: yes
+  vars:
+    # ===== 盘符 =====
+    # ⚠ 不直接在这里写 device_path: play vars 优先级高于 inventory, 写在这里会让 inventory
+    #   机器行上的 device_path=/dev/nvmeXn1 失效。改成取变量 + 默认值, inventory / -e 都能覆盖。
+    _dev: "{{ device_path | default('/dev/nvme2n1') }}"      # 第一块盘 -> container_base(containerd/kubelet)
+    # 额外数据盘(可选, 可多块): data_disks="盘符:挂载点,盘符:挂载点", 挂载点省略默认 /data。
+    #   inventory: node01 device_path=/dev/nvme0n1 data_disks="/dev/nvme1n1:/data,/dev/nvme3n1:/data2"
+    #   也可在 group_vars 写列表: data_disks: [{dev: /dev/nvme1n1, path: /data}]
+    #   只有一块时沿用旧写法 data_device_path(+ data_mount_point)也行。不填 = 只挂第一块, 原行为。
+    fstype: "xfs"
+    # container_base / containerd_root 来自 group_vars/all.yaml(与 containerd_setup 共用)
+    #   - containerd: 数据目录直接建在盘上({{ containerd_root }}),由 config.toml 的 root 指向,不 bind
+    #   - kubelet:    走 bind 挂载到标准路径(kubelet 改数据目录需动 kubeadm,bind 更省事)
+    kubelet_bind:
+      - { src: "kubelet", dest: "/var/lib/kubelet" }
+
+  tasks:
+    # 1. 物理设备检查
+    - name: Check if the data device exists
+      stat:
+        path: "{{ _dev }}"
+      register: device_stat
+
+    - name: 📢 [终端显示] 磁盘是否存在
+      debug:
+        msg: "设备 {{ _dev }} 状态: {{ '✅ 存在' if device_stat.stat.exists else '❌ 不存在' }}"
+
+    - name: 中断执行 (如果磁盘不存在)
+      fail:
+        msg: "找不到设备 {{ _dev }}，请确认硬件连接。"
+      when: not device_stat.stat.exists
+
+    # 2. 检查主挂载状态
+    - name: Get current mount information
+      setup:
+        filter: ansible_mounts
+
+    - name: Set mount flag
+      set_fact:
+        already_mounted: "{{ ansible_mounts | selectattr('mount', 'equalto', container_base) | list | length > 0 }}"
+
+    - name: 📢 [终端显示] 主挂载点检查
+      debug:
+        msg: "{{ container_base }} 当前状态: {{ '⚠️ 已挂载' if already_mounted else '🆗 未挂载 (准备执行)' }}"
+
+    # 占用检查: 有分区/分区表、被挂载、在 RAID/LVM 里就停下(container_base 已挂载=重跑, 不查)
+    - name: 第一块盘 —— 占用检查
+      include_tasks: "{{ playbook_dir }}/tasks/disk-guard.yml"
+      vars:
+        _guard_dev: "{{ _dev }}"
+      when: not already_mounted
+
+    # 3. 安全检测: 盘上是否已有文件系统/数据
+    - name: 检测盘上是否已有文件系统
+      command: "blkid -s TYPE -o value {{ _dev }}"
+      register: existing_fs
+      changed_when: false
+      failed_when: false
+      check_mode: false        # 只读; 不设则 --check 下被跳过, 下一步取 existing_fs.stdout 直接 undefined
+
+    - name: 📢 [终端显示] 盘上文件系统检测
+      debug:
+        msg: "{{ _dev }} 文件系统: {{ existing_fs.stdout if existing_fs.stdout != '' else '空白(无文件系统)' }}"
+
+    # 仅当"未挂载"且"完全空白"时才格式化; 只要有任何文件系统就绝不格式化(双保险: 再叠加 force:no)
+    - name: Create filesystem on the data device (仅空白盘)
+      filesystem:
+        fstype: "{{ fstype }}"
+        dev: "{{ _dev }}"
+        force: no
+      when:
+        - not already_mounted
+        - existing_fs.stdout == ""
+
+    - name: ⚠️ [终端显示] 盘上已有数据,跳过格式化
+      debug:
+        msg: "⚠️ {{ _dev }} 已有文件系统({{ existing_fs.stdout }})，已跳过格式化，将直接挂载，数据保留。"
+      when: existing_fs.stdout != ""
+
+    # ---- 额外数据盘(可选, 可多块) ----
+    - name: 额外数据盘 —— 解析 data_disks
+      set_fact:
+        _data_disks: >-
+          {%- set out = [] -%}
+          {%- set raw = data_disks | default('') -%}
+          {%- if raw is string -%}
+          {%-   for x in raw.split(',') if x | trim | length > 0 -%}
+          {%-     set kv = (x | trim).split(':', 1) -%}
+          {%-     set _ = out.append({'dev': kv[0] | trim, 'path': (kv[1] | trim) if kv | length > 1 else '/data'}) -%}
+          {%-   endfor -%}
+          {%- else -%}
+          {%-   for x in raw -%}
+          {%-     set _ = out.append({'dev': x.dev, 'path': x.path | default('/data')}) -%}
+          {%-   endfor -%}
+          {%- endif -%}
+          {%- if out | length == 0 and (data_device_path | default('') | length > 0) -%}
+          {%-   set _ = out.append({'dev': data_device_path, 'path': data_mount_point | default('/data')}) -%}
+          {%- endif -%}
+          {{ out }}
+
+    - name: 额外数据盘 —— 盘符、挂载点不能重复(也不能与第一块盘 / container_base 相同)
+      assert:
+        that:
+          - (_data_disks | map(attribute='dev') | list + [_dev]) | unique | length == (_data_disks | length) + 1
+          - (_data_disks | map(attribute='path') | list + [container_base]) | unique | length == (_data_disks | length) + 1
+        fail_msg: "data_disks 有重复: 盘符 {{ _data_disks | map(attribute='dev') | list + [_dev] }}, 挂载点 {{ _data_disks | map(attribute='path') | list + [container_base] }}"
+      when: _data_disks | length > 0
+
+    - name: 额外数据盘 —— 检查并格式化(仅空白盘)
+      include_tasks: "{{ playbook_dir }}/tasks/data-disk-prepare.yml"
+      loop: "{{ _data_disks }}"
+      loop_control:
+        loop_var: _disk
+
+    # ================= --check 预览到此为止 =================
+    # --check 时早停: 设备存在性、是否已挂载、盘上有无文件系统都已判完并打印, 这就是实跑前
+    # 要核对的全部信息。再往下 check 模式做不出有意义的判断 —— 空白盘在 check 下不会真格式化,
+    # 紧接着取 UUID 会拿到空值, 挂载步骤只会连环报错。
+    - name: "[--check] 预览汇总"
+      debug:
+        msg:
+          - "目标设备: {{ _dev }}"
+          - "{{ container_base }} 已挂载: {{ already_mounted }}"
+          # 判据与下面真实的格式化条件保持字面一致(existing_fs.stdout == "", 不加 trim),
+          # 否则预览结论可能与实跑行为不符。
+          - >-
+            {{ ('盘上已有文件系统(' ~ existing_fs.stdout ~ ') -> 实跑不会格式化, 直接挂载, 数据保留')
+               if existing_fs.stdout != ''
+               else ('盘完全空白 -> 实跑会执行 mkfs.' ~ fstype ~ ' 格式化该盘') }}
+          - "额外数据盘: {{ _data_disks | length }} 块(逐块结果见上面 📢 数据盘 那几行)"
+          - "核对无误后去掉 --check 实跑。"
+      when: ansible_check_mode | bool
+
+    - name: "[--check] 早停(不动任何磁盘)"
+      meta: end_host
+      when: ansible_check_mode | bool
+
+    # 4. 获取 UUID
+    - name: Get UUID of the device
+      command: blkid -s UUID -o value {{ _dev }}
+      register: device_uuid
+      changed_when: false
+
+    - name: 📢 [终端显示] 获取到的 UUID
+      debug:
+        msg: "设备 {{ _dev }} 的 UUID 为: {{ device_uuid.stdout }}"
+
+    # 5. 挂载数据盘到主挂载点 (用 UUID,写入 fstab)
+    - name: Mount data device to container_base by UUID
+      mount:
+        path: "{{ container_base }}"
+        src: "UUID={{ device_uuid.stdout }}"
+        fstype: "{{ existing_fs.stdout | trim if existing_fs.stdout | trim | length > 0 else fstype }}"   # 已有文件系统按实际类型挂(如 ext4), 空白盘才用 fstype
+        opts: defaults
+        state: mounted
+
+    # 7. kubelet: 在数据盘上建子目录 + bind 目标目录
+    - name: Create kubelet dir on disk and bind target
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0711"
+      loop:
+        - "{{ container_base }}/{{ kubelet_bind[0].src }}"
+        - "{{ kubelet_bind[0].dest }}"
+
+    # 8. kubelet bind 挂载 (带 x-systemd.requires-mounts-for 保证开机时主挂载先就绪)
+    - name: Bind mount kubelet dir to standard path
+      mount:
+        path: "{{ item.dest }}"
+        src: "{{ container_base }}/{{ item.src }}"
+        fstype: none
+        opts: "bind,x-systemd.requires-mounts-for={{ container_base }}"
+        state: mounted
+      loop: "{{ kubelet_bind }}"
+
+    # 9. 额外数据盘挂载(UUID 写 fstab)
+    - name: 额外数据盘 —— 挂载
+      include_tasks: "{{ playbook_dir }}/tasks/data-disk-mount.yml"
+      loop: "{{ _data_disks }}"
+      loop_control:
+        loop_var: _disk
+
+    # containerd_root 与 container_base 解耦: 默认在 container_base 下, 也可指到某块额外数据盘。
+    # 放在所有挂载之后再建目录, 否则会建在系统盘上、再被挂载盖住。
+    - name: Create containerd data dir (containerd_root, 由 config.toml 的 root 指向)
+      file:
+        path: "{{ containerd_root }}"
+        state: directory
+        mode: "0711"
+
+    - name: ⚠ containerd_root 不在任何数据盘上
+      debug:
+        msg: >-
+          containerd_root={{ containerd_root }} 不在 container_base({{ container_base }})
+          或任何额外数据盘下, 镜像会写到系统盘。确认这是你要的, 否则改 env.yaml 的 containerd_root。
+      when: not (_cr_on_disk | bool)
+      vars:
+        _cr_on_disk: >-
+          {%- set ns = namespace(ok=false) -%}
+          {%- for p in [container_base] + (_data_disks | map(attribute='path') | list) -%}
+          {%-   if containerd_root == p or containerd_root.startswith(p.rstrip('/') ~ '/') -%}{%- set ns.ok = true -%}{%- endif -%}
+          {%- endfor -%}
+          {{ ns.ok }}
+
+    # 10. 最终确认
+    - name: Final confirmation of mounts
+      command: "findmnt {{ item }}"
+      register: final_check
+      changed_when: false
+      failed_when: false
+      loop: "{{ [container_base, kubelet_bind[0].dest] + (_data_disks | map(attribute='path') | list) }}"
+
+    - name: 📢 [终端显示] 最终挂载确认
+      debug:
+        msg: "{{ final_check.results | map(attribute='stdout') | list }}"
+
+    - name: 📢 [终端显示] containerd 数据目录提示
+      debug:
+        msg: "containerd 数据目录 = {{ containerd_root }} (已在数据盘上创建;确保 containerd_setup 的 config.toml root 指向它)"

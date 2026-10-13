@@ -269,7 +269,7 @@ cri_dockerd_services:
 
 # container_base 是 containerd/kubelet 数据盘主挂载点, 【必填, 别删】——
 #   它是本变量的【唯一定义处】(defaults.yaml 里没有兜底), 三个挂盘 playbook
-#   (mount-nvme / mount-nvme-lvm / mount-nvme-lvm-containerfs)与 containerd-setup 都读这里,
+#   (mount-disk / mount-disk-lvm / mount-disk-lvm-containerfs)与 containerd-setup 都读这里,
 #   改路径改这一处即可, 全体跟着走; containerd_root 会自动派生为 <container_base>/containerd。
 #   删掉或注释会让上述 playbook 直接报 container_base undefined。
 #   ⚠ 别在 playbook 的 play vars: 里重复定义它(play vars 优先级高于 group_vars, 会让这里的
@@ -286,7 +286,7 @@ pause: "{{ sandbox_image }}"
 #config 格式版本自动推导: 1.x -> 2, 2.x+ -> 3 (勿手改)
 containerd_config_version: "{{ 3 if (containerd_version.split('.')[0] | int) >= 2 else 2 }}"
 # containerd 数据目录(等同 docker data-root)。默认放在 container_base 下; 与 container_base 解耦,
-# 可在 env.yaml 单独指到另一块数据盘(先用 mount-nvme 的 data_disks 挂好), kubelet 仍在 container_base。
+# 可在 env.yaml 单独指到另一块数据盘(先用 mount-disk 的 data_disks 挂好), kubelet 仍在 container_base。
 containerd_root: "{{ container_base }}/containerd"
 
 # ================= Harbor 信息 =================

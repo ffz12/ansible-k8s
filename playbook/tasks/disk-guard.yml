@@ -1,4 +1,4 @@
-# 格式化前的占用检查(mount-nvme.yaml 对每块盘 include, 传 _guard_dev)。
+# 格式化前的占用检查(mount-disk.yaml 对每块盘 include, 传 _guard_dev)。
 # blkid 只能看出整盘有没有文件系统; 只有分区表、或在 RAID/LVM 里的盘 TYPE 为空, 会被当成空白盘。
 # 这里补上: 有分区、有分区表、被挂载、被 RAID/LVM/dm 占用(holders), 任一成立就停下。
 # 目标挂载点已挂载(重跑)时不调用本检查, 那种情况本来就不会格式化。

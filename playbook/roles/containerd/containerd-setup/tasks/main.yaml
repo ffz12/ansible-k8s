@@ -13,7 +13,7 @@
   debug:
     msg: >-
       containerd_root={{ containerd_root | default('/var/lib/containerd') }} 所在挂载点是 /, 镜像会写到系统盘。
-      数据盘还没挂就先跑 mount-nvme*, 或检查 env.yaml 的 containerd_root / container_base。
+      数据盘还没挂就先跑 mount-disk*, 或检查 env.yaml 的 containerd_root / container_base。
   when: (_cr_mnt.stdout | default('') | trim) == '/'
 
 # 1. 确保基础目录存在
