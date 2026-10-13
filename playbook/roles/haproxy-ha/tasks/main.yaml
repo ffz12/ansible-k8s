@@ -30,7 +30,7 @@
 - name: 校验 nopreempt 与节点角色的组合
   assert:
     that:
-      - (lb_vrrp_preempt_mode | default('delay')) != 'nopreempt'
+      - (lb_vrrp_preempt_mode | default('nopreempt')) != 'nopreempt'
         or ('k8s_master' in group_names or 'k8s_node' in group_names)
     fail_msg: >-
       本机 {{ inventory_hostname }} 不在 [k8s_master] / [k8s_node] 里(独立 LB 节点),
@@ -43,7 +43,7 @@
     success_msg: >-
       nopreempt 组合检查通过({{ inventory_hostname }} 在
       {{ 'k8s_master' if 'k8s_master' in group_names else 'k8s_node' }} 里, 有 kubelet.conf 信号)
-  when: (lb_vrrp_preempt_mode | default('delay')) == 'nopreempt'
+  when: (lb_vrrp_preempt_mode | default('nopreempt')) == 'nopreempt'
 
 # 入口端口: haproxy 模式探 haproxy 前端(apiserver_lb_port), keepalived-only 探 apiserver 自己。
 # ⚠ 必须在这里 set_fact 而【不能】在模板里 {% set %} —— keepalived.conf.j2 与 check_entry.sh

@@ -29,7 +29,7 @@ vrrp_script chk_entry {
 
 vrrp_instance VI_1 {
     # nopreempt / preempt_delay 只在 BACKUP 下生效, 这两种模式全部渲染成 BACKUP、靠 priority 选主
-    state {{ 'MASTER' if (lb_vrrp_preempt_mode | default('delay')) == 'immediate' else 'BACKUP' }}
+    state {{ 'MASTER' if (lb_vrrp_preempt_mode | default('nopreempt')) == 'immediate' else 'BACKUP' }}
     interface {{ LB_IF_TMP.stdout }}  # 实际网卡名(自动探测)
 
     # 由 VIP 派生 router_id (1-254)，避免同网段多套 LB 冲突
@@ -39,7 +39,7 @@ vrrp_instance VI_1 {
     priority {{ 100 - (groups['k8slb'].index(inventory_hostname) * 10) }}
 
     advert_int 1    # VRRP 心跳间隔，默认 1 秒
-{% set _preempt = lb_vrrp_preempt_mode | default('delay') %}
+{% set _preempt = lb_vrrp_preempt_mode | default('nopreempt') %}
 {% if _preempt == 'nopreempt' %}
     nopreempt       # 原主恢复后不抢回 VIP
 {% elif _preempt == 'delay' %}

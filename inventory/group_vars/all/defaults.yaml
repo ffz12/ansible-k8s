@@ -748,9 +748,10 @@ lb_vrrp_unicast: true
 #   ⚠ 但这条代价在【LB 与 master 共机】时是伪的: 3 master 挂 2 台 etcd 就没 quorum、
 #     apiserver 也全死了, VIP 在谁手上都没意义。只有独立 LB 节点(LB 故障 ≠ apiserver 故障)
 #     才需要权衡它。共机站点选 nopreempt 基本没有实质缺点。
-#   要不回切的站点在 env.yaml 设 lb_vrrp_preempt_mode: nopreempt。
-lb_vrrp_preempt_mode: delay
-# delay 模式下等待多少秒再抢回。太短起不到防抖作用, 太长则故障恢复后 VIP 归位慢。
+#   2026-10 起默认 nopreempt(本项目 LB 都与 master 共机)。独立 LB 节点的站点在 env.yaml
+#   设 lb_vrrp_preempt_mode: delay —— 否则 haproxy-ha 的预检会直接拦下, 不会静默装错。
+lb_vrrp_preempt_mode: nopreempt
+# delay 模式下等待多少秒再抢回(nopreempt 时不用)。太短起不到防抖作用, 太长则故障恢复后 VIP 归位慢。
 # keepalived 允许 0-1000; 5-30 秒是常见区间。
 lb_vrrp_preempt_delay: 10
 
