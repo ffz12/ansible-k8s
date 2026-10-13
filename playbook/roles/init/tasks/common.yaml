@@ -19,8 +19,7 @@
   changed_when: false
   tags: [sysctl]
 
-# 删掉原来单独的 state=touch 任务(每次都报 changed,不幂等);
-# 改由 blockinfile 的 create=yes 在文件不存在时自动创建。
+# create=yes: 文件不存在时自动创建(不单独 touch, 否则每次都报 changed)。
 - name: 永久加载br_netfilter
   blockinfile:
     path: /etc/modules-load.d/br_netfilter.conf
@@ -34,13 +33,9 @@
     backup: yes
     marker: "# Ansible inventory  {mark}"
   tags: [sysctl]
-# ipvs 模式(kube_proxy_mode=ipvs)需要这些内核模块。仓库原先只装了 ipvsadm【工具包】,
-# 从没加载 ip_vs 内核模块 —— 缺模块时 kube-proxy 会【静默回退到 iptables】, 看着像在跑
-# ipvs 其实不是(kubectl -n kube-system logs kube-proxy-xxx 里会有 "can't use ipvs proxier"),
-# 且 nodelocaldns / conntrack 相关调优的前提也不成立。
-# nf_conntrack: 新内核叫 nf_conntrack, 4.18 之前叫 nf_conntrack_ipv4, 两个都试一下。
-# 本机是 iptables 模式时加载这些也无害(只是多几个模块常驻)。
-# nftables 模式不需要 ip_vs*, 故只加载 nf_conntrack(conntrack 三种模式都要)。
+# ipvs 模式需要 ip_vs 内核模块, 缺了 kube-proxy 会静默回退到 iptables
+#   (日志里有 "can't use ipvs proxier")。nftables 模式不需要 ip_vs*, 只加载 nf_conntrack。
+# nf_conntrack 在 4.18 之前叫 nf_conntrack_ipv4, 两个都试。
 - name: modprobe 内核模块(nf_conntrack always; ip_vs* 仅非 nftables 模式)
   shell: |
     for m in {{ 'nf_conntrack nf_conntrack_ipv4' if (kube_proxy_mode | default('iptables')) == 'nftables'
@@ -96,25 +91,8 @@
   copy: src=sysctl.conf dest=/etc/sysctl.conf owner=root group=root mode=0644
   tags: [sysctl]
 
-# ============================================================================
-#  为什么不再用 99-node-tuning.conf drop-in(2026-09-09 合并进 files/sysctl.conf)
-#
-#  原设计: 把交付标准 1.6 的 13 项 sysctl 放独立 drop-in, 靠 99- 前缀"后加载覆盖主配置"。
-#  实际相反 —— systemd 把 /etc/sysctl.conf 当作 99-sysctl.conf 处理, 而字母序是:
-#      99-node-tuning.conf  <  99-swap.conf  <  99-sysctl.conf
-#  drop-in 排在【前面】, 所以 /etc/sysctl.conf 最后加载、一律覆盖 drop-in 的同名项。
-#
-#  现网实测(35 节点全部一致)佐证: 两个文件都定义的 6 项全部按 sysctl.conf 生效 ——
-#      netdev_max_backlog 16384->65535   rmem_max/wmem_max 16M->32M
-#      fs.file-max 12000500->1000000     inotify max_user_{watches,instances} 1M->512K
-#  而只在 drop-in 里定义的 5 项(user.max_user_namespaces / ip_local_port_range /
-#  keys.maxkeys / keys.maxbytes / inotify.max_queued_events)才真正生效。
-#  连带后果: node_tuning_keep_higher_net_buffers 这个开关一直是【空转】的 ——
-#  设 true 或 false 结果都是 sysctl.conf 的大值。
-#
-#  与其靠文件名排序打架, 不如【只留一处定义】: 13 项全部合并进 files/sysctl.conf,
-#  删掉 drop-in。下面那个 state: absent 是无条件的, 用来清掉存量机器上的旧文件。
-# ============================================================================
+# sysctl 只在 files/sysctl.conf 一处定义。旧的 99-node-tuning.conf 会被 sysctl.conf 覆盖
+#   (systemd 把 /etc/sysctl.conf 当 99-sysctl.conf 最后加载), 写了也不生效, 这里无条件删掉。
 - name: 移除已废弃的 99-node-tuning.conf drop-in(已合并进 /etc/sysctl.conf)
   file:
     path: /etc/sysctl.d/99-node-tuning.conf
@@ -156,36 +134,14 @@
   tags: [limits]
 
 # ============================================================================
-#  systemd 全局 TasksMax —— Pod pid 上限的最后一环
-#
-#  为什么要在这儿改: 本仓库 containerd 配的是 SystemdCgroup = true, Pod 的 cgroup 由
-#  systemd 管。kubeadm-config 的 podPidsLimit 填 -1 时 kubelet 【不写】pod cgroup 的
-#  pids.max, 于是继承 kubepods.slice -> 落到 /etc/systemd/system.conf 的 DefaultTasksMax
-#  (Ubuntu 默认注释掉当文档用: #DefaultTasksMax=15%, 即 kernel.pid_max 的 15%)。
-#  2026-09-14 现网在容器内实测 pids.max=3000 就是这么来的 —— kubelet 已经是 -1 了,
-#  但 Pod 仍被 systemd 的默认值卡住。此前只能手工:
-#      sed -i 's/^DefaultTasksMax=.*/DefaultTasksMax=infinity/' /etc/systemd/system.conf
-#      && systemctl daemon-reexec
-#  ⚠ 那条手工命令在 Ubuntu 上其实是【静默空转】的: '^DefaultTasksMax=' 匹配不到被注释
-#    的那行, 而 && 后面的 daemon-reexec 照样成功、shell 模块又总报 changed, 看着像做成了。
-#    cpu200 实测 grep 出来仍是 "#DefaultTasksMax=15%" —— 从未被改过。
-#    用 lineinfile + '^[#\s]*DefaultTasksMax=' 才能同时命中注释行与已生效行, 且幂等。
-#
-#  ⚠ 时机很关键: DefaultTasksMax 只在 systemd 【创建】单元/slice 那一刻被读取, 不会
-#    追溯修改已存在的 slice。所以:
-#      · 在 init 阶段(k8s 还没装, kubepods.slice 尚不存在)改好 -> 之后 slice 首次创建
-#        就直接继承 infinity, 【不需要 daemon-reexec, 也不用重启任何东西】。这是本任务
-#        放在 init role 里的理由。
-#      · 在【已跑起来】的节点上改 -> 必须 daemon-reexec 让 PID 1 重读, 且已存在的
-#        kubepods.slice 与在跑的 Pod 拿不到新值, 只有新建的 Pod 才会用上; 存量 Pod
-#        要生效只能重启节点。故本任务【不自动 daemon-reexec】—— 那是重新执行 PID 1,
-#        影响整台机器所有单元, 不该在一个"顺手改配置"的任务里悄悄做。改到了就打印提示,
-#        由人决定时机。
-#
-#  ⚠ infinity 等于放弃这层保护, fork 炸弹可打满整机 pid(kernel.pid_max=1000001)。
-#    要一个确定的上限, 用 kubelet_pod_pids_limit(默认 50000, 由 kubelet 直接写进 pod
-#    cgroup, 与本项无关)比依赖 podPidsLimit=-1 + 本项更可控。
-#    不想放开本项的站点: env.yaml 里 init_set_default_tasks_max: false。
+#  systemd 全局 TasksMax(Pod pid 上限的最后一环)
+#  podPidsLimit=-1 时 kubelet 不写 pod 的 pids.max, 会落到 systemd 的 DefaultTasksMax
+#  (Ubuntu 默认是 pid_max 的 15%), Pod 进程数被卡住。这里设成 infinity。
+#  ⚠ 只对之后新建的 slice 生效。init 阶段 k8s 还没装, 改完直接生效; 已跑起来的节点要
+#    daemon-reexec 且只有新 Pod 用得上, 本任务不自动 reexec, 改到了会提示。
+#  ⚠ infinity 等于放弃这层保护; 要确定的上限用 kubelet_pod_pids_limit。
+#    不想放开: env.yaml 设 init_set_default_tasks_max: false。
+#  用 lineinfile 匹配 '^[#\s]*DefaultTasksMax=', 注释行也能命中(sed 只匹配未注释行会空转)。
 # ============================================================================
 - name: 放开 systemd 全局 TasksMax(Pod pid 上限的最后一环; init_set_default_tasks_max 可关)
   when: init_set_default_tasks_max | default(true) | bool
@@ -219,10 +175,8 @@
   changed_when: false
   tags: [swap]
 
-# ⚠ 原来用 lineinfile regexp: 'swap' state: absent 直接【删行】, 那个裸 'swap'
-#   会连 /data/swaparea、/var/log/swapstats 这类路径里带 swap 字样的正常挂载行
-#   一起删掉(把数据盘挂载点删了)。改成锚定「第 3 列 fstype == swap」且只【注释】
-#   不删除, 便于回滚。
+# 只匹配第 3 列 fstype == swap 的行, 且只注释不删除(便于回滚)。
+#   不能按 'swap' 字样匹配, 否则路径里带 swap 的数据盘挂载行也会被误删。
 - name: 注释掉 fstab 中真正的 swap 条目(锚定第 3 列, 保留原行)
   replace:
     path: /etc/fstab
@@ -315,7 +269,7 @@
 
 - name: 统一启动并设置 chronyd 服务开机自启
   service:
-    # 修复: Debian/Ubuntu 上服务名是 chrony,不是 chronyd;原来固定 chronyd 在 Debian 上被 ignore_errors 掩盖,导致时间同步服务实际没启动
+    # Debian/Ubuntu 上服务名是 chrony, 其它发行版是 chronyd
     name: "{{ 'chrony' if ansible_os_family == 'Debian' else 'chronyd' }}"
     state: restarted
     enabled: yes
@@ -323,27 +277,10 @@
   tags: [chrony]
 
 # ============================================================================
-#  以下三步是【验证】, 2026-09-09 补。
-#
-#  为什么必须验证: 上面写配置 + 重启服务两步都带 ignore_errors, 而且做完就结束 ——
-#  从来不检查 chrony 到底有没有【锁上时间源】。于是一台机器可以带着
-#  "chrony 进程正在运行、但一个源都没选中" 的状态走完整个 init, 而 init 全程报成功。
-#
-#  这不是假设: 2026-09-09 在 gn-10-14-64-1 / cn-10-14-73-{1,2,3,20} 上实测,
-#  五台全是 Reference ID 00000000 / Stratum 0 / Ref time 1970(= 一次都没同步过),
-#  其中一台的钟快了 8 小时 05 分, 而交付标准要求集群内最大时间差 <15 秒。
-#  时钟错 8 小时会连带坑 etcd lease、证书有效期(TLS 报 certificate is not yet valid)、
-#  kubelet、日志时序, 且症状通常和"时间"看不出关系, 排查代价极高。
-#
-#  ⚠ 判据必须是 Reference ID / NTPSynchronized, 【不能只看 date】——
-#    钟面值恰好正确 ≠ 已同步。没有源在维持它, 随时会漂; 本次就有一台
-#    "看着正常"的机器在两次采样之间倒退了 8 小时。
-#  ⚠ 同理, 光 grep 配置文件里的 server 行也不够: 那只证明【文件】写对了,
-#    证明不了【进程】在用它(进程可能还挂着重启前的旧配置)。
-#
-#  本角色沿用 ignore_errors 的宽松风格, 所以这里只【响亮告警】不中断
-#  (os-init 侧同名检查是硬失败, 由 osinit_fail_on_unsynced 控制)。
-#  要在 init 里也硬失败: -e init_fail_on_unsynced=true
+#  验证 chrony 真的锁上了时间源。上面两步带 ignore_errors, 不验证的话,
+#  chrony 在跑但一个源都没选中也会报成功, 时钟可能差几小时(etcd、证书、日志都会出问题)。
+#  ⚠ 判据是 Reference ID / NTPSynchronized, 不能只看 date 或配置文件里的 server 行。
+#  这里只告警不中断; 要硬失败: -e init_fail_on_unsynced=true
 # ============================================================================
 
 - name: 触发一次强制对时并等待 chrony 选定时间源(最多 {{ init_chrony_sync_wait | default(60) }} 秒)
