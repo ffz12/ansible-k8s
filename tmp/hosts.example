@@ -1,129 +1,65 @@
-# inventory 主机清单模板 —— 复制为 inventory/hosts 按实际填写(去行首 #)
-# 约定: 机器只写一次(ansible_host 等), 别的组只列主机名; 同名=同一台。
-# ============================================================================
+# inventory 主机清单模板: 复制为 inventory/hosts 后按实际填写(去掉行首 #)
+# 机器只在 [cluster] 写一次(带 ansible_host 等变量), 其它组只列主机名。
+# 各组用途、机器行可用变量、注意事项见 docs/主机清单说明.md
 
-# 全部机器写在这。⚠ policy=inventory 时, 这里写的名字就是机器最终主机名
 [cluster]
-#cpu-001 ansible_host=192.168.1.111 accelerator_type=cpu
-#gpu-001 ansible_host=192.168.1.121 accelerator_type=nvidia
-# (跑 os-init 且按 GPU-SUx-xxx 命名时, GPU 机还要加 osinit_su=<SU号>, 见 docs/主机初始化-os-init.md)
-# 多网卡节点: kubelet 默认按「默认路由网卡」自选 Node IP, 可能选错(如落到 10.101.16.x)。
-# 默认已把 kubelet --node-ip 钉成 ansible_host; 若 k8s InternalIP 要用与 SSH 不同的地址,
-# 单独指定: #cpu06 ansible_host=172.18.1.66 kube_node_ip=172.18.1.66
-# accelerator_type=nvidia/dcu/npu/cpu: 决定装哪种运行时, 同时决定 calico 双池分池
-#   (nvidia/dcu/npu -> hardware=gpu 标签; cpu 或不写 -> 普通 runc, hardware=cpu)。GPU 机器漏写会被当 CPU 节点。
-# calico_pool=gpu|cpu: 只覆盖分池, 不影响运行时。如 #cpu-009 ... calico_pool=gpu
-# DNS 按机器覆盖(一次 init 跑完, 不用分两遍): ... init_config_dns=true dns=223.5.5.5,114.114.114.114
-#   没外网的 GPU 机写内网 DNS: ... init_config_dns=true dns=10.14.73.1
-# accelerator_type 同时决定 k8s 业务标签: nvidia -> nvidia=true, cpu -> cpu_node=true, 不写 -> 不打;
-#   额外标签: #gpu-001 ... node_labels="{'gpu.model': 'b300'}"
-# ⚠ hardware 标签只在节点【首次加入】时打; 存量节点事后开双池要手工补:
-#   kubectl label node <名> hardware=gpu --overwrite
+#cpu-001 ansible_host=192.168.1.111 kube_node_ip=192.168.1.111 accelerator_type=cpu
+#gpu-001 ansible_host=192.168.1.121 kube_node_ip=192.168.1.121 accelerator_type=nvidia
 
 [init]
-# 要跑系统初始化(init.yaml)的节点(只列主机名; 同名=同一台, 机器本体仍写在 [cluster])。
-# 加新节点时把新机名填这, init.yaml 只初始化它, 不动已交付的老机器。
-#cpu-005
+#cpu-001
 
-# ---- 挂盘方式分组(只列主机名; 挂盘 playbook 靠 --limit 认这两个组) ----
-# 按【盘的形态】分, 不按有没有 GPU 卡 —— 两者没必然关系(CPU 机也可能 4 盘、
-# GPU 机也可能只 1 块盘), 用 accelerator_type 推断挂盘方式换个机型就错。
-#   ansible-playbook playbook/mount-nvme-lvm-containerfs.yaml --limit nvme_lvm
-#   ansible-playbook playbook/mount-nvme.yaml --limit nvme_single -e device_path=/dev/nvme0n1
-# 组留空则那条命令匹配不到主机, 不会误跑。详见 docs/部署说明.md 五。
+# ---- 挂盘 ----
 [nvme_lvm]
-# 多盘组 LVM 的机器(4 块同容量走 containerfs; 2 或 4 块走 mount-nvme-lvm)
-#gn-10-14-64-1
+#gpu-001
 
 [nvme_single]
-# 单盘机器(盘符不一致时在 [cluster] 的机器行上写 device_path=/dev/nvmeXn1)
-# 多块数据盘: data_disks="/dev/nvme1n1:/data,/dev/nvme3n1:/data2"(盘符:挂载点, 逗号分隔, 挂载点省略默认 /data)
-#cn-10-14-72-1 data_disks="/dev/nvme1n1:/data,/dev/nvme3n1:/data2"
+#cpu-001 device_path=/dev/nvme0n1 data_disks="/dev/nvme1n1:/data"
 
-
+# ---- 运行时 / Harbor ----
 [containerd]
-# 用 containerd 的节点(只列主机名); GPU/加速器节点的 accelerator_type 写在上面 [cluster] 的机器行上
 #cpu-001
 
 [docker]
-# 装 docker 的节点(本项目里 docker 仅给 Harbor 用)
-# 按行内 accelerator_type 区分:
-#   accelerator_type=nvidia -> docker + nvidia-container-toolkit(daemon 默认 runtime=nvidia)
-#   不设                     -> 普通 docker
-# ⚠️ docker 侧【只支持 nvidia】; dcu/npu(华为昇腾)只在 containerd 生效,别往这组写 dcu/npu。
-#cpu-008
-#a800-node30 accelerator_type=nvidia
+#cpu-001
 
 [harbor]
-# 1 台 = 单节点; 2 台 = 双主(env.yaml 配 harbor_vip), 两台不能与 [k8slb] 同机
-# Harbor 节点(在线从公共 mirror 拉镜像时可不部署)，走的ip配置部署写ip
-#172.171.1.217
-
+#cpu-001
 
 [cri_docker_nodes]
-# cri-dockerd 特殊场景需要
 
+# ---- Kubernetes ----
 [k8slb]
-# haproxy+keepalived LB(多 master 才需要; 常与 master 共机)
-# 只列主机名; VIP 网卡自动按 ansible_host 探测, 无需 host_ip
 #cpu-001
 
 [k8s_master]
-# 控制平面(建议奇数台); 多 master 需配 lbvip + 跑 LB(见 [k8slb])
 #cpu-001
 
 [k8s_node]
-# worker 节点
-#cpu-005
+#gpu-001
 
 [etcd]
-# 外置 etcd(建议 3/5 台奇数; 可与 master 共机)
 #cpu-001
 
-# ---- 扩缩容临时组(平时留空; 加/删时才填,只列主机名) ----
-# 注: 加 master/worker 直接进 [k8s_master]/[k8s_node] + --limit 即可, 无需 master_to_add
+# ---- 扩缩容临时组(平时留空) ----
 [node_to_delete]
 [etcd_to_add]
 [etcd_to_delete]
-# ⚠ [master_to_delete] 只作用于 LB 层(haproxy/keepalived), 与删 k8s master 无关 —— 名字是历史遗留。
-#   用途: lb-haproxy-scale-remove.yaml 用它定位"要卸载 LB 的机器"(停服务/删配置/卸软件包)。
-#   删 k8s 节点走 [node_to_delete] + k8s-del-node.yaml, 两条线互不相干
-#   (playbook/k8s-*.yaml 里没有任何一处引用本组)。
-#   ⚠ 本组未声明时 groups['master_to_delete'] 走 default([]) -> 卸载 play 静默 skip,
-#     playbook 仍退出 0(看着成功, 其实被删节点上服务还在跑)。缩容 LB 前先确认这里有声明。
 [master_to_delete]
 
-# ---- GPU:有算力节点时用。[gpu]=打"有GPU"标签(角色自动判 gpu); [gpu_driver]=装驱动/升内核 ----
-# ⚠ GPU 节点只跑 os-init, 绝不进 [gpu_driver]。机器本体仍写在上面 [cluster]。
+# ---- 可选 ----
 [gpu]
 #gpu-001
 #[gpu_driver]
-#gpu-001
 
-# ---- 内网 NTP 服务器(可选; 不需要就【整组留空】, 全集群沿用原来的 chrony_ip 客户端行为)----
-# 填了才生效: 该机 chrony 变成对下服务的 NTP server, 其余节点自动改指向它(不用再改 chrony_ip)。
-# 只列主机名(机器本体仍写在上面 [cluster])。填 2 台以上为主备。
-# 客户端放行默认 all(defaults.yaml 的 chrony_allow_networks), 一般不用配。
 [chronyserver]
 #cpu-001
 
-# ---- Ceph 存储网(可选; 只列主机名, 机器本体仍写在上面 [cluster]) ----
-# 存储网变量写在 [cluster] 的机器行上:
-#   #node027 ansible_host=172.18.8.27 storage_ip=172.18.104.11 storage_iface=ens46np0
-#   storage_ip   : host-ceph-set.yaml 写 /etc/hosts、ceph-storage-net.yaml 配存储网 IP 都读它
-#   storage_iface: 只有 ceph-storage-net.yaml 用(存储网网卡名, 各机型可能不同)
-# ceph-storage-net.yaml 跑的是 [cluster], 不是本组; 要限定范围请用 --limit ceph。
 [ceph]
-#node027
-
-# os-init / os-check 直接跑 [cluster] 组(= 全部机器), 不再用单独的别名组。
 
 [cluster:vars]
-# 主机名以清单里写的名字为准; 别用 ip(会把 cpu-001 改成 CPU-111)。其他: keep / explicit
 osinit_hostname_policy=inventory
 
 [all:vars]
-# 集群参数(is_offline / lbvip 等)统一在 group_vars/all/env.yaml 配。
-# 连接身份(root 直连 / 普通用户+sudo)由 group_vars/all/connection.yaml 自动探测。
 ansible_python_interpreter=/usr/bin/python3
 ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
