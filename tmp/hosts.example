@@ -23,10 +23,11 @@
 
 # ---- 运行时 / Harbor ----
 [containerd]
+# k8s 节点都放这里; 支持 nvidia / dcu / npu
 #cpu-001
 
 [docker]
-# 只给 Harbor 用; docker 侧只支持 nvidia
+# 只给 Harbor 用; 只支持 nvidia, dcu/npu 机别放这里
 #cpu-001
 
 [harbor]
