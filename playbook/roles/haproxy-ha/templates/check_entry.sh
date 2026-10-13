@@ -9,7 +9,7 @@
 set -u
 PORT="{{ _lb_entry_port }}"
 
-{% if (lb_vrrp_preempt_mode | default('delay')) == 'nopreempt' and ('k8s_master' in group_names or 'k8s_node' in group_names) %}
+{% if (lb_vrrp_preempt_mode | default('nopreempt')) == 'nopreempt' and ('k8s_master' in group_names or 'k8s_node' in group_names) %}
 # 冷启动兜底: nopreempt 下检查失败会进 FAULT, 建集群时 apiserver 还不存在, 不放行就没人持 VIP、
 # 集群建不出来。kubelet.conf 不存在 = 还没 join 过 = 建集群阶段, 直接放行。
 # 只对 master/worker 渲染: 独立 LB 节点永远没有 kubelet.conf, 会永久放行(tasks 里已拦下这种组合)。
