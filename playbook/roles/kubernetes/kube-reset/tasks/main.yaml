@@ -13,13 +13,31 @@
     enabled: no
   failed_when: false
 
+# /var/lib/kubelet 可能是 mount-disk 从数据盘 bind 过来的挂载点, 直接删目录会报 Device or resource busy。
+# 先卸掉 Pod 卷留下的子挂载, 是挂载点就只清空内容(保留挂载和 fstab), 不是挂载点才整个删掉。
+- name: "[Reset] 清理 /var/lib/kubelet(挂载点只清空内容)"
+  shell: |
+    d=/var/lib/kubelet
+    [ -d "$d" ] || exit 0
+    findmnt -rn -o TARGET | grep "^$d/" | sort -r | xargs -r -n1 umount -l
+    if mountpoint -q "$d"; then
+      find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf --one-file-system {} +
+      echo "emptied (mountpoint kept)"
+    else
+      rm -rf "$d"
+      echo "removed"
+    fi
+  args:
+    executable: /bin/bash
+  register: _reset_kubelet_dir
+  changed_when: _reset_kubelet_dir.stdout | length > 0
+
 - name: "[Reset] 清理残留目录/配置"
   file:
     path: "{{ item }}"
     state: absent
   loop:
     - /etc/kubernetes
-    - /var/lib/kubelet
     - /etc/cni
     - /opt/cni
     - /var/lib/cni
