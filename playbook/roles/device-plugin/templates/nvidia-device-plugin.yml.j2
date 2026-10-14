@@ -41,31 +41,20 @@ spec:
           - name: FAIL_ON_INIT_ERROR
             value: "false"
         securityContext:
-{% if nvidia_device_plugin_privileged | bool %}
-          # 现网取值。装了 nvidia-container-toolkit 的环境通常不需要特权, 确认不需要时
-          # 把 nvidia_device_plugin_privileged 置 false, 会改回下面注释里那套最小权限。
+          # 与现网一致。上游原版是 allowPrivilegeEscalation: false + drop ALL,
+          # 现网改成特权是当时驱动/toolkit 有问题时的绕法, 这里保持现状不动。
           privileged: true
-{% else %}
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-{% endif %}
         volumeMounts:
           - name: device-plugin
             mountPath: /var/lib/kubelet/device-plugins
-{% if nvidia_device_plugin_mount_libnvidia_ml | bool %}
-          # 容器内找不到 libnvidia-ml 时才需要(现网取值); 不需要时置
-          # nvidia_device_plugin_mount_libnvidia_ml: false
+          # 与现网一致: 容器内找不到 libnvidia-ml 时要从宿主机挂进来
           - name: lib-nvidia
             mountPath: /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1
             readOnly: true
-{% endif %}
       volumes:
         - name: device-plugin
           hostPath:
             path: /var/lib/kubelet/device-plugins
-{% if nvidia_device_plugin_mount_libnvidia_ml | bool %}
         - name: lib-nvidia
           hostPath:
-            path: {{ nvidia_device_plugin_libnvidia_ml_path }}
-{% endif %}
+            path: /lib/x86_64-linux-gnu/libnvidia-ml.so.1
