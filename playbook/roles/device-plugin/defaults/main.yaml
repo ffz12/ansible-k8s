@@ -4,8 +4,9 @@
 # 手动指定: -e device_plugins=nvidia,rdma
 #device_plugins: nvidia,rdma
 
-# rdma 不在 accelerator_type 里(网卡能力, 有 GPU 不代表有 RDMA 网卡), 要用的站点显式开。
-device_plugin_rdma: false
+# rdma 不在 accelerator_type 里(网卡能力), 所以单独一个开关。默认 true —— 本项目的 GPU 机都带
+# Mellanox 网卡。没有 RDMA 网卡的站点在 env.yaml 置 false, 否则 DaemonSet 起来但资源上报为 0。
+device_plugin_rdma: true
 
 # ---- 公共 ----
 device_plugin_namespace: kube-system

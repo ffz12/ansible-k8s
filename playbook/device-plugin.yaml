@@ -1,7 +1,8 @@
 # 部署 device plugin(向 kubelet 上报扩展资源, 让 Pod 能申请 GPU / RDMA)。
 #
 # 装哪些: 不指定时按 inventory 的 accelerator_type 自动判断(有 nvidia 节点就装 nvidia 插件);
-#         rdma 是网卡能力, 不在 accelerator_type 里, 要在 env.yaml 设 device_plugin_rdma: true。
+#         rdma 是网卡能力, 不在 accelerator_type 里, 由 device_plugin_rdma 控制(默认 true;
+#         没有 RDMA 网卡的站点在 env.yaml 置 false)。
 #   ansible-playbook playbook/device-plugin.yaml                        # 自动判断
 #   ansible-playbook playbook/device-plugin.yaml -e device_plugins=nvidia,rdma   # 手动指定
 #
