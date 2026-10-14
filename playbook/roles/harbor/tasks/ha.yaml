@@ -58,18 +58,7 @@
   shell: cd {{ harbor_copy_path }}/harbor && docker-compose restart core registry
   when: _harbor_token_synced is changed
 
-# ---------------- 清理旧版本装的 Harbor keepalived(只认 VI_HARBOR, 不碰 k8s LB 的) ----------------
-- name: "[Harbor HA] 检查是否装过 Harbor 的 keepalived"
-  shell: grep -qs 'VI_HARBOR' /etc/keepalived/keepalived.conf && echo yes || echo no
-  register: _harbor_old_ka
-  changed_when: false
-
-- name: "[Harbor HA] 停掉并删除旧的 Harbor keepalived(VIP 随之释放)"
-  shell: |
-    systemctl disable --now keepalived
-    rm -f /etc/keepalived/keepalived.conf /etc/keepalived/check_harbor.sh
-  when: _harbor_old_ka.stdout == 'yes'
-
+# ---------------- 等 Harbor 就绪 ----------------
 - name: "[Harbor HA] 等本机 Harbor 就绪"
   uri:
     url: https://127.0.0.1/api/v2.0/ping
