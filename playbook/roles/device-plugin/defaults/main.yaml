@@ -21,11 +21,6 @@ nvidia_device_plugin_version: "v0.17.1"
 nvidia_device_plugin_tar: k8s-device-plugin.tar.gz
 nvidia_device_plugin_image: "{{ registry }}/k8s-device-plugin:{{ nvidia_device_plugin_version }}"
 nvidia_device_plugin_node_label: nvidia          # k8s-node-labels.yaml 按 accelerator_type 打的标签
-# 下面两项与现网保持一致。正常装了 nvidia-container-toolkit 不需要, 是当时驱动/toolkit
-# 有问题时的绕法; 新环境确认不需要可置 false。
-nvidia_device_plugin_privileged: true
-nvidia_device_plugin_mount_libnvidia_ml: true
-nvidia_device_plugin_libnvidia_ml_path: /lib/x86_64-linux-gnu/libnvidia-ml.so.1
 
 # ---- rdma ----
 rdma_device_plugin_version: "v1.5.3"
