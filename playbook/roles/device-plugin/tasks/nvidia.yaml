@@ -1,17 +1,19 @@
 ---
 # nvidia device plugin: 向 kubelet 上报 nvidia.com/gpu
 - name: "[nvidia] 推镜像到 Harbor(仅离线)"
-  include_tasks: sync-image.yaml
+  include_tasks: "{{ playbook_dir }}/tasks/sync-offline-image.yml"
   vars:
-    _dp_name: nvidia
-    _dp_tar: "{{ nvidia_device_plugin_tar }}"
-    _dp_image: "{{ nvidia_device_plugin_image }}"
+    _img_name: nvidia
+    _img_src: "{{ device_plugin_src_dir }}"
+    _img_tar: "{{ nvidia_device_plugin_tar }}"
+    _img_dst: "{{ nvidia_device_plugin_image }}"
+    _img_tmp: "{{ device_plugin_dir }}"
   when: is_offline | default(false) | bool
 
 # 在线模式不跑 sync-image.yaml, _dp_archs 没被设置, 按 device_plugin_online_archs 兜底
 - name: "[nvidia] 确定渲染哪些架构"
   set_fact:
-    _dp_archs: "{{ _dp_archs | default(device_plugin_online_archs) }}"
+    _dp_archs: "{{ _img_archs | default(device_plugin_online_archs) }}"
 
 - name: "[nvidia] 渲染 manifest"
   template:

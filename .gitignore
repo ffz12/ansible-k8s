@@ -34,3 +34,7 @@ inventory/qdlt-secrets.yml
 # 换机器用 rsync 拷 offline/ 过去。只跟踪 .gitkeep 占位。
 offline/artifacts/device-plugin/images/*
 !offline/artifacts/device-plugin/images/.gitkeep
+
+# monitor 离线镜像 tar, 由 scripts/offline/download-monitor-offline.sh 生成, 同 device-plugin
+offline/artifacts/monitor/images/*
+!offline/artifacts/monitor/images/.gitkeep

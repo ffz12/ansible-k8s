@@ -21,7 +21,7 @@
 |---|---|
 | **[部署说明.md](docs/部署说明.md)** | **主部署手册**：inventory / 变量 / SSH 免密 / init / 挂盘 / containerd / docker / harbor / LB / etcd / k8s / CNI 切换 / 离线部署 / 常见问题排查 |
 | [主机清单说明.md](docs/主机清单说明.md) | inventory/hosts 各组用途、机器行变量（accelerator_type / dns / data_disks 等）、扩缩容临时组 |
-| [插件.md](docs/插件.md) | 集群插件：device plugin（nvidia / rdma GPU·RDMA 资源上报）、新增插件的约定 |
+| [插件.md](docs/插件.md) | 集群插件：device plugin（nvidia / rdma 资源上报）、monitor（dcgm-exporter GPU 指标）、新增插件的约定 |
 | [AI应用与调度.md](docs/AI应用与调度.md) | 集群装好后的上层：GPU device-plugin / Prometheus / network-operator(RDMA) / MPI Job(nccl) / 调度器 binpack / Volcano / Rayjob / nsight / 镜像同步脚本 |
 | [gpu-ib-install.md](docs/gpu-ib-install.md) | IB 网卡驱动 / GPU 驱动 / nvidia-container-toolkit / fabricmanager / peermem |
 | [containerd.md](docs/containerd.md) | containerd 手工安装、crictl、GPU 运行时、device-plugin、RuntimeClass 调度 |

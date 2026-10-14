@@ -1,0 +1,60 @@
+---
+- name: "[monitor] 确定要装的组件"
+  set_fact:
+    _mon_list: >-
+      {{ (monitors.split(',') | map('trim') | select | list) if monitors is defined
+         else monitor_default_list }}
+
+- name: "[monitor] 只支持已实现的组件"
+  assert:
+    that: _mon_list | difference(['dcgm-exporter']) | length == 0
+    fail_msg: >-
+      暂不支持 {{ _mon_list | difference(['dcgm-exporter']) | join(', ') }}。
+      已实现: dcgm-exporter。新增一种加 tasks/<名字>.yaml + templates/。
+  when: _mon_list | length > 0
+
+- name: "[monitor] 本次要装"
+  debug:
+    msg: "要装: {{ _mon_list | join(', ') }}"
+  when: _mon_list | length > 0
+
+# 抓取方式: auto 时看集群里有没有 ServiceMonitor CRD。
+# 判错的后果是静默的 —— Pod 正常跑、curl :9400/metrics 有数据, 但 Prometheus 里没有这些指标、
+# Grafana 图全空。所以这里把判定结果打出来。
+- name: "[monitor] 探测有没有 ServiceMonitor CRD"
+  command: kubectl get crd servicemonitors.monitoring.coreos.com
+  register: _mon_crd
+  changed_when: false
+  failed_when: false
+  when:
+    - _mon_list | length > 0
+    - monitor_scrape_mode == 'auto'
+
+- name: "[monitor] 确定抓取方式"
+  set_fact:
+    _mon_scrape: >-
+      {{ monitor_scrape_mode if monitor_scrape_mode != 'auto'
+         else ('servicemonitor' if (_mon_crd.rc | default(1)) == 0 else 'annotation') }}
+  when: _mon_list | length > 0
+
+- name: "[monitor] 抓取方式"
+  debug:
+    msg: >-
+      {{ _mon_scrape }}
+      {{ '(集群有 prometheus-operator, 生成 ServiceMonitor; 若 operator 的 serviceMonitorSelector
+          有标签要求, 在 env.yaml 配 monitor_servicemonitor_labels)'
+         if _mon_scrape == 'servicemonitor'
+         else '(没有 ServiceMonitor CRD, 走 Pod 注解 prometheus.io/scrape。⚠ 要求 Prometheus 的
+          scrape_configs 里开了 kubernetes_sd 的 pod 发现, 否则抓不到)' }}
+  when: _mon_list | length > 0
+
+- name: "[monitor] 创建 manifest 目录"
+  file:
+    path: "{{ monitor_manifest_dir }}"
+    state: directory
+    mode: "0755"
+  when: _mon_list | length > 0
+
+- name: "[monitor] 逐个部署"
+  include_tasks: "{{ item }}.yaml"
+  loop: "{{ _mon_list }}"

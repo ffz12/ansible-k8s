@@ -1,0 +1,109 @@
+# 由 roles/monitor 渲染, 手改会被覆盖(改变量: roles/monitor/defaults/main.yaml 或 env.yaml)
+# nodeSelector 用的 {{ dcgm_exporter_node_label }}=true 由 k8s-node-labels.yaml 按 accelerator_type 打。
+# dcgm 是 NVIDIA 专用, 所以用 nvidia=true 而不是通用的 gpu=true(dcu/npu 节点跑它没意义)。
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dcgm-exporter
+  namespace: {{ monitor_namespace }}
+  labels:
+    app: dcgm-exporter
+spec:
+  selector:
+    matchLabels:
+      app: dcgm-exporter
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: dcgm-exporter
+{% if _mon_scrape == 'annotation' %}
+      annotations:
+        # 裸 Prometheus 靠这几个注解被 kubernetes_sd 的 pod 发现选中
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ dcgm_exporter_port }}"
+        prometheus.io/path: "/metrics"
+{% endif %}
+    spec:
+      nodeSelector:
+        {{ dcgm_exporter_node_label }}: "true"
+      tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      priorityClassName: "system-node-critical"
+      containers:
+      - image: {{ dcgm_exporter_image }}
+        imagePullPolicy: IfNotPresent
+        name: dcgm-exporter
+        env:
+          # 让指标带上 Pod/命名空间标签(从 kubelet 的 pod-resources socket 读 GPU 与 Pod 的对应关系),
+          # dashboard 里按 Pod 看 GPU 用量靠的就是这个
+          - name: DCGM_EXPORTER_KUBERNETES
+            value: "true"
+          - name: DCGM_EXPORTER_LISTEN
+            value: ":{{ dcgm_exporter_port }}"
+        ports:
+        - name: metrics
+          containerPort: {{ dcgm_exporter_port }}
+        securityContext:
+          runAsNonRoot: false
+          runAsUser: 0
+          capabilities:
+            # 采 profiling 类指标(SM 占用、NVLink 等)要这个
+            add: ["SYS_ADMIN"]
+        volumeMounts:
+        - name: pod-gpu-resources
+          mountPath: /var/lib/kubelet/pod-resources
+          readOnly: true
+      volumes:
+      - name: pod-gpu-resources
+        hostPath:
+          path: /var/lib/kubelet/pod-resources
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dcgm-exporter
+  namespace: {{ monitor_namespace }}
+  labels:
+    app: dcgm-exporter
+{% if _mon_scrape == 'annotation' %}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "{{ dcgm_exporter_port }}"
+{% endif %}
+spec:
+  clusterIP: None          # headless: 指标按 Pod 抓, 不需要负载均衡
+  selector:
+    app: dcgm-exporter
+  ports:
+  - name: metrics
+    port: {{ dcgm_exporter_port }}
+    targetPort: {{ dcgm_exporter_port }}
+{% if _mon_scrape == 'servicemonitor' %}
+---
+# prometheus-operator 按 ServiceMonitor 自动发现。若 operator 的 serviceMonitorSelector
+# 有标签要求(kube-prometheus-stack 默认选 release=<helm release 名>),
+# 在 env.yaml 配 monitor_servicemonitor_labels 补上, 否则 operator 不会选中它。
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dcgm-exporter
+  namespace: {{ monitor_namespace }}
+  labels:
+    app: dcgm-exporter
+{% for k, v in (monitor_servicemonitor_labels | default({})).items() %}
+    {{ k }}: "{{ v }}"
+{% endfor %}
+spec:
+  selector:
+    matchLabels:
+      app: dcgm-exporter
+  endpoints:
+  - port: metrics
+    interval: {{ monitor_scrape_interval }}
+{% endif %}

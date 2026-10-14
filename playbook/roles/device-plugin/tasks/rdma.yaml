@@ -2,18 +2,20 @@
 # k8s-rdma-shared-dev-plugin: 向 kubelet 上报 rdma/<rdma_resource_name>
 # 多个 Pod 共享同一块 HCA(shared 模式), 不是独占 —— rdma_hca_max 是这块卡最多给多少个 Pod 用。
 - name: "[rdma] 推镜像到 Harbor(仅离线)"
-  include_tasks: sync-image.yaml
+  include_tasks: "{{ playbook_dir }}/tasks/sync-offline-image.yml"
   vars:
-    _dp_name: rdma
-    _dp_tar: "{{ rdma_device_plugin_tar }}"
-    _dp_image: "{{ rdma_device_plugin_image }}"
+    _img_name: rdma
+    _img_src: "{{ device_plugin_src_dir }}"
+    _img_tar: "{{ rdma_device_plugin_tar }}"
+    _img_dst: "{{ rdma_device_plugin_image }}"
+    _img_tmp: "{{ device_plugin_dir }}"
   when: is_offline | default(false) | bool
 
 # 在线模式不跑 sync-image.yaml, _dp_archs 没被设置时兜底(rdma 的 manifest 不按架构分,
 # 镜像是 multi-arch manifest, kubelet 按节点架构自动取对应那层)
 - name: "[rdma] 确定架构(仅日志用)"
   set_fact:
-    _dp_archs: "{{ _dp_archs | default(device_plugin_online_archs) }}"
+    _dp_archs: "{{ _img_archs | default(device_plugin_online_archs) }}"
 
 - name: "[rdma] 渲染 manifest"
   template:

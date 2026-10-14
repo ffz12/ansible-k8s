@@ -1,0 +1,74 @@
+---
+# dcgm-exporter: 在 N 卡节点上导出 GPU 指标(DCGM_FI_DEV_*)给 Prometheus 抓。
+# 不上报资源, 不装也不影响调度 —— 所以不属于 device plugin, 见 docs/插件.md 的约定。
+- name: "[dcgm-exporter] 推镜像到 Harbor(仅离线)"
+  include_tasks: "{{ playbook_dir }}/tasks/sync-offline-image.yml"
+  vars:
+    _img_name: dcgm-exporter
+    _img_src: "{{ monitor_src_dir }}"
+    _img_tar: "{{ dcgm_exporter_tar }}"
+    _img_dst: "{{ dcgm_exporter_image }}"
+    _img_tmp: "{{ monitor_dir }}"
+  when: is_offline | default(false) | bool
+
+- name: "[dcgm-exporter] 渲染 manifest"
+  template:
+    src: dcgm-exporter.yml.j2
+    dest: "{{ monitor_manifest_dir }}/dcgm-exporter.yml"
+    mode: "0644"
+
+- name: "[dcgm-exporter] apply"
+  command: kubectl apply -f {{ monitor_manifest_dir }}/dcgm-exporter.yml
+  register: _dcgm_apply
+  changed_when: "'configured' in _dcgm_apply.stdout or 'created' in _dcgm_apply.stdout"
+  when: not ansible_check_mode
+
+- name: "[dcgm-exporter] 等 DaemonSet ready"
+  command: >-
+    kubectl -n {{ monitor_namespace }} rollout status ds/dcgm-exporter
+    --timeout={{ monitor_wait_timeout }}s
+  changed_when: false
+  when: not ansible_check_mode
+
+# 没有带 nvidia=true 标签的节点时 DaemonSet 期望副本是 0, rollout 也会"成功"。
+# 另外指标能不能被 Prometheus 抓到, 看的是 ServiceMonitor 被 operator 选中 / Pod 注解被
+# kubernetes_sd 发现 —— 这一步只能验到"exporter 自己有数据", 抓取链路要按下面的提示自己确认。
+- name: "[dcgm-exporter] 查看状态与指标"
+  shell: |
+    echo "--- DaemonSet ---"
+    kubectl -n {{ monitor_namespace }} get ds dcgm-exporter -o wide 2>&1
+    echo "--- 带 {{ dcgm_exporter_node_label }}=true 的节点 ---"
+    kubectl get nodes -l {{ dcgm_exporter_node_label }}=true -o name 2>&1
+    echo "--- 任取一个 Pod 拉一次指标(有 DCGM_FI_DEV_* 即 exporter 正常) ---"
+    pod="$(kubectl -n {{ monitor_namespace }} get pod -l app=dcgm-exporter -o name 2>/dev/null | head -1)"
+    if [ -n "$pod" ]; then
+      kubectl -n {{ monitor_namespace }} exec "$pod" -- \
+        sh -c 'curl -s localhost:{{ dcgm_exporter_port }}/metrics 2>/dev/null | grep -c "^DCGM_FI_DEV_"' 2>&1 \
+        | sed 's/^/DCGM_FI_DEV_ 指标条数: /'
+    else
+      echo "没有 Pod(可能没有带标签的节点)"
+    fi
+  args:
+    executable: /bin/bash
+  register: _dcgm_status
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: "[dcgm-exporter] 结果"
+  debug:
+    msg: "{{ _dcgm_status.stdout_lines }}"
+  when: not ansible_check_mode
+
+- name: "[dcgm-exporter] 下一步"
+  debug:
+    msg:
+      - "抓取方式: {{ _mon_scrape }}"
+      - >-
+        {{ '确认 operator 选中了它: kubectl -n ' ~ monitor_namespace ~ ' get servicemonitor dcgm-exporter -o yaml;
+           Prometheus 页面 Status -> Targets 里应出现 dcgm-exporter'
+           if _mon_scrape == 'servicemonitor'
+           else 'Prometheus 页面 Status -> Targets 里应出现 dcgm-exporter 的 Pod。没有的话查
+           Prometheus 的 scrape_configs 有没有开 kubernetes_sd 的 pod 发现' }}
+      - "Grafana dashboard: roles/monitor/files/dashboards/gpu-node.json(手工导入, 数据源选 prometheus)"
+  when: not ansible_check_mode

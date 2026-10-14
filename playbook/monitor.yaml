@@ -1,0 +1,13 @@
+# 部署监控组件(导出指标给 Prometheus 抓, 不装不影响集群运行)。
+#
+#   ansible-playbook playbook/monitor.yaml                        # 装 monitor_default_list 里的
+#   ansible-playbook playbook/monitor.yaml -e monitors=dcgm-exporter
+#   ansible-playbook playbook/monitor.yaml --check --diff          # 预览渲染结果, 不 apply
+#
+# 在线/离线由 env.yaml 的 is_offline 决定。离线镜像放 offline/artifacts/monitor/images/<架构>/
+# (不进 git, 见 scripts/offline/download-monitor-offline.sh)。变量与验收见 docs/插件.md。
+- name: 部署监控组件
+  hosts: "{{ (groups['k8s_master'] | default([]))[:1] }}"   # 仅首台 master; 切片写法在 inventory 为空时不会硬崩
+  gather_facts: yes
+  roles:
+    - monitor

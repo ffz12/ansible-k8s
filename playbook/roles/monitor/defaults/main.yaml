@@ -1,0 +1,34 @@
+---
+# ---- 装哪些 ----
+# 不设时装 monitor_default_list 里的。手动指定: -e monitors=dcgm-exporter
+#monitors: dcgm-exporter
+monitor_default_list: [dcgm-exporter]
+
+# ---- 公共 ----
+monitor_namespace: kube-system
+# 离线 tar 存放目录, 按架构分子目录: <这里>/amd64/xxx.tar.gz
+# (不进 git; 由 scripts/offline/download-monitor-offline.sh 生成或手工放)
+monitor_src_dir: "{{ offline_artifacts }}/monitor/images"
+monitor_dir: /opt/monitor                        # 目标机上的暂存目录
+monitor_manifest_dir: /etc/kubernetes            # 渲染出的 manifest 落盘位置
+monitor_wait_timeout: 180                        # 等 DaemonSet ready 的秒数
+
+# Prometheus 抓取方式: auto(默认, 探测有没有 ServiceMonitor CRD) / servicemonitor / annotation
+#   servicemonitor —— prometheus-operator 装的集群, operator 按 ServiceMonitor 自动发现
+#   annotation     —— 裸 Prometheus, 靠 Pod 注解 prometheus.io/scrape 被 kubernetes_sd 发现
+#                     ⚠ 这种方式要求 Prometheus 的 scrape_configs 里开了 pod 发现, 否则抓不到
+monitor_scrape_mode: auto
+# ServiceMonitor 要带的标签, 让 operator 的 serviceMonitorSelector 选中。
+# kube-prometheus-stack 默认选 release=<helm release 名>, 现网按实际改。
+monitor_servicemonitor_labels: {}
+monitor_scrape_interval: 30s
+
+# ---- dcgm-exporter ----
+# tag 格式: <DCGM 版本>-<exporter 版本>-<系统>
+dcgm_exporter_version: "4.5.2-4.8.1-ubuntu22.04"
+dcgm_exporter_tar: dcgm-exporter.tar.gz
+dcgm_exporter_image: "{{ registry }}/dcgm-exporter:{{ dcgm_exporter_version }}"
+# dcgm 是 NVIDIA 专用, 只在 N 卡节点跑(不用通用的 gpu=true —— dcu/npu 节点跑它没意义)
+dcgm_exporter_node_label: nvidia
+dcgm_exporter_port: 9400
+# 配套的 grafana dashboard: roles/monitor/files/dashboards/gpu-node.json(需手工导入, 见 docs/插件.md)

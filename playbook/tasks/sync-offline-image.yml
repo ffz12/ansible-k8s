@@ -1,0 +1,93 @@
+# 把一个离线镜像 tar 推进 Harbor(多架构)。device-plugin / monitor 等 role 共用。
+# 调用方传:
+#   _img_name  日志里显示的名字(如 nvidia / dcgm-exporter)
+#   _img_src   tar 存放目录, 下面按架构分子目录: <_img_src>/<amd64|arm64>/<_img_tar>
+#   _img_tar   tar 文件名
+#   _img_dst   目标镜像全名({{ registry }}/xxx:tag)
+#   _img_tmp   目标机上的暂存目录
+# 回传:
+#   _img_archs 实际同步的架构列表(调用方渲染 manifest 时可能要用, 如按架构分 DaemonSet)
+#
+# 架构按控制机上实际有的物料探测, 不硬编码 —— 单架构站点只下一个架构也能跑。
+# 源镜像名不写死: tar 是 docker save 还是 containerd/nerdctl save、带什么前缀都可能不同
+# (手工备的 tar 里可能带着别的 Harbor 前缀), 所以解析 docker load 的输出再 retag。
+# 在线模式不要调用本文件: manifest 里直接用公网镜像地址。
+
+- name: "[{{ _img_name }}] 探测控制机上有哪些架构的物料"
+  stat:
+    path: "{{ _img_src }}/{{ item }}/{{ _img_tar }}"
+  delegate_to: localhost
+  become: false
+  register: _img_stat
+  loop: [amd64, arm64]
+
+- name: "[{{ _img_name }}] 记录可用架构"
+  set_fact:
+    _img_archs: "{{ _img_stat.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+
+- name: "[{{ _img_name }}] 物料缺失则明确报错"
+  assert:
+    that: _img_archs | length > 0
+    fail_msg: >-
+      {{ _img_src }}/{amd64,arm64}/{{ _img_tar }} 都不存在。
+      先在联网机上跑对应的 scripts/offline/download-*-offline.sh,
+      或把 tar 按架构放进该目录(这些目录不进 git)。
+
+- name: "[{{ _img_name }}] 本次同步的架构"
+  debug:
+    msg: "{{ _img_name }}: 将同步 {{ _img_archs | join(', ') }}"
+
+# copy 拷单个文件不会自动建父目录
+- name: "[{{ _img_name }}] 创建暂存目录"
+  file:
+    path: "{{ _img_tmp }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ _img_archs }}"
+
+- name: "[{{ _img_name }}] 拷贝 tar 到目标机"
+  copy:
+    src: "{{ _img_src }}/{{ item }}/{{ _img_tar }}"
+    dest: "{{ _img_tmp }}/{{ item }}/{{ _img_tar }}"
+    mode: "0644"
+  loop: "{{ _img_archs }}"
+
+- name: "[{{ _img_name }}] 登录 Harbor"
+  command: docker login {{ harbor_dns }} -u {{ harbor_admin_username | default('admin') }} --password-stdin
+  args:
+    stdin: "{{ harbor_admin_password | default('Harbor12345') }}"
+  changed_when: false
+  no_log: true
+
+- name: "[{{ _img_name }}] load 并推到 Harbor(多架构则建 manifest)"
+  shell: |
+    set -e
+    DST="{{ _img_dst }}"
+    ARCHS="{{ _img_archs | join(' ') }}"
+    # 先删本机 manifest 缓存: 否则 inspect 读的是本地 ~/.docker/manifests, Harbor 清空后仍会误判"已在"
+    docker manifest rm "${DST}" >/dev/null 2>&1 || true
+    if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then
+      echo "skip ${DST} (已在 harbor)"; exit 0
+    fi
+    MANIFEST_ARGS=""
+    for a in $ARCHS; do
+      out="$(docker load -i {{ _img_tmp }}/${a}/{{ _img_tar }})"
+      echo "$out"
+      SRC="$(echo "$out" | sed -n 's/^Loaded image: //p' | head -1)"
+      [ -n "$SRC" ] || { echo "解析不出 load 进来的镜像名:"; echo "$out"; exit 1; }
+      docker tag "$SRC" "${DST}-${a}"
+      for _i in 1 2 3; do docker push "${DST}-${a}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
+      MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
+      [ "$SRC" = "${DST}-${a}" ] || docker rmi "$SRC" || true
+    done
+    docker manifest rm "${DST}" >/dev/null 2>&1 || true
+    docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
+    for a in $ARCHS; do
+      docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
+    done
+    for _i in 1 2 3; do docker manifest push --insecure "${DST}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
+    for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
+  args:
+    executable: /bin/bash
+  register: _img_push
+  changed_when: "'skip ' not in _img_push.stdout"
