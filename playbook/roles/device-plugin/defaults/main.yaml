@@ -26,7 +26,8 @@ nvidia_device_plugin_node_label: nvidia          # k8s-node-labels.yaml 按 acce
 rdma_device_plugin_version: "v1.5.3"
 rdma_device_plugin_tar: k8s-rdma-shared-dev-plugin.tar.gz
 rdma_device_plugin_image: "{{ registry }}/k8s-rdma-shared-dev-plugin:{{ rdma_device_plugin_version }}"
-rdma_device_plugin_node_label: nvidia            # 现网 RDMA 网卡都在 GPU 机上; 独立 RDMA 节点改这里
+# 由 k8s-node-labels.yaml 按 inventory 的 has_rdma=true 打(RDMA 是网卡能力, 与 accelerator_type 无关)
+rdma_device_plugin_node_label: rdma
 rdma_resource_name: hca_shared_devices
 rdma_hca_max: 1000
 rdma_periodic_update_interval: 300

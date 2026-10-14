@@ -6,6 +6,7 @@
 #
 # 标签来源(defaults.yaml 的 node_labels_by_accelerator, 可在 env.yaml 覆盖):
 #   accelerator_type=nvidia -> nvidia=true;  dcu / npu 同理;  cpu -> cpu_node=true;  未写/none -> 不打
+#   有 RDMA 网卡: inventory 行写 has_rdma=true -> rdma=true(网卡能力, 与加速卡无关, 故不走上面的映射)
 #   某台要额外标签: inventory 行写 node_labels="{'gpu.model': 'b300'}", 与上面合并, 同名以它为准
 #
 # ⚠ 与 Calico 双池用的 hardware=gpu|cpu 标签是两回事, 那个由 ensure-hardware-label.yml 管, 这里不碰。
@@ -20,6 +21,7 @@
       set_fact:
         _node_labels: >-
           {{ (node_labels_by_accelerator | default({}))[accelerator_type | default('none', true)] | default({})
+             | combine({'rdma': 'true'} if (has_rdma | default(false) | bool) else {})
              | combine(node_labels | default({})) }}
 
     # 写了 accelerator_type 却不在映射里(拼错, 或新卡型如 mlu 还没加映射)时不静默跳过, 提示一下

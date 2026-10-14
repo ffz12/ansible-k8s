@@ -5,9 +5,10 @@
 [cluster]
 # accelerator_type: GPU 机必须写 nvidia/dcu/npu(不写按 CPU 机装, 不装 GPU 运行时);
 #   CPU 机写 cpu 才会打 cpu_node=true 标签, 不写也按 CPU 机装, 只是不打标签
+# 有 RDMA(Mellanox)网卡的机器写 has_rdma=true, 会打 rdma=true 标签给 rdma device plugin 用
 # 没外网的机器按行配 DNS: init_config_dns=true dns=10.14.73.1
 #cpu-001 ansible_host=192.168.1.111 kube_node_ip=192.168.1.111 accelerator_type=cpu
-#gpu-001 ansible_host=192.168.1.121 kube_node_ip=192.168.1.121 accelerator_type=nvidia
+#gpu-001 ansible_host=192.168.1.121 kube_node_ip=192.168.1.121 accelerator_type=nvidia has_rdma=true
 
 [init]
 # 只放这次要初始化的机器, 已交付的老机器别放
