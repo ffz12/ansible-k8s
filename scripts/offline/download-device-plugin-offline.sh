@@ -52,6 +52,6 @@ cat <<EOF
 
 下一步:
   1) 把 offline/ 目录 rsync 到控制机(或本机就是控制机则跳过)
-  2) ansible-playbook playbook/device-plugin.yaml -e is_offline=true
+  2) ansible-playbook playbook/device-plugin.yaml
      (装哪些按 inventory 的 accelerator_type 自动判断; rdma 默认也装, 没 RDMA 网卡时置 device_plugin_rdma: false)
 EOF
