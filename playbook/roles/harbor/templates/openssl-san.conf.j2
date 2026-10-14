@@ -21,11 +21,10 @@ subjectAltName = @alt_names
 {% if harbor_dns %}
 DNS.1 = {{ harbor_dns }}
 {% endif %}
-{% if harbor_ip %}
-IP.1 = {{ harbor_ip }}
-{% endif %}
 {% if harbor_ha | bool %}
-{% for ip in _harbor_node_ips %}
-IP.{{ loop.index + 1 }} = {{ ip }}
+{% for ip in ([harbor_ip] + _harbor_node_ips) | select | unique %}
+IP.{{ loop.index }} = {{ ip }}
 {% endfor %}
+{% elif harbor_ip %}
+IP.1 = {{ harbor_ip }}
 {% endif %}

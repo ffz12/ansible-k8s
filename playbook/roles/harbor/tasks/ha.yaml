@@ -1,10 +1,9 @@
 # Harbor 双主([harbor] 组 2 台时由 main.yaml 引入)。
-#   ① 两台的 token 签名密钥统一 —— 否则 A 签的 token 到 B 验不过, VIP 切换后已登录的客户端 401,
-#      复制时去对端拿的 token 也可能是另一台签的。
+#   ① 两台的 token 签名密钥统一 —— 否则手动切到另一台后, 已登录的客户端会 401。
 #   ② core / jobservice 容器里能解析 harbor_dns —— 复制时对端返回的 token 地址是
 #      https://<harbor_dns>/service/token, 容器不读宿主机 /etc/hosts, 解析不了复制就失败。
-#   ③ keepalived 挂 VIP, 健康检查 /api/v2.0/ping。
-#   ④ 两边各建一条 push 复制规则指向对方。
+#   ③ 两边各建一条 push 复制规则指向对方。
+# 不用 VIP: 客户端固定连 harbor_instances 的 ip(主节点), 主故障时改 ip 后重跑 harbor-trust.yaml 手动切换。
 # ⚠ ①② 的路径与行为按 Harbor 2.x 的目录结构写, 未在现网验证, 首次上线请按部署说明的步骤验收。
 
 # ---------------- ① 统一 token 签名密钥 ----------------
@@ -44,7 +43,7 @@
   register: _harbor_compose_version
   changed_when: false
 
-- name: "[Harbor HA] 写 docker-compose.override.yml(core/jobservice 解析 {{ harbor_dns }} -> VIP)"
+- name: "[Harbor HA] 写 docker-compose.override.yml(core/jobservice 解析 {{ harbor_dns }} -> 本机)"
   template:
     src: docker-compose.override.yml.j2
     dest: "{{ harbor_copy_path }}/harbor/docker-compose.override.yml"
@@ -59,7 +58,18 @@
   shell: cd {{ harbor_copy_path }}/harbor && docker-compose restart core registry
   when: _harbor_token_synced is changed
 
-# ---------------- ③ keepalived ----------------
+# ---------------- 清理旧版本装的 Harbor keepalived(只认 VI_HARBOR, 不碰 k8s LB 的) ----------------
+- name: "[Harbor HA] 检查是否装过 Harbor 的 keepalived"
+  shell: grep -qs 'VI_HARBOR' /etc/keepalived/keepalived.conf && echo yes || echo no
+  register: _harbor_old_ka
+  changed_when: false
+
+- name: "[Harbor HA] 停掉并删除旧的 Harbor keepalived(VIP 随之释放)"
+  shell: |
+    systemctl disable --now keepalived
+    rm -f /etc/keepalived/keepalived.conf /etc/keepalived/check_harbor.sh
+  when: _harbor_old_ka.stdout == 'yes'
+
 - name: "[Harbor HA] 等本机 Harbor 就绪"
   uri:
     url: https://127.0.0.1/api/v2.0/ping
@@ -70,47 +80,7 @@
   retries: 30
   delay: 5
 
-- name: "[Harbor HA] (离线-RPM) 安装 keepalived"
-  shell: yum install -y --disablerepo="*" --enablerepo="local-offline" keepalived
-  when:
-    - is_offline | default(false) | bool
-    - ansible_os_family != 'Debian'
-
-- name: "[Harbor HA] 安装 keepalived"
-  package:
-    name: keepalived
-    state: present
-  when: not (is_offline | default(false) | bool) or ansible_os_family == 'Debian'
-
-- name: "[Harbor HA] 探测 VIP 所在网卡(按 ansible_host 所在网卡)"
-  shell: "ip -o -4 addr show | awk '$4 ~ \"^{{ ansible_host | default(inventory_hostname) }}/\" {print $2; exit}'"
-  register: _harbor_vip_if
-  changed_when: false
-  failed_when: _harbor_vip_if.stdout | trim | length == 0
-
-- name: "[Harbor HA] 健康检查脚本"
-  template:
-    src: check_harbor.sh.j2
-    dest: /etc/keepalived/check_harbor.sh
-    mode: '0700'
-    owner: root
-    group: root
-  register: _harbor_ka_check
-
-- name: "[Harbor HA] keepalived 配置"
-  template:
-    src: keepalived-harbor.conf.j2
-    dest: /etc/keepalived/keepalived.conf
-    mode: '0644'
-  register: _harbor_ka_conf
-
-- name: "[Harbor HA] 启动 keepalived"
-  systemd:
-    name: keepalived
-    enabled: true
-    state: "{{ 'restarted' if (_harbor_ka_conf is changed or _harbor_ka_check is changed) else 'started' }}"
-
-# ---------------- ④ 双向复制 ----------------
+# ---------------- ③ 双向复制 ----------------
 - name: "[Harbor HA] 对端地址"
   set_fact:
     _harbor_peer_ip: "{{ _harbor_node_ips | difference([ansible_host | default(inventory_hostname)]) | first }}"
@@ -247,11 +217,6 @@
   no_log: true
   when: (_harbor_execs.json | default([])) | length == 0
 
-- name: "[Harbor HA] 当前 VIP 所在"
-  shell: ip -o -4 addr show | grep -q ' {{ harbor_vip }}/' && echo '本机持有 VIP' || echo '本机未持有 VIP'
-  register: _harbor_vip_holder
-  changed_when: false
-
 - name: "[Harbor HA] 结果"
   debug:
-    msg: "{{ inventory_hostname }}: {{ _harbor_vip_holder.stdout }}; 复制规则 ha-push-to-{{ _harbor_peer_ip }}"
+    msg: "{{ inventory_hostname }}: 复制规则 ha-push-to-{{ _harbor_peer_ip }}; 客户端当前指向 {{ harbor_ip }}"
