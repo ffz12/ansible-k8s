@@ -1,0 +1,14 @@
+# 部署 device plugin(向 kubelet 上报扩展资源, 让 Pod 能申请 GPU / RDMA)。
+#
+# 装哪些: 不指定时按 inventory 的 accelerator_type 自动判断(有 nvidia 节点就装 nvidia 插件);
+#         rdma 是网卡能力, 不在 accelerator_type 里, 要在 env.yaml 设 device_plugin_rdma: true。
+#   ansible-playbook playbook/device-plugin.yaml                        # 自动判断
+#   ansible-playbook playbook/device-plugin.yaml -e device_plugins=nvidia,rdma   # 手动指定
+#
+# 离线镜像放 offline/artifacts/device-plugin/images/(不进 git, 见 scripts/offline/download-device-plugin-offline.sh),
+# 部署时自动 load + 推 Harbor。变量与验收命令见 docs/插件.md。
+- name: 部署 device plugin
+  hosts: "{{ (groups['k8s_master'] | default([]))[:1] }}"   # 仅首台 master; 切片写法在 inventory 为空时不会硬崩
+  gather_facts: yes
+  roles:
+    - device-plugin

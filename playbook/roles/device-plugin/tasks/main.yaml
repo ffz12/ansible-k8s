@@ -1,0 +1,43 @@
+---
+# 装哪些 device plugin:
+#   指定了 device_plugins 就按它(逗号分隔);
+#   没指定则按集群里实际有的 accelerator_type 推导(nvidia/dcu/npu), rdma 另由 device_plugin_rdma 控制。
+- name: "[device-plugin] 确定要装的插件"
+  set_fact:
+    _dp_list: >-
+      {%- if device_plugins is defined -%}
+      {{ device_plugins.split(',') | map('trim') | select | list }}
+      {%- else -%}
+      {%- set out = [] -%}
+      {%- for h in groups['cluster'] | default([]) -%}
+      {%-   set t = hostvars[h].accelerator_type | default('') -%}
+      {%-   if t in ['nvidia', 'dcu', 'npu'] and t not in out -%}{%- set _ = out.append(t) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- if device_plugin_rdma | bool -%}{%- set _ = out.append('rdma') -%}{%- endif -%}
+      {{ out }}
+      {%- endif -%}
+
+- name: "[device-plugin] 本次要装"
+  debug:
+    msg: >-
+      {{ ('要装: ' ~ _dp_list | join(', ')) if _dp_list | length > 0
+         else '没有要装的插件(inventory 里没有 accelerator_type=nvidia/dcu/npu 的节点, device_plugin_rdma 也没开)' }}
+
+- name: "[device-plugin] 只支持已实现的插件"
+  assert:
+    that: _dp_list | difference(['nvidia', 'rdma']) | length == 0
+    fail_msg: >-
+      暂不支持 {{ _dp_list | difference(['nvidia', 'rdma']) | join(', ') }}。
+      已实现: nvidia, rdma。新增一种加 tasks/<名字>.yaml + templates/。
+  when: _dp_list | length > 0
+
+- name: "[device-plugin] 创建 manifest 目录"
+  file:
+    path: "{{ device_plugin_manifest_dir }}"
+    state: directory
+    mode: "0755"
+  when: _dp_list | length > 0
+
+- name: "[device-plugin] 逐个部署"
+  include_tasks: "{{ item }}.yaml"
+  loop: "{{ _dp_list }}"

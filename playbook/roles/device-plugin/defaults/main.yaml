@@ -1,0 +1,38 @@
+---
+# ---- 装哪些插件 ----
+# 不设时由 tasks/main.yaml 按 accelerator_type 自动推导 + device_plugin_rdma 开关。
+# 手动指定: -e device_plugins=nvidia,rdma
+#device_plugins: nvidia,rdma
+
+# rdma 不在 accelerator_type 里(网卡能力, 有 GPU 不代表有 RDMA 网卡), 要用的站点显式开。
+device_plugin_rdma: false
+
+# ---- 公共 ----
+device_plugin_namespace: kube-system
+# 离线 tar 存放目录(不进 git; 下载脚本或手工放进去)
+device_plugin_src_dir: "{{ offline_artifacts }}/device-plugin/images"
+device_plugin_dir: /opt/device-plugin           # 目标机上的暂存目录
+device_plugin_manifest_dir: /etc/kubernetes      # 渲染出的 manifest 落盘位置
+device_plugin_wait_timeout: 180                  # 等 DaemonSet ready 的秒数
+
+# ---- nvidia ----
+nvidia_device_plugin_version: "v0.17.1"
+nvidia_device_plugin_tar: k8s-device-plugin.tar.gz
+nvidia_device_plugin_image: "{{ registry }}/k8s-device-plugin:{{ nvidia_device_plugin_version }}"
+nvidia_device_plugin_node_label: nvidia          # k8s-node-labels.yaml 按 accelerator_type 打的标签
+# 下面两项与现网保持一致。正常装了 nvidia-container-toolkit 不需要, 是当时驱动/toolkit
+# 有问题时的绕法; 新环境确认不需要可置 false。
+nvidia_device_plugin_privileged: true
+nvidia_device_plugin_mount_libnvidia_ml: true
+nvidia_device_plugin_libnvidia_ml_path: /lib/x86_64-linux-gnu/libnvidia-ml.so.1
+
+# ---- rdma ----
+rdma_device_plugin_version: "v1.5.3"
+rdma_device_plugin_tar: k8s-rdma-shared-dev-plugin.tar.gz
+rdma_device_plugin_image: "{{ registry }}/k8s-rdma-shared-dev-plugin:{{ rdma_device_plugin_version }}"
+rdma_device_plugin_node_label: nvidia            # 现网 RDMA 网卡都在 GPU 机上; 独立 RDMA 节点改这里
+rdma_resource_name: hca_shared_devices
+rdma_hca_max: 1000
+rdma_periodic_update_interval: 300
+rdma_vendors: ["15b3"]                           # 15b3 = Mellanox
+rdma_device_ids: ["101b", "a2dc"]                # 各站点网卡型号不同, 用 lspci -nn 查

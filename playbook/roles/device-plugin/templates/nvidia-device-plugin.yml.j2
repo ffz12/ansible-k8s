@@ -1,0 +1,71 @@
+# 由 roles/device-plugin 渲染, 手改会被覆盖(改变量: roles/device-plugin/defaults/main.yaml 或 env.yaml)
+# nodeAffinity 用的 {{ nvidia_device_plugin_node_label }}=true 由 k8s-node-labels.yaml 按 accelerator_type 打。
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin-daemonset
+  namespace: {{ device_plugin_namespace }}
+spec:
+  selector:
+    matchLabels:
+      name: nvidia-device-plugin-ds
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: nvidia-device-plugin-ds
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: {{ nvidia_device_plugin_node_label }}
+                operator: In
+                values:
+                - "true"
+      tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      priorityClassName: "system-node-critical"
+      containers:
+      - image: {{ nvidia_device_plugin_image }}
+        imagePullPolicy: IfNotPresent
+        name: nvidia-device-plugin-ctr
+        env:
+          # 初始化失败(如驱动没装好)时不退出, 让 Pod 留着便于排查, 而不是 CrashLoop
+          - name: FAIL_ON_INIT_ERROR
+            value: "false"
+        securityContext:
+{% if nvidia_device_plugin_privileged | bool %}
+          # 现网取值。装了 nvidia-container-toolkit 的环境通常不需要特权, 确认不需要时
+          # 把 nvidia_device_plugin_privileged 置 false, 会改回下面注释里那套最小权限。
+          privileged: true
+{% else %}
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+{% endif %}
+        volumeMounts:
+          - name: device-plugin
+            mountPath: /var/lib/kubelet/device-plugins
+{% if nvidia_device_plugin_mount_libnvidia_ml | bool %}
+          # 容器内找不到 libnvidia-ml 时才需要(现网取值); 不需要时置
+          # nvidia_device_plugin_mount_libnvidia_ml: false
+          - name: lib-nvidia
+            mountPath: /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1
+            readOnly: true
+{% endif %}
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+{% if nvidia_device_plugin_mount_libnvidia_ml | bool %}
+        - name: lib-nvidia
+          hostPath:
+            path: {{ nvidia_device_plugin_libnvidia_ml_path }}
+{% endif %}

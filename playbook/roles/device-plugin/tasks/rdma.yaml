@@ -1,0 +1,49 @@
+---
+# k8s-rdma-shared-dev-plugin: 向 kubelet 上报 rdma/<rdma_resource_name>
+# 多个 Pod 共享同一块 HCA(shared 模式), 不是独占 —— rdma_hca_max 是这块卡最多给多少个 Pod 用。
+- name: "[rdma] 推镜像到 Harbor(仅离线)"
+  include_tasks: sync-image.yaml
+  vars:
+    _dp_name: rdma
+    _dp_tar: "{{ rdma_device_plugin_tar }}"
+    _dp_image: "{{ rdma_device_plugin_image }}"
+  when: is_offline | default(false) | bool
+
+- name: "[rdma] 渲染 manifest"
+  template:
+    src: rdma-device-plugin.yml.j2
+    dest: "{{ device_plugin_manifest_dir }}/rdma-device-plugin.yml"
+    mode: "0644"
+
+- name: "[rdma] apply"
+  command: kubectl apply -f {{ device_plugin_manifest_dir }}/rdma-device-plugin.yml
+  register: _rdma_apply
+  changed_when: "'configured' in _rdma_apply.stdout or 'created' in _rdma_apply.stdout"
+  when: not ansible_check_mode
+
+- name: "[rdma] 等 DaemonSet ready"
+  command: >-
+    kubectl -n {{ device_plugin_namespace }} rollout status ds/rdma-shared-dp-ds
+    --timeout={{ device_plugin_wait_timeout }}s
+  changed_when: false
+  when: not ansible_check_mode
+
+# 资源上报不出来最常见的原因是 rdma_device_ids 与实际网卡不符 —— 在 GPU 节点上
+# lspci -nn | grep -i mellanox 看方括号里的 15b3:xxxx, xxxx 就是要填的 deviceID。
+- name: "[rdma] 查看 Pod 与 RDMA 资源上报情况"
+  shell: |
+    echo "--- DaemonSet ---"
+    kubectl -n {{ device_plugin_namespace }} get ds rdma-shared-dp-ds -o wide 2>&1
+    echo "--- 带 {{ rdma_device_plugin_node_label }}=true 的节点与其 rdma/{{ rdma_resource_name }} 容量 ---"
+    kubectl get nodes -l {{ rdma_device_plugin_node_label }}=true \
+      -o custom-columns='NODE:.metadata.name,RDMA:.status.capacity.rdma/{{ rdma_resource_name }}' 2>&1
+  args:
+    executable: /bin/bash
+  register: _rdma_status
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: "[rdma] 结果"
+  debug:
+    msg: "{{ _rdma_status.stdout_lines }}"
+  when: not ansible_check_mode

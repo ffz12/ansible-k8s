@@ -1,0 +1,74 @@
+# 由 roles/device-plugin 渲染, 手改会被覆盖(改变量: roles/device-plugin/defaults/main.yaml 或 env.yaml)
+# shared 模式: 多个 Pod 共享同一块 HCA, rdmaHcaMax 是这块卡最多给多少个 Pod 用。
+# deviceIDs 要与实际网卡一致, 否则资源上报不出来: lspci -nn | grep -i mellanox, 取 [15b3:xxxx] 的 xxxx。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rdma-devices
+  namespace: {{ device_plugin_namespace }}
+data:
+  config.json: |
+    {
+        "periodicUpdateInterval": {{ rdma_periodic_update_interval }},
+        "configList": [{
+            "resourceName": "{{ rdma_resource_name }}",
+            "rdmaHcaMax": {{ rdma_hca_max }},
+            "selectors": {
+              "vendors": {{ rdma_vendors | to_json }},
+              "deviceIDs": {{ rdma_device_ids | to_json }}
+            }
+          }
+        ]
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rdma-shared-dp-ds
+  namespace: {{ device_plugin_namespace }}
+spec:
+  selector:
+    matchLabels:
+      name: rdma-shared-dp-ds
+  template:
+    metadata:
+      labels:
+        name: rdma-shared-dp-ds
+    spec:
+      hostNetwork: true
+      nodeSelector:
+        {{ rdma_device_plugin_node_label }}: "true"
+      priorityClassName: system-node-critical
+      containers:
+      - image: {{ rdma_device_plugin_image }}
+        name: k8s-rdma-shared-dp-ds
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+        volumeMounts:
+          - name: device-plugin
+            mountPath: /var/lib/kubelet/device-plugins
+            readOnly: false
+          - name: plugins-registry
+            mountPath: /var/lib/kubelet/plugins_registry
+            readOnly: false
+          - name: config
+            mountPath: /k8s-rdma-shared-dev-plugin
+          - name: devs
+            mountPath: /dev/
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+        - name: plugins-registry
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+        - name: config
+          configMap:
+            name: rdma-devices
+            items:
+            - key: config.json
+              path: config.json
+        - name: devs
+          hostPath:
+            path: /dev/

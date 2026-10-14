@@ -1,0 +1,49 @@
+---
+# nvidia device plugin: 向 kubelet 上报 nvidia.com/gpu
+- name: "[nvidia] 推镜像到 Harbor(仅离线)"
+  include_tasks: sync-image.yaml
+  vars:
+    _dp_name: nvidia
+    _dp_tar: "{{ nvidia_device_plugin_tar }}"
+    _dp_image: "{{ nvidia_device_plugin_image }}"
+  when: is_offline | default(false) | bool
+
+- name: "[nvidia] 渲染 manifest"
+  template:
+    src: nvidia-device-plugin.yml.j2
+    dest: "{{ device_plugin_manifest_dir }}/nvidia-device-plugin.yml"
+    mode: "0644"
+  register: _nvidia_manifest
+
+- name: "[nvidia] apply"
+  command: kubectl apply -f {{ device_plugin_manifest_dir }}/nvidia-device-plugin.yml
+  register: _nvidia_apply
+  changed_when: "'configured' in _nvidia_apply.stdout or 'created' in _nvidia_apply.stdout"
+  when: not ansible_check_mode
+
+- name: "[nvidia] 等 DaemonSet ready"
+  command: >-
+    kubectl -n {{ device_plugin_namespace }} rollout status ds/nvidia-device-plugin-daemonset
+    --timeout={{ device_plugin_wait_timeout }}s
+  changed_when: false
+  when: not ansible_check_mode
+
+# 没有带 nvidia=true 标签的节点时 DaemonSet 期望副本数是 0, rollout 也会"成功" —— 这里把实际
+# 情况打出来, 免得以为装好了却没有任何 Pod 在跑(标签由 k8s-node-labels.yaml 按 accelerator_type 打)。
+- name: "[nvidia] 查看 Pod 与 GPU 资源上报情况"
+  shell: |
+    echo "--- DaemonSet ---"
+    kubectl -n {{ device_plugin_namespace }} get ds nvidia-device-plugin-daemonset -o wide 2>&1
+    echo "--- 带 {{ nvidia_device_plugin_node_label }}=true 的节点与其 nvidia.com/gpu 容量 ---"
+    kubectl get nodes -l {{ nvidia_device_plugin_node_label }}=true \
+      -o custom-columns='NODE:.metadata.name,GPU:.status.capacity.nvidia\.com/gpu' 2>&1
+  args:
+    executable: /bin/bash
+  register: _nvidia_status
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: "[nvidia] 结果"
+  debug:
+    msg: "{{ _nvidia_status.stdout_lines }}"
+  when: not ansible_check_mode

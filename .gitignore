@@ -29,3 +29,8 @@ reports/
 # (旧名 inventory/qdlt-secrets.yml 也一并保留兜底)
 inventory/os-secrets.yml
 inventory/qdlt-secrets.yml
+
+# device plugin 离线镜像 tar(几百 MB), 由 scripts/offline/download-device-plugin-offline.sh 生成,
+# 换机器用 rsync 拷 offline/ 过去。只跟踪 .gitkeep 占位。
+offline/artifacts/device-plugin/images/*
+!offline/artifacts/device-plugin/images/.gitkeep
