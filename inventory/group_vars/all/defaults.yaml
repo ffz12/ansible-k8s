@@ -423,10 +423,12 @@ calico_dual_ippool_enabled: false
 # 只给显式写了 accelerator_type 的节点打: CPU 机要写 accelerator_type=cpu 才打 cpu_node=true。
 #   未写/none 【不打】—— 未写不等于确认是 CPU 机(GPU 机漏写时会被误标成 cpu_node, 调度跑偏)。
 #   cpu 在运行时/分池上与未写等价(runc + hardware=cpu), 只多一个业务标签。
+# gpu=true 是"这台有加速卡"的通用标签(不分厂商), 便于按它统一选节点;
+# 各厂商再各自有一个(nvidia/dcu/npu), 两个都打。cpu 机只打 cpu_node。
 node_labels_by_accelerator:
-  nvidia: {nvidia: "true"}
-  dcu: {dcu: "true"}
-  npu: {npu: "true"}
+  nvidia: {nvidia: "true", gpu: "true"}
+  dcu: {dcu: "true", gpu: "true"}
+  npu: {npu: "true", gpu: "true"}
   cpu: {cpu_node: "true"}
 # blockSize 决定"每节点一次拿多少地址"。calico 按块分配, 节点上 Pod 数超过一块容量就再要一块,
 # 所以【池内块数不等于可容纳节点数】—— 可容纳节点数 = 块数 / ceil(每节点Pod数 / 每块地址数)。

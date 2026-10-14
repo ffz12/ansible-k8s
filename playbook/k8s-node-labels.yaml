@@ -5,7 +5,8 @@
 #   ansible-playbook playbook/k8s-node-labels.yaml --limit gn-10-14-64-1
 #
 # 标签来源(defaults.yaml 的 node_labels_by_accelerator, 可在 env.yaml 覆盖):
-#   accelerator_type=nvidia -> nvidia=true;  dcu / npu 同理;  cpu -> cpu_node=true;  未写/none -> 不打
+#   accelerator_type=nvidia -> nvidia=true + gpu=true;  dcu / npu 同理(各自标签 + gpu=true);
+#     cpu -> cpu_node=true;  未写/none -> 不打。gpu=true 是"有加速卡"的通用标签, 不分厂商
 #   有 RDMA 网卡: inventory 行写 has_rdma=true -> rdma=true(网卡能力, 与加速卡无关, 故不走上面的映射)
 #   某台要额外标签: inventory 行写 node_labels="{'gpu.model': 'b300'}", 与上面合并, 同名以它为准
 #
