@@ -9,6 +9,12 @@
     _dp_image: "{{ rdma_device_plugin_image }}"
   when: is_offline | default(false) | bool
 
+# 在线模式不跑 sync-image.yaml, _dp_archs 没被设置时兜底(rdma 的 manifest 不按架构分,
+# 镜像是 multi-arch manifest, kubelet 按节点架构自动取对应那层)
+- name: "[rdma] 确定架构(仅日志用)"
+  set_fact:
+    _dp_archs: "{{ _dp_archs | default(device_plugin_online_archs) }}"
+
 - name: "[rdma] 渲染 manifest"
   template:
     src: rdma-device-plugin.yml.j2

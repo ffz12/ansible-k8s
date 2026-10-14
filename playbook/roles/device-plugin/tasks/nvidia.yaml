@@ -8,6 +8,11 @@
     _dp_image: "{{ nvidia_device_plugin_image }}"
   when: is_offline | default(false) | bool
 
+# 在线模式不跑 sync-image.yaml, _dp_archs 没被设置, 按 device_plugin_online_archs 兜底
+- name: "[nvidia] 确定渲染哪些架构"
+  set_fact:
+    _dp_archs: "{{ _dp_archs | default(device_plugin_online_archs) }}"
+
 - name: "[nvidia] 渲染 manifest"
   template:
     src: nvidia-device-plugin.yml.j2
@@ -21,10 +26,13 @@
   changed_when: "'configured' in _nvidia_apply.stdout or 'created' in _nvidia_apply.stdout"
   when: not ansible_check_mode
 
+# 多架构时按架构各一个 DaemonSet(名字带 -<arch> 后缀), 逐个等
 - name: "[nvidia] 等 DaemonSet ready"
   command: >-
-    kubectl -n {{ device_plugin_namespace }} rollout status ds/nvidia-device-plugin-daemonset
+    kubectl -n {{ device_plugin_namespace }} rollout status
+    ds/nvidia-device-plugin-daemonset{{ '' if _dp_archs | length == 1 else '-' ~ item }}
     --timeout={{ device_plugin_wait_timeout }}s
+  loop: "{{ _dp_archs }}"
   changed_when: false
   when: not ansible_check_mode
 
@@ -33,7 +41,7 @@
 - name: "[nvidia] 查看 Pod 与 GPU 资源上报情况"
   shell: |
     echo "--- DaemonSet ---"
-    kubectl -n {{ device_plugin_namespace }} get ds nvidia-device-plugin-daemonset -o wide 2>&1
+    kubectl -n {{ device_plugin_namespace }} get ds -o wide 2>&1 | grep -E 'NAME|nvidia-device-plugin'
     echo "--- 带 {{ nvidia_device_plugin_node_label }}=true 的节点与其 nvidia.com/gpu 容量 ---"
     kubectl get nodes -l {{ nvidia_device_plugin_node_label }}=true \
       -o custom-columns='NODE:.metadata.name,GPU:.status.capacity.nvidia\.com/gpu' 2>&1

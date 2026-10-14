@@ -1,20 +1,29 @@
 # 由 roles/device-plugin 渲染, 手改会被覆盖(改变量: roles/device-plugin/defaults/main.yaml 或 env.yaml)
 # nodeAffinity 用的 {{ nvidia_device_plugin_node_label }}=true 由 k8s-node-labels.yaml 按 accelerator_type 打。
+#
+# 按架构各渲一个 DaemonSet: libnvidia-ml.so.1 的宿主机路径各架构不同
+# (x86_64 在 /lib/x86_64-linux-gnu/, arm64 在 /lib/aarch64-linux-gnu/),
+# 而一个 DaemonSet 的 hostPath 没法按节点变, 所以用 kubernetes.io/arch 分开。
+# 单架构集群只会渲出一个, 与之前一致(只多一行 arch affinity)。
+{% for arch in _dp_archs %}
+{% if not loop.first %}
+---
+{% endif %}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: nvidia-device-plugin-daemonset
+  name: nvidia-device-plugin-daemonset{{ '' if _dp_archs | length == 1 else '-' ~ arch }}
   namespace: {{ device_plugin_namespace }}
 spec:
   selector:
     matchLabels:
-      name: nvidia-device-plugin-ds
+      name: nvidia-device-plugin-ds{{ '' if _dp_archs | length == 1 else '-' ~ arch }}
   updateStrategy:
     type: RollingUpdate
   template:
     metadata:
       labels:
-        name: nvidia-device-plugin-ds
+        name: nvidia-device-plugin-ds{{ '' if _dp_archs | length == 1 else '-' ~ arch }}
     spec:
       affinity:
         nodeAffinity:
@@ -25,6 +34,10 @@ spec:
                 operator: In
                 values:
                 - "true"
+              - key: kubernetes.io/arch
+                operator: In
+                values:
+                - {{ arch }}
       tolerations:
       - key: CriticalAddonsOnly
         operator: Exists
@@ -49,7 +62,7 @@ spec:
             mountPath: /var/lib/kubelet/device-plugins
           # 与现网一致: 容器内找不到 libnvidia-ml 时要从宿主机挂进来
           - name: lib-nvidia
-            mountPath: /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1
+            mountPath: /usr/lib/{{ nvidia_libnvidia_ml_paths[arch].triplet }}/libnvidia-ml.so.1
             readOnly: true
       volumes:
         - name: device-plugin
@@ -57,4 +70,5 @@ spec:
             path: /var/lib/kubelet/device-plugins
         - name: lib-nvidia
           hostPath:
-            path: /lib/x86_64-linux-gnu/libnvidia-ml.so.1
+            path: {{ nvidia_libnvidia_ml_paths[arch].host }}
+{% endfor %}

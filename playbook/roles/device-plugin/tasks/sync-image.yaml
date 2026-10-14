@@ -1,37 +1,49 @@
 ---
-# 把一个离线 tar 里的镜像推进 Harbor。调用方传:
-#   _dp_tar   离线 tar 文件名(在 device_plugin_src_dir 下)
+# 把一个插件的离线镜像推进 Harbor(多架构)。调用方传:
+#   _dp_tar   tar 文件名(在 device_plugin_src_dir/<架构>/ 下)
 #   _dp_image 目标镜像全名({{ registry }}/xxx:tag)
 #   _dp_name  日志里显示的插件名
-# 单架构(amd64), 不建 multi-arch manifest —— GPU/RDMA 节点都是 x86。
-# 在线模式跳过本文件: manifest 里直接用公网镜像地址。
+# 架构按控制机上实际有的物料探测, 不硬编码 —— 单架构站点只下一个架构也能跑(照 sync-multus-image.yaml)。
+# 探测结果同时给 manifest 模板用(nvidia 的 libnvidia-ml 路径按架构不同, 要按架构各渲一个 DaemonSet)。
+# 在线模式不调用本文件: manifest 里直接用公网镜像地址。
 
-- name: "[{{ _dp_name }}] 检查离线 tar 是否存在"
+- name: "[{{ _dp_name }}] 探测控制机上有哪些架构的物料"
   stat:
-    path: "{{ device_plugin_src_dir }}/{{ _dp_tar }}"
+    path: "{{ device_plugin_src_dir }}/{{ item }}/{{ _dp_tar }}"
   delegate_to: localhost
   become: false
-  register: _dp_tar_stat
+  register: _dp_src
+  loop: [amd64, arm64]
 
-- name: "[{{ _dp_name }}] tar 缺失则报错"
-  fail:
-    msg: >-
-      找不到 {{ device_plugin_src_dir }}/{{ _dp_tar }}。
+- name: "[{{ _dp_name }}] 记录可用架构"
+  set_fact:
+    _dp_archs: "{{ _dp_src.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+
+- name: "[{{ _dp_name }}] 物料缺失则明确报错"
+  assert:
+    that: _dp_archs | length > 0
+    fail_msg: >-
+      {{ device_plugin_src_dir }}/{amd64,arm64}/{{ _dp_tar }} 都不存在。
       先在联网机上跑 bash scripts/offline/download-device-plugin-offline.sh,
-      或把 tar 手工放进该目录(该目录不进 git)。
-  when: not _dp_tar_stat.stat.exists
+      或把 tar 按架构放进该目录(该目录不进 git)。
+
+- name: "[{{ _dp_name }}] 本次同步的架构"
+  debug:
+    msg: "{{ _dp_name }}: 将同步 {{ _dp_archs | join(', ') }}"
 
 - name: "[{{ _dp_name }}] 创建暂存目录"
   file:
-    path: "{{ device_plugin_dir }}"
+    path: "{{ device_plugin_dir }}/{{ item }}"
     state: directory
     mode: "0755"
+  loop: "{{ _dp_archs }}"
 
 - name: "[{{ _dp_name }}] 拷贝 tar 到目标机"
   copy:
-    src: "{{ device_plugin_src_dir }}/{{ _dp_tar }}"
-    dest: "{{ device_plugin_dir }}/{{ _dp_tar }}"
+    src: "{{ device_plugin_src_dir }}/{{ item }}/{{ _dp_tar }}"
+    dest: "{{ device_plugin_dir }}/{{ item }}/{{ _dp_tar }}"
     mode: "0644"
+  loop: "{{ _dp_archs }}"
 
 - name: "[{{ _dp_name }}] 登录 Harbor"
   command: docker login {{ harbor_dns }} -u {{ harbor_admin_username | default('admin') }} --password-stdin
@@ -41,23 +53,35 @@
   no_log: true
 
 # 源镜像名不写死: tar 是 docker save 还是 containerd/nerdctl save、用的什么前缀都可能不同
-# (现网那份 rdma tar 的镜像名就带着旧项目名 kubesphereio), 所以解析 docker load 的输出再 retag。
-- name: "[{{ _dp_name }}] load 并推到 Harbor"
+# (手工备的 tar 里镜像名可能带着别的 Harbor 前缀), 所以解析 docker load 的输出再 retag。
+- name: "[{{ _dp_name }}] load 并推到 Harbor(多架构则建 manifest)"
   shell: |
     set -e
     DST="{{ _dp_image }}"
+    ARCHS="{{ _dp_archs | join(' ') }}"
     # 先删本机 manifest 缓存: 否则 inspect 读的是本地 ~/.docker/manifests, Harbor 清空后仍会误判"已在"
     docker manifest rm "${DST}" >/dev/null 2>&1 || true
     if docker manifest inspect --insecure "${DST}" >/dev/null 2>&1; then
       echo "skip ${DST} (已在 harbor)"; exit 0
     fi
-    out="$(docker load -i {{ device_plugin_dir }}/{{ _dp_tar }})"
-    echo "$out"
-    SRC="$(echo "$out" | sed -n 's/^Loaded image: //p' | head -1)"
-    [ -n "$SRC" ] || { echo "解析不出 load 进来的镜像名:"; echo "$out"; exit 1; }
-    docker tag "$SRC" "${DST}"
-    for _i in 1 2 3; do docker push "${DST}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
-    [ "$SRC" = "${DST}" ] || docker rmi "$SRC" || true
+    MANIFEST_ARGS=""
+    for a in $ARCHS; do
+      out="$(docker load -i {{ device_plugin_dir }}/${a}/{{ _dp_tar }})"
+      echo "$out"
+      SRC="$(echo "$out" | sed -n 's/^Loaded image: //p' | head -1)"
+      [ -n "$SRC" ] || { echo "解析不出 load 进来的镜像名:"; echo "$out"; exit 1; }
+      docker tag "$SRC" "${DST}-${a}"
+      for _i in 1 2 3; do docker push "${DST}-${a}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
+      MANIFEST_ARGS="${MANIFEST_ARGS} ${DST}-${a}"
+      [ "$SRC" = "${DST}-${a}" ] || docker rmi "$SRC" || true
+    done
+    docker manifest rm "${DST}" >/dev/null 2>&1 || true
+    docker manifest create --insecure "${DST}" ${MANIFEST_ARGS}
+    for a in $ARCHS; do
+      docker manifest annotate "${DST}" "${DST}-${a}" --os linux --arch "${a}"
+    done
+    for _i in 1 2 3; do docker manifest push --insecure "${DST}" && break; [ "$_i" = 3 ] && exit 1; echo "push 失败, 10 秒后重试($_i/3)"; sleep 10; done
+    for a in $ARCHS; do docker rmi "${DST}-${a}" || true; done
   args:
     executable: /bin/bash
   register: _dp_push

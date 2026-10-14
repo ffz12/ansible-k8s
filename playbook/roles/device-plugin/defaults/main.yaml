@@ -10,8 +10,11 @@ device_plugin_rdma: true
 
 # ---- 公共 ----
 device_plugin_namespace: kube-system
-# 离线 tar 存放目录(不进 git; 下载脚本或手工放进去)
+# 离线 tar 存放目录, 按架构分子目录: <这里>/amd64/xxx.tar.gz、<这里>/arm64/xxx.tar.gz
+# (不进 git; 由 scripts/offline/download-device-plugin-offline.sh 生成或手工放)
 device_plugin_src_dir: "{{ offline_artifacts }}/device-plugin/images"
+# 在线模式下没有离线物料可探测, 按这个列表渲染 manifest(多架构集群填 [amd64, arm64])
+device_plugin_online_archs: [amd64]
 device_plugin_dir: /opt/device-plugin           # 目标机上的暂存目录
 device_plugin_manifest_dir: /etc/kubernetes      # 渲染出的 manifest 落盘位置
 device_plugin_wait_timeout: 180                  # 等 DaemonSet ready 的秒数
@@ -21,6 +24,11 @@ nvidia_device_plugin_version: "v0.17.1"
 nvidia_device_plugin_tar: k8s-device-plugin.tar.gz
 nvidia_device_plugin_image: "{{ registry }}/k8s-device-plugin:{{ nvidia_device_plugin_version }}"
 nvidia_device_plugin_node_label: nvidia          # k8s-node-labels.yaml 按 accelerator_type 打的标签
+# libnvidia-ml.so.1 的宿主机路径各架构不同, 所以 nvidia 按架构各渲一个 DaemonSet
+# (一个 DaemonSet 的 hostPath 没法按节点变)。单架构集群只渲一个, 名字不带后缀。
+nvidia_libnvidia_ml_paths:
+  amd64: {triplet: x86_64-linux-gnu,  host: /lib/x86_64-linux-gnu/libnvidia-ml.so.1}
+  arm64: {triplet: aarch64-linux-gnu, host: /lib/aarch64-linux-gnu/libnvidia-ml.so.1}
 
 # ---- rdma ----
 rdma_device_plugin_version: "v1.5.3"
