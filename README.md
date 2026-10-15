@@ -19,6 +19,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [命令清单.md](docs/命令清单.md) | 常用命令速查：装集群顺序、加减节点、改配置、卸载、手工删 master、危险等级标注 |
 | **[部署说明.md](docs/部署说明.md)** | **主部署手册**：inventory / 变量 / SSH 免密 / init / 挂盘 / containerd / docker / harbor / LB / etcd / k8s / CNI 切换 / 离线部署 / 常见问题排查 |
 | [主机清单说明.md](docs/主机清单说明.md) | inventory/hosts 各组用途、机器行变量（accelerator_type / dns / data_disks 等）、扩缩容临时组 |
 | [插件.md](docs/插件.md) | 集群插件：device plugin（nvidia / rdma 资源上报）、monitor（dcgm-exporter GPU 指标）、新增插件的约定 |
