@@ -90,9 +90,13 @@ rtcsync
 {% for net in chrony_allow_networks | default([]) %}
 allow {{ net }}
 {% endfor %}
+{#- 主备对端单独放行: 只在 chrony_allow_networks 收紧成具体网段时才需要(防漏掉对端)。
+    默认值是 all, 已经放行一切, 再渲染 `allow <对端IP>` 纯属重复。 -#}
+{% if 'all' not in (chrony_allow_networks | default([])) %}
 {% for p in chrony_peers %}
 allow {{ p }}
 {% endfor %}
+{% endif %}
 {% else %}
 #allow 192.168.0.0/16
 {% endif %}
