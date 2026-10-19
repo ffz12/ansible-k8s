@@ -1,0 +1,14 @@
+# 单独补装 helm —— 装机流程里 kube-common/install-binary.yml 已经装过,
+# 这个入口给【集群已建好、但机器上没有 helm】的场景(老集群、手工删过、
+# 或当初 install_helm 置了 false)。幂等, 已装则跳过。
+#
+#   ansible-playbook playbook/install-helm.yaml
+#   ansible-playbook playbook/install-helm.yaml --limit cn-10-14-73-1
+#   ansible-playbook playbook/install-helm.yaml -e target_hosts=k8s_node
+- name: 安装 helm
+  hosts: "{{ target_hosts | default('k8s_master') }}"
+  become: yes
+  gather_facts: yes
+  tasks:
+    - name: 安装 helm 二进制
+      include_tasks: "{{ playbook_dir }}/tasks/install-helm.yml"
