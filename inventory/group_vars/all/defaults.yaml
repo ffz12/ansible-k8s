@@ -142,6 +142,8 @@ containerd_version: "1.7.32"
 runc_version: "1.1.12"
 calico_version: "3.31.3"
 helm_version: "3.18.5"                   # 不带 v; 模板会拼 helm-v{{helm_version}}
+# 装机时在首台 master 装一份 helm(幂等, 已存在则跳过)。不想装置 false。
+install_helm: true
 multus_cni_version: "4.2.4"
 # 装哪个 CNI。被 roles/cni 及 k8s-cni-switch / sync-cni-images 裸引用(9 处 {{ }} + 6 处 when:,
 # 均无 default()), 精简 env.yaml 少这一项会直接 undefined。取值 = example 与 2492b30^ 一致。

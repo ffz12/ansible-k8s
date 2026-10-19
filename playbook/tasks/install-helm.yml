@@ -1,0 +1,56 @@
+# 安装 helm 二进制(共享任务)。离线从离线包拷, 在线多源下载。
+# 幂等: 已存在则整段跳过, 不覆盖手工放的那份。
+# ⚠ kube-reset 会删 {{ kube_bin_dir }}/helm, reset 后重跑装机流程自动补回。
+
+- name: helm —— 确定 CPU 架构
+  set_fact:
+    helm_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+- name: helm —— 检查是否已安装
+  stat:
+    path: "{{ kube_bin_dir }}/helm"
+  register: _helm_stat
+
+- name: helm —— 安装二进制(离线, 来自离线包)
+  copy:
+    src: "{{ helm_bin_src }}/{{ helm_arch }}/helm"
+    dest: "{{ kube_bin_dir }}/helm"
+    mode: "0755"
+  when:
+    - not _helm_stat.stat.exists
+    - is_offline | default(false) | bool
+
+- name: helm —— 下载并安装二进制(在线)
+  block:
+    - name: helm —— 下载压缩包(多源+重试)
+      include_tasks: "{{ playbook_dir }}/tasks/download-with-fallback.yml"
+      vars:
+        dl_urls: "{{ helm_bin_mirrors | map('regex_replace', '$', '/helm-v' ~ helm_version ~ '-linux-' ~ helm_arch ~ '.tar.gz') | list }}"
+        dl_dest: "/tmp/helm-v{{ helm_version }}-linux-{{ helm_arch }}.tar.gz"
+        dl_mode: "0644"
+
+    - name: helm —— 解压
+      unarchive:
+        src: "/tmp/helm-v{{ helm_version }}-linux-{{ helm_arch }}.tar.gz"
+        dest: /tmp
+        remote_src: yes
+
+    - name: helm —— 安装到 bin
+      copy:
+        src: "/tmp/linux-{{ helm_arch }}/helm"
+        dest: "{{ kube_bin_dir }}/helm"
+        remote_src: yes
+        mode: "0755"
+  when:
+    - not _helm_stat.stat.exists
+    - not (is_offline | default(false) | bool)
+
+- name: helm —— 校验可执行
+  command: "{{ kube_bin_dir }}/helm version --short"
+  register: _helm_ver
+  changed_when: false
+  failed_when: _helm_ver.rc != 0
+
+- name: helm —— 版本
+  debug:
+    msg: "helm 已就绪: {{ _helm_ver.stdout | trim }}"

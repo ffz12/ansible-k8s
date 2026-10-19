@@ -7,42 +7,11 @@
     kube_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
 
 # ---- helm 二进制 ----
-- name: 检查 helm 是否已安装
-  stat:
-    path: "{{ kube_bin_dir }}/helm"
-  register: helm_stat
-
-- name: 安装 helm 二进制(离线, 来自离线包)
-  copy:
-    src: "{{ helm_bin_src }}/{{ kube_arch }}/helm"
-    dest: "{{ kube_bin_dir }}/helm"
-    mode: "0755"
-  when:
-    - not helm_stat.stat.exists
-    - is_offline | default(false) | bool
-
-- name: 下载并安装 helm 二进制(在线)
-  block:
-    - name: 下载 helm 压缩包(多源+重试)
-      include_tasks: "{{ playbook_dir }}/tasks/download-with-fallback.yml"
-      vars:
-        dl_urls: "{{ helm_bin_mirrors | map('regex_replace', '$', '/helm-v' ~ helm_version ~ '-linux-' ~ kube_arch ~ '.tar.gz') | list }}"
-        dl_dest: "/tmp/helm-v{{ helm_version }}-linux-{{ kube_arch }}.tar.gz"
-        dl_mode: "0644"
-    - name: 解压 helm
-      unarchive:
-        src: "/tmp/helm-v{{ helm_version }}-linux-{{ kube_arch }}.tar.gz"
-        dest: /tmp
-        remote_src: yes
-    - name: 安装 helm 到 bin
-      copy:
-        src: "/tmp/linux-{{ kube_arch }}/helm"
-        dest: "{{ kube_bin_dir }}/helm"
-        remote_src: yes
-        mode: "0755"
-  when:
-    - not helm_stat.stat.exists
-    - not (is_offline | default(false) | bool)
+# 装 helm 的逻辑已抽到 playbook/tasks/install-helm.yml(共享任务) ——
+# 首台 master 初始化时已无条件装过一份, 这里 include 是为了【单独跑 CNI
+# playbook】的场景(没走过装机全流程时也能把 helm 补上)。该任务幂等, 已装则跳过。
+- name: 确保 helm 已安装
+  include_tasks: "{{ playbook_dir }}/tasks/install-helm.yml"
 
 # ---- cilium 安装 ----
 - name: 渲染 cilium helm values
