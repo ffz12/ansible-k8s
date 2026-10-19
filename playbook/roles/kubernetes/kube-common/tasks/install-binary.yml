@@ -67,6 +67,13 @@
         remote_src: yes
   when: not (is_offline | default(false) | bool)
 
+# ---- helm (只装 master; 装 chart 类组件都在 master 上跑) ----
+- name: 安装 helm
+  include_tasks: "{{ playbook_dir }}/tasks/install-helm.yml"
+  when:
+    - install_helm | default(true) | bool
+    - inventory_hostname in (groups['k8s_master'] | default([]))
+
 # ---- CNI 标准插件包 (containernetworking/plugins) ----
 # 提供 bandwidth / portmap / tuning / firewall 等。calico-cni 镜像只带自己那几个
 # (calico, calico-ipam, flannel, host-local, install, loopback, portmap, tuning),

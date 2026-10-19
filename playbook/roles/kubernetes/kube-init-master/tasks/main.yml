@@ -73,10 +73,3 @@
 - name: 初始化第一个 Master
   include_tasks: init-first-master.yml
   when: inventory_hostname == groups['k8s_master'][0]
-
-# 只装首台 master(集群运维入口那台), 幂等。不想装: env.yaml 置 install_helm: false
-- name: 安装 helm
-  include_tasks: "{{ playbook_dir }}/tasks/install-helm.yml"
-  when:
-    - inventory_hostname == groups['k8s_master'][0]
-    - install_helm | default(true) | bool
