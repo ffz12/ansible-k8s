@@ -39,11 +39,12 @@ calico_registry_online: "docker.io/calico"
 flannel_registry_online: "docker.io/flannel"
 cilium_registry_online: "quay.io/cilium"
 cilium_helm_repo: "https://helm.cilium.io"
-docker_mirrors:                          # 容器镜像加速(可选)
-  - "https://docker.hlmirror.com"
+# 容器镜像加速(可选)。这个列表直接写进 containerd/docker 配置, 客户端按顺序试 ——
+# 死掉的源会让每次 pull 都先等一次超时, 所以只留实测可用的。
+# (2026-10 实测: docker.hlmirror.com 与 proxy.1panel.live 已连不上, 故移除)
+docker_mirrors:
   - "https://docker.1ms.run"
   - "https://docker.m.daocloud.io"
-  - "https://proxy.1panel.live"
 k8s_bin_mirrors:
   - "https://files.m.daocloud.io/dl.k8s.io/release"
   - "https://dl.k8s.io/release"
