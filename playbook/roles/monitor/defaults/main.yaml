@@ -24,11 +24,26 @@ monitor_servicemonitor_labels: {}
 monitor_scrape_interval: 30s
 
 # ---- dcgm-exporter ----
-# tag 格式: <DCGM 版本>-<exporter 版本>-<系统>
-dcgm_exporter_version: "4.5.2-4.8.1-ubuntu22.04"
+# tag 格式: <DCGM 库版本>-<exporter 版本>-<系统>
+# ⚠ 第一段(DCGM 库版本)必须认得节点上的 GPU 驱动, 否则 profiling(DCGM_FI_PROF_*)全空 ——
+#   DEV 指标正常、启动日志也会打 "queried profiling metric groups count=N"(那只是枚举能力),
+#   但运行时一个 PROF 指标都采不到。
+#   H100 + 驱动 590.48.01 现网实测: DCGM 4.5.2 全空, 换到 4.6.1 才出数。
+#   换版本只改这里 + 重新 apply, 滚动重启 exporter(秒级断档, 不碰驱动、不打断 GPU 任务)。
+#   往【新】版本换, 别往旧的换(dcgm:v1.1.1 是 DCGM 3.3.9, 对新驱动更不兼容)。
+dcgm_exporter_version: "4.6.1-4.8.4-ubuntu22.04"
 dcgm_exporter_tar: dcgm-exporter.tar.gz
 dcgm_exporter_image: "{{ registry }}/dcgm-exporter:{{ dcgm_exporter_version }}"
 # dcgm 是 NVIDIA 专用, 只在 N 卡节点跑(不用通用的 gpu=true —— dcu/npu 节点跑它没意义)
 dcgm_exporter_node_label: nvidia
 dcgm_exporter_port: 9400
+# 用自己的指标白名单(ConfigMap 挂 counters.csv)替换镜像内置的 default-counters.csv。
+# 为什么默认开: 镜像内置 csv 里 DCGM_FI_PROF_SM_ACTIVE 被注释、NVLINK TX/RX 两行根本没有,
+#   不换就采不到这三项(不是采不出来, 是没启用) —— aicloud 后端的 smActive / nvLinkTx / nvLinkRx
+#   直接依赖它们。模板见 templates/dcgm-counters.csv.j2, 已保留镜像默认全部字段。
+# 置 false 则用镜像自带的 csv(不挂 ConfigMap、不设 DCGM_EXPORTER_COLLECTORS)。
+dcgm_exporter_custom_counters: true
+# 往白名单末尾追加的行(整行照 csv 格式写, 如 "DCGM_FI_DEV_XXX, gauge, 说明")。
+# 只是补字段; 要大改就把 templates/dcgm-counters.csv.j2 拷成站点版再改。
+dcgm_exporter_extra_counters: []
 # 配套的 grafana dashboard: roles/monitor/files/dashboards/gpu-node.json(需手工导入, 见 docs/插件.md)

@@ -1,0 +1,100 @@
+{#- dcgm-exporter 的指标白名单。由 roles/monitor 渲染成 ConfigMap 挂进容器,
+    用 DCGM_EXPORTER_COLLECTORS 指过去。
+
+    ⚠ 这个文件是【全量替换】镜像内置的 default-counters.csv, 不是增量追加 ——
+      少写一行就少一个指标。所以下面保留了镜像默认的全部字段, 只做三处改动:
+        · DCGM_FI_PROF_SM_ACTIVE        —— 镜像默认是注释掉的, 这里启用
+        · DCGM_FI_PROF_NVLINK_TX_BYTES  —— 镜像默认没有, 这里追加
+        · DCGM_FI_PROF_NVLINK_RX_BYTES  —— 同上
+      (H100 现网实测这三项与其他 profiling 字段分组无冲突, 一起开不会互相挤掉)
+
+    站点要自己定字段: env.yaml 置 dcgm_exporter_custom_counters: false 用镜像默认,
+    或把本文件拷成站点版再改 dcgm_exporter_counters_template 指过去。
+-#}
+# 由 roles/monitor/templates/dcgm-counters.csv.j2 渲染, 手改会被覆盖。
+# 格式: <DCGM 字段名>, <prometheus 指标类型>, <说明>
+
+# ---- 时钟 ----
+DCGM_FI_DEV_SM_CLOCK,                   gauge, SM clock frequency (in MHz).
+DCGM_FI_DEV_MEM_CLOCK,                  gauge, Memory clock frequency (in MHz).
+
+# ---- 温度 ----
+DCGM_FI_DEV_MEMORY_TEMP,                gauge, Memory temperature (in C).
+DCGM_FI_DEV_GPU_TEMP,                   gauge, GPU temperature (in C).
+
+# ---- 功耗 ----
+DCGM_FI_DEV_POWER_USAGE,                gauge, Power draw (in W).
+DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION,   counter, Total energy consumption since boot (in mJ).
+
+# ---- PCIe ----
+DCGM_FI_DEV_PCIE_REPLAY_COUNTER,        counter, Total number of PCIe retries.
+
+# ---- 利用率(DEV 级, 非 profiling) ----
+DCGM_FI_DEV_GPU_UTIL,                   gauge, GPU utilization (in %).
+DCGM_FI_DEV_MEM_COPY_UTIL,              gauge, Memory utilization (in %).
+DCGM_FI_DEV_ENC_UTIL,                   gauge, Encoder utilization (in %).
+DCGM_FI_DEV_DEC_UTIL,                   gauge, Decoder utilization (in %).
+
+# ---- 错误与违规 ----
+DCGM_FI_DEV_XID_ERRORS,                 gauge, Value of the last XID error encountered.
+DCGM_FI_DEV_POWER_VIOLATION,            counter, Throttling duration due to power constraints (in us).
+DCGM_FI_DEV_THERMAL_VIOLATION,          counter, Throttling duration due to thermal constraints (in us).
+DCGM_FI_DEV_SYNC_BOOST_VIOLATION,       counter, Throttling duration due to sync-boost constraints (in us).
+DCGM_FI_DEV_BOARD_LIMIT_VIOLATION,      counter, Throttling duration due to board limit constraints (in us).
+DCGM_FI_DEV_LOW_UTIL_VIOLATION,         counter, Throttling duration due to low utilization (in us).
+DCGM_FI_DEV_RELIABILITY_VIOLATION,      counter, Throttling duration due to reliability constraints (in us).
+
+# ---- 显存 ----
+DCGM_FI_DEV_FB_FREE,                    gauge, Framebuffer memory free (in MiB).
+DCGM_FI_DEV_FB_USED,                    gauge, Framebuffer memory used (in MiB).
+
+# ---- ECC ----
+DCGM_FI_DEV_ECC_SBE_VOL_TOTAL,          counter, Total number of single-bit volatile ECC errors.
+DCGM_FI_DEV_ECC_DBE_VOL_TOTAL,          counter, Total number of double-bit volatile ECC errors.
+DCGM_FI_DEV_ECC_SBE_AGG_TOTAL,          counter, Total number of single-bit persistent ECC errors.
+DCGM_FI_DEV_ECC_DBE_AGG_TOTAL,          counter, Total number of double-bit persistent ECC errors.
+
+# ---- Retired pages / Remapped rows ----
+DCGM_FI_DEV_RETIRED_SBE,                counter, Total number of retired pages due to single-bit errors.
+DCGM_FI_DEV_RETIRED_DBE,                counter, Total number of retired pages due to double-bit errors.
+DCGM_FI_DEV_RETIRED_PENDING,            counter, Total number of pages pending retirement.
+DCGM_FI_DEV_ROW_REMAP_FAILURE,          gauge, Whether remapping of rows has failed.
+DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Number of remapped rows for uncorrectable errors.
+DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,  counter, Number of remapped rows for correctable errors.
+
+# ---- NVLink(DEV 级错误计数) ----
+DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL, counter, Total number of NVLink flow-control CRC errors.
+DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL, counter, Total number of NVLink data CRC errors.
+DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,   counter, Total number of NVLink retries.
+DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL, counter, Total number of NVLink recovery errors.
+DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,            counter, Total number of NVLink bandwidth counters for all lanes.
+
+# ---- VGPU / 许可 ----
+DCGM_FI_DEV_VGPU_LICENSE_STATUS,        gauge, vGPU License status.
+
+# ---- 显存利用率 ----
+DCGM_FI_DEV_MEM_COPY_UTIL_SAMPLES,      gauge, Memory utilization samples.
+
+# ============================================================================
+#  profiling(PROF)指标 —— 需要容器有 SYS_ADMIN, 且 DCGM 库版本认得当前驱动。
+#  ⚠ 镜像内置 DCGM 库版本太旧时, 这些字段枚举得到但一个都采不到(全空)。
+#    H100 + 驱动 590.48.01 实测: DCGM 4.5.2 全空, 换到 4.6.1 才出数。
+#    见 dcgm_exporter_version 的注释。
+# ============================================================================
+DCGM_FI_PROF_GR_ENGINE_ACTIVE,          gauge, Ratio of time the graphics engine is active.
+# ↓ 镜像默认 csv 里这行是注释掉的, 这里启用(后端 smActive 指标依赖它)
+DCGM_FI_PROF_SM_ACTIVE,                 gauge, Ratio of cycles an SM has at least 1 warp assigned.
+DCGM_FI_PROF_SM_OCCUPANCY,              gauge, Ratio of number of warps resident on an SM.
+DCGM_FI_PROF_PIPE_TENSOR_ACTIVE,        gauge, Ratio of cycles the tensor (HMMA) pipe is active.
+DCGM_FI_PROF_PIPE_FP64_ACTIVE,          gauge, Ratio of cycles the fp64 pipe is active.
+DCGM_FI_PROF_PIPE_FP32_ACTIVE,          gauge, Ratio of cycles the fp32 pipe is active.
+DCGM_FI_PROF_PIPE_FP16_ACTIVE,          gauge, Ratio of cycles the fp16 pipe is active.
+DCGM_FI_PROF_DRAM_ACTIVE,               gauge, Ratio of cycles the device memory interface is active.
+DCGM_FI_PROF_PCIE_TX_BYTES,             gauge, The rate of data transmitted over the PCIe bus (bytes/s).
+DCGM_FI_PROF_PCIE_RX_BYTES,             gauge, The rate of data received over the PCIe bus (bytes/s).
+# ↓ 镜像默认 csv 里没有这两行, 这里追加(后端 nvLinkTx / nvLinkRx 依赖它们)
+DCGM_FI_PROF_NVLINK_TX_BYTES,           gauge, The rate of data transmitted over NVLink (bytes/s).
+DCGM_FI_PROF_NVLINK_RX_BYTES,           gauge, The rate of data received over NVLink (bytes/s).
+{% for line in (dcgm_exporter_extra_counters | default([])) %}
+{{ line }}
+{% endfor %}

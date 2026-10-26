@@ -1,6 +1,22 @@
 # 由 roles/monitor 渲染, 手改会被覆盖(改变量: roles/monitor/defaults/main.yaml 或 env.yaml)
 # nodeSelector 用的 {{ dcgm_exporter_node_label }}=true 由 k8s-node-labels.yaml 按 accelerator_type 打。
 # dcgm 是 NVIDIA 专用, 所以用 nvidia=true 而不是通用的 gpu=true(dcu/npu 节点跑它没意义)。
+{% if dcgm_exporter_custom_counters | default(true) | bool %}
+# 指标白名单。镜像内置的 default-counters.csv 里 SM_ACTIVE 被注释、NVLINK TX/RX 根本没有,
+# 不换掉这个文件那三项就采不到(不是采不出来, 是没启用)。
+# ⚠ DCGM_EXPORTER_COLLECTORS 是【整文件替换】, 所以模板里保留了镜像默认的全部字段。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dcgm-exporter-counters
+  namespace: {{ monitor_namespace }}
+  labels:
+    app: dcgm-exporter
+data:
+  counters.csv: |
+{{ lookup('template', 'dcgm-counters.csv.j2') | indent(4, true) }}
+---
+{% endif %}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -46,6 +62,11 @@ spec:
             value: "true"
           - name: DCGM_EXPORTER_LISTEN
             value: ":{{ dcgm_exporter_port }}"
+{% if dcgm_exporter_custom_counters | default(true) | bool %}
+          # 指向上面 ConfigMap 挂进来的 csv, 替换镜像内置的 default-counters.csv
+          - name: DCGM_EXPORTER_COLLECTORS
+            value: /etc/dcgm-exporter-custom/counters.csv
+{% endif %}
         ports:
         - name: metrics
           containerPort: {{ dcgm_exporter_port }}
@@ -59,10 +80,20 @@ spec:
         - name: pod-gpu-resources
           mountPath: /var/lib/kubelet/pod-resources
           readOnly: true
+{% if dcgm_exporter_custom_counters | default(true) | bool %}
+        - name: custom-counters
+          mountPath: /etc/dcgm-exporter-custom
+          readOnly: true
+{% endif %}
       volumes:
       - name: pod-gpu-resources
         hostPath:
           path: /var/lib/kubelet/pod-resources
+{% if dcgm_exporter_custom_counters | default(true) | bool %}
+      - name: custom-counters
+        configMap:
+          name: dcgm-exporter-counters
+{% endif %}
 ---
 apiVersion: v1
 kind: Service
