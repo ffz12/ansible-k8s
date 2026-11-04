@@ -1,0 +1,67 @@
+# NetworkManager 忽略 CNI 创建的接口(共享任务)
+#
+# 不装 NetworkManager 的站点(netplan + systemd-networkd)整段跳过, 渲染结果与本任务
+# 引入前一致 —— 无锡/烟台/沐曦都是那种, 所以此前一直没暴露这个问题。
+#
+# ⚠ 为什么必须配: NM 会把 Calico 的 veth 和隧道设备当成"未配置的新设备"接管。
+#   · cali* veth —— NM 运行中由 Calico 新建的, NM 默认标 unmanaged(不插手);
+#     但【每次 systemctl reload/restart NetworkManager 会重新全量枚举设备】,
+#     把当时已存在的 veth 从 unmanaged 收成 disconnected 然后 down 掉。
+#     现场症状: 宿主机 ping 本机 Pod IP 报 `connect: Invalid argument`
+#     (路由在、出口设备 DOWN), 该节点上的 Pod 健康检查全失败。
+#   · tunl0 —— iptunnel 类型, NM 不论何时创建都会接管(现场实测全集群都是
+#     disconnected)。IPIP 模式下跨节点 Pod 流量全走它, 被 down 掉就断网。
+#
+# Calico 官方文档把这项列为安装前置条件。
+- name: NM —— 探测 NetworkManager 是否在接管网络
+  command: systemctl is-active NetworkManager
+  register: _nm_active
+  changed_when: false
+  failed_when: false
+
+- name: NM —— 让 NetworkManager 忽略 CNI 接口
+  copy:
+    dest: /etc/NetworkManager/conf.d/calico.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # 由 ansible-k8s(playbook/tasks/nm-unmanage-cni.yml)下发, 手改会被覆盖。
+      # NetworkManager 接管 Calico 的 veth/隧道设备会把它们 down 掉 —— 见该任务文件的注释。
+      [keyfile]
+      unmanaged-devices=interface-name:cali*;interface-name:tunl0;interface-name:vxlan.calico;interface-name:vxlan-v6.calico;interface-name:wireguard.cali;interface-name:wg-v6.cali
+  when: (_nm_active.stdout | trim) == 'active'
+  register: _nm_conf
+
+# reload 本身会触发一次全量枚举, 但此时配置已声明 unmanaged, 枚举结果是"不管", 安全。
+- name: NM —— reload 使配置生效
+  command: systemctl reload NetworkManager
+  when: _nm_conf is changed
+  changed_when: true
+
+# 已经被 NM 收走并 down 掉的 veth, 下发配置不会自动拉起来 —— 这里补一次。
+# (新装机时还没有 cali* 设备, 循环为空, 不做任何事)
+- name: NM —— 把被 down 掉的 cali* 接口拉起来
+  shell: |
+    set -o pipefail
+    n=0
+    for i in $(ip -br link show 2>/dev/null | awk '/^cali/{print $1}' | cut -d@ -f1); do
+      state="$(ip -br link show "$i" 2>/dev/null | awk '{print $2}')"
+      if [ "$state" != "UP" ] && [ "$state" != "UNKNOWN" ]; then
+        ip link set "$i" up && n=$((n+1))
+      fi
+    done
+    echo "拉起 $n 个"
+  args:
+    executable: /bin/bash
+  when: _nm_conf is changed
+  register: _nm_veth_up
+  changed_when: "'拉起 0 个' not in _nm_veth_up.stdout"
+
+- name: NM —— 结果
+  debug:
+    msg: >-
+      {{ 'NetworkManager 未运行, 跳过(netplan/systemd-networkd 站点无此问题)'
+         if (_nm_active.stdout | trim) != 'active'
+         else 'NM 已配置忽略 CNI 接口' ~ (' | ' ~ (_nm_veth_up.stdout | default('') | trim)
+              if _nm_conf is changed else ' (配置已是最新)') }}

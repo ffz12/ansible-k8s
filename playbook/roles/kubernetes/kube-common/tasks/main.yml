@@ -94,6 +94,13 @@
   import_tasks: install-binary.yml
   tags: [install, k8s]
 
+# 必须在装 CNI 之前下发: NM 会接管 Calico 的 veth/tunl0 并把它们 down 掉。
+# 放这里而不是 roles/cni —— cni 只在首台 master 跑, 这个配置每个节点都要。
+# 不装 NetworkManager 的站点(netplan)整段跳过。
+- name: NetworkManager 忽略 CNI 接口
+  include_tasks: "{{ playbook_dir }}/tasks/nm-unmanage-cni.yml"
+  tags: [config, k8s, nm]
+
 - name: 部署 kubelet 配置
   import_tasks: deploy-config.yml
   tags: [config, k8s]
