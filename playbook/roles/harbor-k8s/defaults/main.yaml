@@ -31,7 +31,8 @@ harbor_k8s_http_nodeport: 30002          # chart 要求同时有 http 端口, �
 harbor_k8s_tls_cert_source: auto
 harbor_k8s_tls_secret: harbor-tls
 # 与装机 Harbor 的 harbor.crt 一致(roles/harbor/tasks/ssl.yaml 也是 36500)。
-# 不能超过 CA 的剩余有效期, CA 是 36500 天。
+# 签出来的到期日可能比 CA 晚(CA 签得早, 两边都按 36500 天算), openssl 不拦;
+# 但 CA 一到期整条链就失效, 多出来那段没用, 实际有效期以 CA 为准。
 harbor_k8s_cert_days: 36500
 
 # ---- 存储 ----
