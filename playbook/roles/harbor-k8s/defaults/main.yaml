@@ -7,7 +7,10 @@
 # ---- 版本 ----
 # chart 版本和 Harbor 版本是两回事: helm search repo harbor/harbor --versions 看对应关系
 harbor_k8s_chart_version: "1.15.2"
-harbor_k8s_image_tag: "v2.11.2"          # 对应 chart 1.15.2 的 appVersion
+# 对应 chart 1.15.2 的 appVersion。
+# ⚠ 离线时镜像复用装机 Harbor 那台本地已 load 的 goharbor/<名>:<tag>, 所以要和装机 Harbor
+#   的版本一致(inventory/group_vars/all/defaults.yaml 的 harbor_offline_images 里是 v2.11.2)。
+harbor_k8s_image_tag: "v2.11.2"
 harbor_k8s_chart_repo: "https://helm.goharbor.io"
 
 # ---- 部署位置 ----
@@ -61,6 +64,9 @@ harbor_k8s_images:
 # 在线时直接拉上游; 离线时推进装机 Harbor 后从 {{ registry }} 拉
 harbor_k8s_online_repo: docker.io/goharbor
 
-# ---- 离线物料(不进 git, 由 scripts/offline/download-harbor-k8s-offline.sh 生成) ----
+# ---- 离线物料 ----
+# 只有 chart tgz(不进 git), 镜像复用装机 Harbor 的, 不用另外准备。在联网机上:
+#   helm repo add harbor https://helm.goharbor.io
+#   helm pull harbor/harbor --version 1.15.2 -d offline/artifacts/harbor-k8s/
 harbor_k8s_src_dir: "{{ offline_artifacts }}/harbor-k8s"
 harbor_k8s_dir: /opt/harbor-k8s                  # 目标机上的暂存目录

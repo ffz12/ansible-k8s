@@ -1,15 +1,61 @@
 ---
-# 离线: 把 Harbor 自己的镜像推进装机 Harbor({{ registry }}), k8s 里的 Harbor 从那里拉。
-# 复用 sync-offline-image.yml(同 device-plugin / monitor)。它里面自己用了 item,
-# 所以外层循环变量改名 _hk_img, 否则会被覆盖。
-- name: "[harbor-k8s] 推镜像到装机 Harbor"
-  include_tasks: "{{ playbook_dir }}/tasks/sync-offline-image.yml"
-  vars:
-    _img_name: "{{ _hk_img }}"
-    _img_src: "{{ harbor_k8s_src_dir }}/images"
-    _img_tar: "{{ _hk_img }}.tar.gz"
-    _img_dst: "{{ registry }}/{{ _hk_img }}:{{ harbor_k8s_image_tag }}"
-    _img_tmp: "{{ harbor_k8s_dir }}/images"
-  loop: "{{ harbor_k8s_images }}"
-  loop_control:
-    loop_var: _hk_img
+# 离线: 复用装机 Harbor 的镜像, 不另外下载。
+# 装机 Harbor(roles/harbor)的离线包就是同一批 goharbor 官方镜像, 且那台已经 docker load 过
+# (roles/harbor/tasks/x86.yaml), 本地就有 goharbor/<名>:<tag>。在那台上 tag 后推进它自己的
+# 仓库({{ registry }}), k8s 里的 Harbor 从那里拉。
+# 不走 sync-offline-image.yml —— 那个是从控制机拷 tar, 这里镜像已经在目标机上了。
+
+- name: "[harbor-k8s] 预检 —— 有装机 Harbor"
+  assert:
+    that: (groups['harbor'] | default([])) | length > 0
+    fail_msg: >-
+      离线模式复用装机 Harbor 那台本地的 goharbor 镜像, 但 inventory 的 [harbor] 组是空的。
+
+- name: "[harbor-k8s] 登录装机 Harbor"
+  command: docker login {{ harbor_dns }} -u {{ harbor_admin_username | default('admin') }} --password-stdin
+  args:
+    stdin: "{{ harbor_admin_password | default('Harbor12345') }}"
+  delegate_to: "{{ groups['harbor'][0] }}"
+  changed_when: false
+  no_log: true
+
+- name: "[harbor-k8s] tag 并推送 goharbor 镜像"
+  shell: |
+    set -o pipefail
+    TAG="{{ harbor_k8s_image_tag }}"
+    missing=""; pushed=0
+    for img in {{ harbor_k8s_images | join(' ') }}; do
+      src="goharbor/${img}:${TAG}"
+      dst="{{ registry }}/${img}:${TAG}"
+      # 先删本机 manifest 缓存, 否则 inspect 读的是本地 ~/.docker/manifests, 会误判"已在"
+      docker manifest rm "$dst" >/dev/null 2>&1 || true
+      if docker manifest inspect --insecure "$dst" >/dev/null 2>&1; then
+        echo "skip ${dst} (已在 harbor)"; continue
+      fi
+      if ! docker image inspect "$src" >/dev/null 2>&1; then
+        missing="${missing} ${src}"; continue
+      fi
+      docker tag "$src" "$dst"
+      for i in 1 2 3; do
+        docker push "$dst" && break
+        [ "$i" = 3 ] && { echo "push 失败: $dst"; exit 1; }
+        echo "push 失败, 10 秒后重试($i/3)"; sleep 10
+      done
+      echo "pushed ${dst}"; pushed=$((pushed+1))
+    done
+    if [ -n "$missing" ]; then
+      echo "本地没有这些镜像:${missing}"
+      echo "harbor_k8s_image_tag=${TAG} 要与装机 Harbor 的版本一致(harbor_offline_images 里的版本),"
+      echo "或者装机 Harbor 没装在这台。docker images | grep goharbor 看本地有哪些。"
+      exit 1
+    fi
+    echo "共推送 ${pushed} 个"
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ groups['harbor'][0] }}"
+  register: _hk_push
+  changed_when: "'共推送 0 个' not in _hk_push.stdout"
+
+- name: "[harbor-k8s] 镜像结果"
+  debug:
+    msg: "{{ _hk_push.stdout_lines }}"

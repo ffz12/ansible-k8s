@@ -39,6 +39,6 @@ offline/artifacts/device-plugin/images/*
 offline/artifacts/monitor/images/*
 !offline/artifacts/monitor/images/.gitkeep
 
-# harbor-k8s 离线物料(chart tgz + 镜像 tar), 由 scripts/offline/download-harbor-k8s-offline.sh 生成
+# harbor-k8s 离线 chart tgz(helm pull 得到); 镜像复用装机 Harbor 的, 不放这里
 offline/artifacts/harbor-k8s/*
 !offline/artifacts/harbor-k8s/.gitkeep

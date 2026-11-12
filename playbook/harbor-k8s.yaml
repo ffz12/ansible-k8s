@@ -7,7 +7,8 @@
 # 前提:
 #   · env.yaml 配好 harbor_k8s_domain 与 harbor_k8s_storage_class(本 role 不装存储)
 #   · 首台 master 上有 helm(装机时已装; 没有就先跑 playbook/install-helm.yaml)
-#   · 离线时物料放 offline/artifacts/harbor-k8s/(不进 git, 见 scripts/offline/download-harbor-k8s-offline.sh)
+#   · 离线时: 镜像复用装机 Harbor 那台本地的 goharbor 镜像(不用另外下载);
+#     chart 在联网机上 helm pull harbor/harbor --version 1.15.2 -d offline/artifacts/harbor-k8s/
 # 变量与验收见 docs/插件.md 的「harbor-k8s」一节。
 - name: 部署 Harbor 到 k8s
   hosts: "{{ (groups['k8s_master'] | default([]))[:1] }}"   # 仅首台 master; 切片写法在 inventory 为空时不会硬崩
