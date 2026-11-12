@@ -30,7 +30,9 @@ harbor_k8s_http_nodeport: 30002          # chart 要求同时有 http 端口, �
 # secret —— 自己准备好 secret(含 tls.crt / tls.key / ca.crt), 填 harbor_k8s_tls_secret
 harbor_k8s_tls_cert_source: auto
 harbor_k8s_tls_secret: harbor-tls
-harbor_k8s_cert_days: 3650
+# 与装机 Harbor 的 harbor.crt 一致(roles/harbor/tasks/ssl.yaml 也是 36500)。
+# 不能超过 CA 的剩余有效期, CA 是 36500 天。
+harbor_k8s_cert_days: 36500
 
 # ---- 存储 ----
 # 必填。集群里已有的 StorageClass 名, 本 role 不装存储(CSI 由站点自己准备)。
