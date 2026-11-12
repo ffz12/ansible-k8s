@@ -47,6 +47,11 @@
     label: "{{ item.dns | default('<无 dns>') }}"
   run_once: true
 
+# dns 可以带端口(如 harbor.k8s.com:30002, k8s 里 NodePort 暴露的 Harbor)。
+# containerd 的 certs.d 目录、docker 的 insecure-registries、docker login 都需要
+# host:port 原样; 但 /etc/hosts 只认主机名 —— 原样写进去是
+#   172.171.0.201 harbor.k8s.com:30002
+# 这一行整行无效, 解析不通且不报错。所以这里去掉端口, 同一 ip+主机名 只写一次。
 - name: "[Harbor] 写入域名解析到 /etc/hosts"
   blockinfile:
     path: /etc/hosts
@@ -54,6 +59,11 @@
     create: no
     backup: yes
     block: |
+      {% set _seen = [] %}
       {% for item in harbor_instances %}
-      {{ item.ip }} {{ item.dns }}
+      {% set _line = item.ip ~ ' ' ~ item.dns.split(':')[0] %}
+      {% if _line not in _seen %}
+      {% set _ = _seen.append(_line) %}
+      {{ _line }}
+      {% endif %}
       {% endfor %}
