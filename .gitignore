@@ -38,3 +38,7 @@ offline/artifacts/device-plugin/images/*
 # monitor 离线镜像 tar, 由 scripts/offline/download-monitor-offline.sh 生成, 同 device-plugin
 offline/artifacts/monitor/images/*
 !offline/artifacts/monitor/images/.gitkeep
+
+# harbor-k8s 离线物料(chart tgz + 镜像 tar), 由 scripts/offline/download-harbor-k8s-offline.sh 生成
+offline/artifacts/harbor-k8s/*
+!offline/artifacts/harbor-k8s/.gitkeep

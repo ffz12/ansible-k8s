@@ -1,0 +1,23 @@
+# 由 roles/harbor-k8s 渲染。k8s 里的 Harbor 只用域名访问, SAN 只放域名, 不放 IP。
+# 端口不进 SAN —— 证书按主机名匹配, 换 NodePort 不用重签。
+[ req ]
+default_bits = 3072
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[ req_distinguished_name ]
+C = CN
+ST = Beijing
+L = Beijing
+O = My Company
+OU = IT
+CN = {{ harbor_k8s_domain }}
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = {{ harbor_k8s_domain }}

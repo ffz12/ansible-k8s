@@ -1,0 +1,164 @@
+---
+# ============================================================================
+#  预检: 全部放在最前面, 任何一项不过都不动集群
+# ============================================================================
+- name: "[harbor-k8s] 预检 —— 必填变量"
+  assert:
+    that:
+      - harbor_k8s_domain | trim | length > 0
+      - harbor_k8s_domain is not match('^[0-9.]+$')
+      - harbor_k8s_storage_class | trim | length > 0
+      - harbor_k8s_tls_cert_source in ['auto', 'secret']
+    fail_msg: >-
+      env.yaml 里要配:
+        harbor_k8s_domain: harbor.k8s.com        # 必须是域名, 不能是 IP(证书 SAN 和 externalURL 都按它)
+        harbor_k8s_storage_class: <已有的 SC>    # kubectl get sc 查; 本 role 不装存储
+      harbor_k8s_tls_cert_source 只能是 auto / secret, 当前 {{ harbor_k8s_tls_cert_source }}。
+      当前: domain={{ harbor_k8s_domain | default('', true) }}, storage_class={{ harbor_k8s_storage_class | default('', true) }}
+
+- name: "[harbor-k8s] 预检 —— helm 可用"
+  command: "{{ kube_bin_dir }}/helm version --short"
+  register: _hk_helm
+  changed_when: false
+  failed_when: false
+
+- name: "[harbor-k8s] 预检 —— helm 缺失时明确报错"
+  assert:
+    that: _hk_helm.rc == 0
+    fail_msg: "首台 master 上没有 helm: ansible-playbook playbook/install-helm.yaml"
+
+- name: "[harbor-k8s] 预检 —— StorageClass 存在"
+  command: kubectl get sc {{ harbor_k8s_storage_class }} -o name
+  register: _hk_sc
+  changed_when: false
+  failed_when: false
+
+- name: "[harbor-k8s] 预检 —— StorageClass 缺失时明确报错"
+  assert:
+    that: _hk_sc.rc == 0
+    fail_msg: >-
+      StorageClass {{ harbor_k8s_storage_class }} 不存在。本 role 不装存储,
+      先把 CSI 装好(kubectl get sc 能看到), 再跑本 playbook。
+
+# NodePort 被别的 Service 占了的话 helm 会在 apply 时失败, 且会留下半装状态
+- name: "[harbor-k8s] 预检 —— NodePort 是否被其它命名空间占用"
+  shell: |
+    set -o pipefail
+    kubectl get svc -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{range .spec.ports[*]}{.nodePort}{" "}{end}{"\n"}{end}' \
+      | awk -v ns="{{ harbor_k8s_namespace }}" '$1 != ns' \
+      | grep -wE '{{ harbor_k8s_https_nodeport }}|{{ harbor_k8s_http_nodeport }}' || true
+  args:
+    executable: /bin/bash
+  register: _hk_port
+  changed_when: false
+
+- name: "[harbor-k8s] 预检 —— NodePort 冲突时明确报错"
+  assert:
+    that: _hk_port.stdout | trim | length == 0
+    fail_msg: >-
+      NodePort {{ harbor_k8s_https_nodeport }} / {{ harbor_k8s_http_nodeport }}
+      已被其它命名空间的 Service 占用: {{ _hk_port.stdout | trim }}。
+      换 harbor_k8s_https_nodeport / harbor_k8s_http_nodeport。
+
+# ============================================================================
+#  准备: 证书 → 镜像 → values
+# ============================================================================
+- name: "[harbor-k8s] 创建暂存目录"
+  file:
+    path: "{{ harbor_k8s_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: "[harbor-k8s] 命名空间"
+  shell: kubectl create namespace {{ harbor_k8s_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+  args:
+    executable: /bin/bash
+  register: _hk_ns
+  changed_when: "'created' in _hk_ns.stdout"
+
+- name: "[harbor-k8s] 证书"
+  include_tasks: tls.yaml
+
+- name: "[harbor-k8s] 镜像(仅离线)"
+  include_tasks: images.yaml
+  when: is_offline | default(false) | bool
+
+- name: "[harbor-k8s] 确定镜像仓库前缀"
+  set_fact:
+    _hk_repo: "{{ registry if (is_offline | default(false) | bool) else harbor_k8s_online_repo }}"
+
+- name: "[harbor-k8s] 渲染 values"
+  template:
+    src: harbor-values.yaml.j2
+    dest: "{{ harbor_k8s_dir }}/harbor-values.yaml"
+    mode: "0600"            # 含 admin 初始密码
+
+# ============================================================================
+#  安装/升级: upgrade --install 已装过就升级, 重跑不会重复装
+# ============================================================================
+- name: "[harbor-k8s] 准备 chart(在线)"
+  shell: |
+    set -e
+    helm repo add harbor {{ harbor_k8s_chart_repo }} --force-update >/dev/null
+    helm repo update harbor >/dev/null
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: not (is_offline | default(false) | bool)
+
+- name: "[harbor-k8s] 准备 chart(离线, 拷本地 tgz)"
+  copy:
+    src: "{{ harbor_k8s_src_dir }}/harbor-{{ harbor_k8s_chart_version }}.tgz"
+    dest: "{{ harbor_k8s_dir }}/harbor-{{ harbor_k8s_chart_version }}.tgz"
+    mode: "0644"
+  when: is_offline | default(false) | bool
+
+- name: "[harbor-k8s] helm upgrade --install"
+  shell: |
+    set -e
+    helm upgrade --install {{ harbor_k8s_release }} \
+      {{ (harbor_k8s_dir ~ '/harbor-' ~ harbor_k8s_chart_version ~ '.tgz')
+         if (is_offline | default(false) | bool)
+         else ('harbor/harbor --version ' ~ harbor_k8s_chart_version) }} \
+      -n {{ harbor_k8s_namespace }} \
+      -f {{ harbor_k8s_dir }}/harbor-values.yaml \
+      --wait --timeout {{ harbor_k8s_wait_timeout }}
+  args:
+    executable: /bin/bash
+  register: _hk_install
+  changed_when: true
+
+# ============================================================================
+#  验收
+# ============================================================================
+- name: "[harbor-k8s] 查看状态"
+  shell: |
+    echo "--- Pod ---"
+    kubectl -n {{ harbor_k8s_namespace }} get pod -o wide
+    echo "--- PVC ---"
+    kubectl -n {{ harbor_k8s_namespace }} get pvc
+    echo "--- /v2/ (401 Unauthorized 是正常的, 说明 registry 在线且要认证) ---"
+    node_ip="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')"
+    curl -s -o /dev/null -w '%{http_code}\n' --max-time 15 \
+      --cacert {{ harbor_k8s_dir }}/ca.crt \
+      --resolve {{ harbor_k8s_domain }}:{{ harbor_k8s_https_nodeport }}:${node_ip} \
+      https://{{ harbor_k8s_domain }}:{{ harbor_k8s_https_nodeport }}/v2/ || echo "连不上"
+  args:
+    executable: /bin/bash
+  register: _hk_status
+  changed_when: false
+  failed_when: false
+
+- name: "[harbor-k8s] 结果"
+  debug:
+    msg: "{{ _hk_status.stdout_lines }}"
+
+- name: "[harbor-k8s] 下一步"
+  debug:
+    msg:
+      - "访问地址: https://{{ harbor_k8s_domain }}:{{ harbor_k8s_https_nodeport }}"
+      - >-
+        节点要能拉这个仓库的镜像: 在 env.yaml 的 harbor_instances 末尾追加
+        { dns: "{{ harbor_k8s_domain }}:{{ harbor_k8s_https_nodeport }}", ip: "<任一节点 IP>" },
+        再跑 playbook/containerd-setup.yaml(写 hosts.toml 和 /etc/hosts)与 playbook/harbor-trust.yaml。
+        ⚠ 只能追加在末尾 —— harbor_dns / registry 取的是第一项。

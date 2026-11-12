@@ -1,0 +1,124 @@
+# 由 roles/harbor-k8s 渲染, 手改会被覆盖(改 env.yaml 的 harbor_k8s_* 变量)。
+# 只写和官方默认值不同的项, 其余沿用 chart 自带的 values.yaml。
+# 本文件含 admin 初始密码, 权限 0600。
+
+expose:
+  type: nodePort
+  tls:
+    enabled: true
+    certSource: secret
+    secret:
+      secretName: {{ harbor_k8s_tls_secret }}
+  nodePort:
+    name: harbor
+    ports:
+      http:
+        port: 80
+        nodePort: {{ harbor_k8s_http_nodeport }}
+      https:
+        port: 443
+        nodePort: {{ harbor_k8s_https_nodeport }}
+
+# 必须和证书域名、客户端访问地址完全一致: 客户端取 token 的地址就是从这里来的,
+# 写成 IP 的话 token 那一步会报证书不匹配。
+externalURL: https://{{ harbor_k8s_domain }}:{{ harbor_k8s_https_nodeport }}
+
+internalTLS:
+  enabled: false
+
+imagePullPolicy: IfNotPresent
+
+# 只在首次安装时写进数据库, 之后改这里不生效
+harborAdminPassword: {{ harbor_k8s_admin_password | to_json }}
+
+persistence:
+  enabled: true
+  resourcePolicy: {{ harbor_k8s_resource_policy }}
+  persistentVolumeClaim:
+    registry:
+      storageClass: {{ harbor_k8s_storage_class }}
+      accessMode: ReadWriteOnce
+      size: {{ harbor_k8s_registry_size }}
+    jobservice:
+      jobLog:
+        storageClass: {{ harbor_k8s_storage_class }}
+        accessMode: ReadWriteOnce
+        size: {{ harbor_k8s_jobservice_size }}
+    database:
+      storageClass: {{ harbor_k8s_storage_class }}
+      accessMode: ReadWriteOnce
+      size: {{ harbor_k8s_database_size }}
+    redis:
+      storageClass: {{ harbor_k8s_storage_class }}
+      accessMode: ReadWriteOnce
+      size: {{ harbor_k8s_redis_size }}
+  imageChartStorage:
+    type: filesystem
+
+nginx:
+  image:
+    repository: {{ _hk_repo }}/nginx-photon
+    tag: {{ harbor_k8s_image_tag }}
+  nodeSelector: {{ harbor_k8s_node_selector | to_json }}
+
+portal:
+  image:
+    repository: {{ _hk_repo }}/harbor-portal
+    tag: {{ harbor_k8s_image_tag }}
+  nodeSelector: {{ harbor_k8s_node_selector | to_json }}
+
+core:
+  image:
+    repository: {{ _hk_repo }}/harbor-core
+    tag: {{ harbor_k8s_image_tag }}
+  nodeSelector: {{ harbor_k8s_node_selector | to_json }}
+
+jobservice:
+  image:
+    repository: {{ _hk_repo }}/harbor-jobservice
+    tag: {{ harbor_k8s_image_tag }}
+  nodeSelector: {{ harbor_k8s_node_selector | to_json }}
+
+registry:
+  registry:
+    image:
+      repository: {{ _hk_repo }}/registry-photon
+      tag: {{ harbor_k8s_image_tag }}
+  controller:
+    image:
+      repository: {{ _hk_repo }}/harbor-registryctl
+      tag: {{ harbor_k8s_image_tag }}
+  nodeSelector: {{ harbor_k8s_node_selector | to_json }}
+
+database:
+  type: internal
+  internal:
+    image:
+      repository: {{ _hk_repo }}/harbor-db
+      tag: {{ harbor_k8s_image_tag }}
+    nodeSelector: {{ harbor_k8s_node_selector | to_json }}
+
+redis:
+  type: internal
+  internal:
+    image:
+      repository: {{ _hk_repo }}/redis-photon
+      tag: {{ harbor_k8s_image_tag }}
+    nodeSelector: {{ harbor_k8s_node_selector | to_json }}
+
+trivy:
+  enabled: false
+
+metrics:
+  enabled: {{ harbor_k8s_metrics_enabled | bool | lower }}
+  exporter:
+    path: /metrics
+    port: 8001
+  serviceMonitor:
+    enabled: false
+
+exporter:
+  image:
+    repository: {{ _hk_repo }}/harbor-exporter
+    tag: {{ harbor_k8s_image_tag }}
+  nodeSelector: {{ harbor_k8s_node_selector | to_json }}

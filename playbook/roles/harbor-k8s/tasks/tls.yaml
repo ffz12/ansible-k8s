@@ -1,0 +1,134 @@
+---
+# 证书。auto 模式在 [harbor] 第一台签 —— ca.key 只放在那台, 不分发(同 roles/harbor 的双主做法)。
+# 复用同一个 CA 的好处: 节点跑 harbor-trust.yaml 时已经信任过它, 不用再配 insecure-registries。
+
+- name: "[harbor-k8s] auto 签证书"
+  when: harbor_k8s_tls_cert_source == 'auto'
+  block:
+    - name: "[harbor-k8s] 预检 —— 有签发 CA 的那台"
+      assert:
+        that: (groups['harbor'] | default([])) | length > 0
+        fail_msg: >-
+          harbor_k8s_tls_cert_source=auto 要用 [harbor] 第一台上 roles/harbor 生成的 CA,
+          但 inventory 的 [harbor] 组是空的。
+          没有装机 Harbor 就自己准备 secret: harbor_k8s_tls_cert_source=secret。
+
+    - name: "[harbor-k8s] 定位 CA"
+      set_fact:
+        _hk_ca_host: "{{ groups['harbor'][0] }}"
+        _hk_ssl_dir: "{{ harbor_copy_path }}/harbor/ssl"
+        _hk_cert_name: "k8s-{{ harbor_k8s_domain }}"
+
+    - name: "[harbor-k8s] 预检 —— CA 文件存在"
+      stat:
+        path: "{{ _hk_ssl_dir }}/ca.key"
+      delegate_to: "{{ _hk_ca_host }}"
+      register: _hk_ca_key
+
+    - name: "[harbor-k8s] 预检 —— CA 缺失时明确报错"
+      assert:
+        that: _hk_ca_key.stat.exists
+        fail_msg: >-
+          {{ _hk_ca_host }} 上没有 {{ _hk_ssl_dir }}/ca.key。
+          确认 roles/harbor 装在这台、harbor_copy_path 与装机时一致。
+
+    - name: "[harbor-k8s] 渲染 SAN 配置"
+      template:
+        src: openssl-san.conf.j2
+        dest: "{{ _hk_ssl_dir }}/{{ _hk_cert_name }}-san.conf"
+        mode: "0644"
+      delegate_to: "{{ _hk_ca_host }}"
+      register: _hk_san
+
+    - name: "[harbor-k8s] 证书是否已存在"
+      stat:
+        path: "{{ _hk_ssl_dir }}/{{ _hk_cert_name }}.crt"
+      delegate_to: "{{ _hk_ca_host }}"
+      register: _hk_crt
+
+    # SAN 配置变了(换了域名)或证书还没有才签; 重跑不会换证书。
+    # ⚠ 签名必须带 -extfile -extensions —— SAN 只写在 CSR 里的话 x509 -req 不会带过去,
+    #   签出来是没有 SAN 的废证书。
+    - name: "[harbor-k8s] 签发服务端证书"
+      shell: |
+        set -e
+        cd {{ _hk_ssl_dir }}
+        openssl genrsa -out {{ _hk_cert_name }}.key 3072
+        openssl req -new -key {{ _hk_cert_name }}.key -out {{ _hk_cert_name }}.csr \
+          -config {{ _hk_cert_name }}-san.conf
+        openssl x509 -req -in {{ _hk_cert_name }}.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+          -out {{ _hk_cert_name }}.crt -days {{ harbor_k8s_cert_days }} \
+          -extfile {{ _hk_cert_name }}-san.conf -extensions v3_req
+        rm -f {{ _hk_cert_name }}.csr
+        chmod 600 {{ _hk_cert_name }}.key
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ _hk_ca_host }}"
+      when: (_hk_san is changed) or (not _hk_crt.stat.exists)
+
+    - name: "[harbor-k8s] 校验证书链与 SAN"
+      shell: |
+        set -e
+        cd {{ _hk_ssl_dir }}
+        openssl verify -CAfile ca.crt {{ _hk_cert_name }}.crt
+        openssl x509 -in {{ _hk_cert_name }}.crt -noout -ext subjectAltName | grep -q "DNS:{{ harbor_k8s_domain }}"
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ _hk_ca_host }}"
+      changed_when: false
+
+    - name: "[harbor-k8s] 取回证书"
+      slurp:
+        src: "{{ _hk_ssl_dir }}/{{ item }}"
+      delegate_to: "{{ _hk_ca_host }}"
+      loop:
+        - "{{ _hk_cert_name }}.crt"
+        - "{{ _hk_cert_name }}.key"
+        - ca.crt
+      register: _hk_files
+      no_log: true
+
+    - name: "[harbor-k8s] 写到 master 暂存目录"
+      copy:
+        dest: "{{ harbor_k8s_dir }}/{{ item.0 }}"
+        content: "{{ item.1.content | b64decode }}"
+        mode: "0600"
+      loop: "{{ ['tls.crt', 'tls.key', 'ca.crt'] | zip(_hk_files.results) | list }}"
+      loop_control:
+        label: "{{ item.0 }}"
+      no_log: true
+
+    - name: "[harbor-k8s] 建/更新 TLS secret"
+      shell: |
+        set -e
+        cd {{ harbor_k8s_dir }}
+        kubectl -n {{ harbor_k8s_namespace }} create secret generic {{ harbor_k8s_tls_secret }} \
+          --from-file=tls.crt --from-file=tls.key --from-file=ca.crt \
+          --dry-run=client -o yaml | kubectl apply -f -
+      args:
+        executable: /bin/bash
+      register: _hk_secret
+      changed_when: "'unchanged' not in _hk_secret.stdout"
+
+# secret 模式: 只校验, 并取出 ca.crt 给后面的验收 curl 用
+- name: "[harbor-k8s] 自备 secret"
+  when: harbor_k8s_tls_cert_source == 'secret'
+  block:
+    - name: "[harbor-k8s] 读取自备 secret 的 ca.crt"
+      shell: |
+        set -o pipefail
+        kubectl -n {{ harbor_k8s_namespace }} get secret {{ harbor_k8s_tls_secret }} \
+          -o jsonpath='{.data.ca\.crt}' | base64 -d > {{ harbor_k8s_dir }}/ca.crt
+        test -s {{ harbor_k8s_dir }}/ca.crt
+      args:
+        executable: /bin/bash
+      register: _hk_own
+      changed_when: false
+      failed_when: false
+
+    - name: "[harbor-k8s] 预检 —— 自备 secret 可用"
+      assert:
+        that: _hk_own.rc == 0
+        fail_msg: >-
+          命名空间 {{ harbor_k8s_namespace }} 里没有 secret {{ harbor_k8s_tls_secret }},
+          或其中没有 ca.crt。secret 要含 tls.crt / tls.key / ca.crt 三项。

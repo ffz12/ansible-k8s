@@ -1,0 +1,66 @@
+---
+# Harbor 装进 k8s(helm)。和 roles/harbor 不是一回事:
+#   roles/harbor     —— docker-compose 装在宿主机上, 装 k8s 之前就要有(离线装机靠它推镜像)
+#   roles/harbor-k8s —— 集群建好之后装进集群, 给业务用的镜像仓库
+# 两者共用 roles/harbor 生成的 CA(节点上已经信任过), k8s 里这个只是用同一 CA 另签一张域名证书。
+
+# ---- 版本 ----
+# chart 版本和 Harbor 版本是两回事: helm search repo harbor/harbor --versions 看对应关系
+harbor_k8s_chart_version: "1.15.2"
+harbor_k8s_image_tag: "v2.11.2"          # 对应 chart 1.15.2 的 appVersion
+harbor_k8s_chart_repo: "https://helm.goharbor.io"
+
+# ---- 部署位置 ----
+harbor_k8s_release: harbor
+harbor_k8s_namespace: harbor
+# Harbor 各组件的 nodeSelector。不限制留 {}; 例: { gpu: "true" }(值必须是字符串)
+harbor_k8s_node_selector: {}
+
+# ---- 访问入口(HTTPS NodePort) ----
+# 必填。客户端用这个域名访问, 证书 SAN 和 externalURL 都按它来。不能填 IP。
+harbor_k8s_domain: ""
+harbor_k8s_https_nodeport: 30003
+harbor_k8s_http_nodeport: 30002          # chart 要求同时有 http 端口, 访问会被跳转到 https
+
+# ---- 证书 ----
+# auto   —— 在 [harbor] 第一台(roles/harbor 签发 CA 的那台)用同一 CA 签 harbor_k8s_domain 的证书
+# secret —— 自己准备好 secret(含 tls.crt / tls.key / ca.crt), 填 harbor_k8s_tls_secret
+harbor_k8s_tls_cert_source: auto
+harbor_k8s_tls_secret: harbor-tls
+harbor_k8s_cert_days: 3650
+
+# ---- 存储 ----
+# 必填。集群里已有的 StorageClass 名, 本 role 不装存储(CSI 由站点自己准备)。
+# 数据库、redis、registry、jobservice 日志都用它。
+harbor_k8s_storage_class: ""
+harbor_k8s_registry_size: 100Gi
+harbor_k8s_database_size: 10Gi
+harbor_k8s_redis_size: 5Gi
+harbor_k8s_jobservice_size: 5Gi
+# Retain 回收策略在 StorageClass 上定, 这里的 keep 只管 helm uninstall 时不删 PVC
+harbor_k8s_resource_policy: keep
+
+# ---- 其它 ----
+# 只在首次安装时生效; 装好之后改这里不会改数据库里的密码, 要在页面上改
+harbor_k8s_admin_password: "{{ harbor_admin_password | default('Harbor12345') }}"
+harbor_k8s_metrics_enabled: true
+harbor_k8s_wait_timeout: 15m
+
+# ---- 镜像 ----
+# trivy 默认关闭, 所以不在列表里
+harbor_k8s_images:
+  - nginx-photon
+  - harbor-portal
+  - harbor-core
+  - harbor-jobservice
+  - registry-photon
+  - harbor-registryctl
+  - harbor-db
+  - redis-photon
+  - harbor-exporter
+# 在线时直接拉上游; 离线时推进装机 Harbor 后从 {{ registry }} 拉
+harbor_k8s_online_repo: docker.io/goharbor
+
+# ---- 离线物料(不进 git, 由 scripts/offline/download-harbor-k8s-offline.sh 生成) ----
+harbor_k8s_src_dir: "{{ offline_artifacts }}/harbor-k8s"
+harbor_k8s_dir: /opt/harbor-k8s                  # 目标机上的暂存目录

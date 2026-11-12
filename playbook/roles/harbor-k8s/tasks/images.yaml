@@ -1,0 +1,15 @@
+---
+# 离线: 把 Harbor 自己的镜像推进装机 Harbor({{ registry }}), k8s 里的 Harbor 从那里拉。
+# 复用 sync-offline-image.yml(同 device-plugin / monitor)。它里面自己用了 item,
+# 所以外层循环变量改名 _hk_img, 否则会被覆盖。
+- name: "[harbor-k8s] 推镜像到装机 Harbor"
+  include_tasks: "{{ playbook_dir }}/tasks/sync-offline-image.yml"
+  vars:
+    _img_name: "{{ _hk_img }}"
+    _img_src: "{{ harbor_k8s_src_dir }}/images"
+    _img_tar: "{{ _hk_img }}.tar.gz"
+    _img_dst: "{{ registry }}/{{ _hk_img }}:{{ harbor_k8s_image_tag }}"
+    _img_tmp: "{{ harbor_k8s_dir }}/images"
+  loop: "{{ harbor_k8s_images }}"
+  loop_control:
+    loop_var: _hk_img
